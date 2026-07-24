@@ -209,6 +209,11 @@ test("runtime package loader supports role-scoped registries and lazy compatibil
   assert.ok(loaderSource.includes("parts/by-role/${role.characterId}/${runtimePathUnitSegment(role.unit)}"));
   assert.ok(loaderSource.includes("parts/compat/by-unit/${runtimePathUnitSegment(unit)}/head-hair-compatibility.msgpack.br"));
   assert.ok(loaderSource.includes("ensureCompatibilityForSelection"));
+  assert.ok(loaderSource.includes("withRuntimeMasterVersion"));
+  assert.ok(loaderSource.includes("masterVersion: roleCatalog.masterVersion"));
+  assert.ok(loaderSource.includes("loadRoleRuntimePackages("));
+  assert.ok(loaderSource.includes("runtimeMetadataRequests.get(url)"));
+  assert.ok(loaderSource.includes("runtimeMetadataRequests.set(url, request)"));
   assert.ok(loaderSource.includes('addEntry(findRegistryEntry(entry.characterId, "head", entry.headCostume3dId, entry.unit))'));
   assert.ok(loaderSource.includes('addEntry(findRegistryEntry(entry.characterId, "head_optional", entry.headCostume3dId, entry.unit))'));
   assert.ok(wardrobeSource.includes("ensureCompatibility?: (selection: CustomPartSelection) => Promise<void>;"));
@@ -272,6 +277,7 @@ test("engine outline shell follows the captured Sekai outline pass", () => {
   assert.ok(outlineSource.includes("blending: THREE.NoBlending"));
   assert.ok(outlineSource.includes("shader.uniforms.uSekaiOutlineWidth = {"));
   assert.ok(outlineSource.includes("shader.uniforms.uSekaiOutlineFactor = {"));
+  assert.ok(outlineSource.includes("shader.uniforms.uSekaiOutlineOffset = {"));
   assert.ok(outlineSource.includes("sekaiCostumeShopOutlineSettings.widthMin"));
   assert.ok(outlineSource.includes("evaluateSekaiOutlineFovFactor(camera.fov)"));
   assert.ok(outlineSource.includes("uSekaiCharacterOutlineColor"));
@@ -294,6 +300,9 @@ test("engine outline shell follows the captured Sekai outline pass", () => {
   assert.ok(!prefabRuntimeSource.includes('geometry.setAttribute("uv2", new THREE.Float32BufferAttribute(source.uv1!'));
   assert.ok(!outlineSource.includes("vec3 outlineDirection = objectNormal;"));
   assert.ok(outlineSource.includes("float outlineScale = clamp(color.r, 0.0, 1.0);"));
+  assert.ok(outlineSource.includes("float outlineOffsetScale = clamp(color.b, 0.0, 1.0);"));
+  assert.ok(outlineSource.includes("vec4 projectedCameraOrigin = projectionMatrix * viewMatrix * vec4(cameraPosition, 1.0);"));
+  assert.ok(outlineSource.includes("gl_Position += projectedCameraOrigin * (-0.01 * uSekaiOutlineOffset) * outlineOffsetScale;"));
   assert.ok(!outlineSource.includes("if (vOutlineMask <= 0.01) discard;"));
 });
 
@@ -514,7 +523,7 @@ test("combined runtime imports apply character height before capture camera fram
 
   assert.match(
     engineSource,
-    /this\.currentBodyAsset = characterAsset\.bodyAsset;\s+this\.currentHeadAsset = characterAsset\.headAsset;\s+(?:this\.lastConstraintSetupDiagnostics = null;\s+)?this\.applyCharacterHeight\(characterAsset\.bodyAsset\.characterHeightMeters \?\? this\.characterHeight\);/s
+    /this\.currentBodyAsset = characterAsset\.bodyAsset;\s+this\.currentHeadAsset = characterAsset\.headAsset;\s+this\.characterLighting\.setCharacterSkinColors\(characterAsset\.skinColors \?\? null\);\s+(?:this\.lastConstraintSetupDiagnostics = null;\s+)?this\.applyCharacterHeight\(characterAsset\.bodyAsset\.characterHeightMeters \?\? this\.characterHeight\);/s
   );
 });
 
@@ -566,7 +575,7 @@ test("face sdf follows exported capable materials by default and remains overrid
     shaderSource,
     /if \(\(uFaceSdfEnabled > 0\.5 \|\| uFaceDebugMode > 0\.5\) && uUseFaceShadowTex > 0\.5\)/
   );
-  assert.match(shaderSource, /vFaceShadowUv = abs\(uv1\.x\) \+ abs\(uv1\.y\) > 0\.000001 \? uv1 : uv;/);
+  assert.match(shaderSource, /vFaceShadowUv = uv1;/);
   assert.match(
     headMaterialSource,
     /loadRuntimeTexture\(\s*textureLoader,\s*slot\.faceShadowTex,\s*THREE\.NoColorSpace\s*\)/
@@ -593,7 +602,7 @@ test("face sdf uses official face-only head light parameters", () => {
   assert.match(shaderSource, /uniform vec2 uHeadDotDirectionalLight;/);
   assert.match(shaderSource, /uniform float uUseFaceShadowLimiter;/);
   assert.match(shaderSource, /uniform float uFaceShadowLimitRange;/);
-  assert.match(shaderSource, /sdfValue = uFaceSdfMirror \* uHeadDotDirectionalLight\.x <= 0\.0 \? sdf1 : sdf0;/);
+  assert.match(shaderSource, /sdfValue = uHeadDotDirectionalLight\.x <= 0\.0 \? sdf1 : sdf0;/);
   assert.match(shaderSource, /faceThreshold = min\(/);
   assert.match(shaderSource, /faceShadow = sekaiFaceShadow\(sdfValue, faceThreshold, uShadowWidth, uFadeMode\);/);
   assert.match(shaderSource, /shadowBand = max\(shadowBand, faceShadow\);/);
@@ -606,7 +615,7 @@ test("face sdf uses official face-only head light parameters", () => {
   assert.doesNotMatch(shaderSource, /rangeLimit \* uShadowWeight/);
   assert.match(
     shaderSource,
-    /shadowValue = mix\(\s*shadowValue,\s*sekaiGammaTexture\(texture2D\(uShadowTex, vUv\)\.rgb\),\s*clamp\(uShadowTexWeight, 0\.0, 1\.0\)\s*\)/s
+    /shadowValue = mix\(\s*shadowValue,\s*sekaiGammaTexture\(texture2D\(uShadowTex, mainUv\)\.rgb\),\s*clamp\(uShadowTexWeight, 0\.0, 1\.0\)\s*\)/s
   );
   assert.match(shaderSource, /float officialShadowBand = sekaiBaseShadow\(/);
   assert.match(shaderSource, /uniform float uFadeMode;/);
@@ -672,9 +681,10 @@ test("body and face share the captured skin ramp while keeping face shadow contr
   );
 
   assert.match(characterLightingSource, /vec3 sekaiSkinRamp\(/);
-  assert.match(characterLightingSource, /vec3 firstBand = mix\(lit, mid, clamp\(shadow \* 2\.0, 0\.0, 1\.0\)\)/);
-  assert.match(shaderSource, /mainColor \* sekaiSkinRamp\(/);
-  assert.match(shaderSource, /float skinShadow =\s+uFaceSdfEnabled > 0\.5/s);
+  assert.match(characterLightingSource, /vec3 upperBand = mix\(mid, defaultSkin, clamp\(skinValue \* 2\.0 - 1\.0, 0\.0, 1\.0\)\)/);
+  assert.match(characterLightingSource, /return mix\(dark, upperBand, clamp\(skinValue \* 2\.0, 0\.0, 1\.0\)\)/);
+  assert.match(shaderSource, /float skinValue = mix\(/);
+  assert.doesNotMatch(shaderSource, /uFaceSkinShadowStrength/);
   assert.doesNotMatch(shaderSource, /faceSkinMask|faceSkinRamp|skinWarmBias/);
   assert.match(headMaterialSource, /shaderSkinColorDefault/);
   assert.match(headMaterialSource, /shaderSkinColor1/);
@@ -749,18 +759,19 @@ test("character shader keeps sssekai-verified C/S/H and vertex color channel sem
 
   assert.match(
     shaderSource,
-    /shadowValue = mix\(\s*shadowValue,\s*sekaiGammaTexture\(texture2D\(uShadowTex, vUv\)\.rgb\),\s*clamp\(uShadowTexWeight, 0\.0, 1\.0\)\s*\)/s
+    /shadowValue = mix\(\s*shadowValue,\s*sekaiGammaTexture\(texture2D\(uShadowTex, mainUv\)\.rgb\),\s*clamp\(uShadowTexWeight, 0\.0, 1\.0\)\s*\)/s
   );
-  assert.match(shaderSource, /float skinMask = sekaiSkinMask\(/);
-  assert.match(lightingSource, /float valueMask = clamp\(valueSample\.r, 0\.0, 1\.0\);/);
-  assert.match(lightingSource, /float alphaMask = 1\.0 - smoothstep\(0\.02, 0\.2, valueSample\.a\);/);
+  assert.match(shaderSource, /float skinMask = uHasValueTex > 0\.5\s+\? step\(0\.5, valueSample\.r\)\s+: 0\.0;/s);
+  assert.match(lightingSource, /vec3 mid = globalShadow \* shadow1Skin;/);
+  assert.match(lightingSource, /vec3 dark = globalShadow \* shadow2Skin;/);
+  assert.doesNotMatch(lightingSource, /sekaiSkinMask|inferred|alphaMask/);
   assert.match(shaderSource, /float officialShadowBand = sekaiBaseShadow\(/);
   assert.match(shaderSource, /vertexOutlineIntensity = clamp\(vColor\.r, 0\.0, 1\.0\);/);
   assert.match(shaderSource, /vertexRimMask = clamp\(vColor\.g, 0\.0, 1\.0\);/);
   assert.match(shaderSource, /float rimMask = vertexRimMask;/);
-  assert.match(shaderSource, /vFaceShadowUv = abs\(uv1\.x\) \+ abs\(uv1\.y\) > 0\.000001 \? uv1 : uv;/);
-  assert.match(shaderSource, /texture2D\(uFaceShadowTex, vFaceShadowUv\)/);
-  assert.match(shaderSource, /texture2D\(uFaceShadowTex, vec2\(-vFaceShadowUv\.x, vFaceShadowUv\.y\)\)/);
+  assert.match(shaderSource, /vFaceShadowUv = uv1;/);
+  assert.match(shaderSource, /texture2D\(uFaceShadowTex, faceShadowUv\)/);
+  assert.match(shaderSource, /vec2\(-faceShadowUv\.x, faceShadowUv\.y\)/);
 });
 
 test("projected character shadows are separate scene objects", () => {
@@ -854,6 +865,10 @@ test("part registry runtime path keeps role motion separate from part packages",
   assert.match(constraintRuntimeSource, /constraint\.worldUpType/);
   assert.match(engineSource, /currentConstraintRuntime/);
   assert.match(prefabSource, /constraintRuntime\.update\(\)/);
+  assert.match(
+    engineSource,
+    /this\.currentConstraintRuntime = createUnityPrefabConstraintRuntime\([\s\S]*?this\.syncUnityPrefabSourceGraph\(\);[\s\S]*?this\.currentExtraBoneRuntime = SekaiExtraBoneRuntime[\s\S]*?this\.currentSpringRuntime = this\.createSpringRuntime/
+  );
   assert.match(
     engineSource,
     /this\.syncOfficialModelCombineSetup\(\);\s*this\.currentExtraBoneRuntime\?\.update\(\);\s*if \(this\.isSpringRuntimeEnabled\(\)\)/

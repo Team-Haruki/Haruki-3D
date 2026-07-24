@@ -169,8 +169,15 @@ export class CustomWardrobeController {
       return;
     }
     const selectedHead = resolveHeadRegistryEntry(this.partSet, selection);
+    const role = this.partSet.roles.find((candidate) =>
+      runtimeRoleId(candidate.characterId, candidate.unit) ===
+      runtimeRoleId(selection.characterId, selection.unit)
+    );
     const entries = [
       this.findRegistryEntry(selection, "body", selection.bodyCostume3dId),
+      role
+        ? this.findRegistryEntry(selection, "body", role.bodyCostume3dId)
+        : null,
       selectedHead,
       this.findRegistryEntry(selection, "hair", selection.hairCostume3dId),
       resolveOptionalHeadRegistryEntry(this.partSet, selection),

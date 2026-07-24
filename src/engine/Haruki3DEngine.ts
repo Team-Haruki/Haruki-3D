@@ -10,6 +10,7 @@ import type {
   HeadAssetManifest,
   MaterialLightingSettings,
   PreviewLightState,
+  RawMaterialProperties,
 } from "../data/sampleScene";
 import {
   sekaiCostumeShopDirectionalLightDirection,
@@ -52,6 +53,7 @@ import {
 } from "../kernel/renderRecipe";
 import type {
   RuntimeCombinedCharacterAsset,
+  RuntimeSkinColors,
 } from "../runtime/runtimeTypes";
 import {
   getCostumeShopCameraPose,
@@ -72,6 +74,7 @@ import {
 } from "./projectedShadow";
 import { buildPrefabNodePathLookup } from "./prefabNodeLookup";
 import {
+  applyUnityCharacterHeight,
   buildUnityPrefabSourceGraph,
   createUnityPrefabConstraintRuntime,
   installUnityRuntimeNativeMeshes,
@@ -121,6 +124,7 @@ import {
 } from "./sekaiPreviewPostProcessor";
 import {
   createSekaiOutlineMaterial,
+  isSekaiOutlinePassEnabled,
 } from "./sekaiOutlineRuntime";
 
 export type {
@@ -278,6 +282,7 @@ export type RuntimeFaceLightDebug = {
 export type RuntimeDebugSnapshot = {
   materialBindingMode: "manifest";
   hairShadowMode: HairShadowMode;
+  skinColors?: RuntimeSkinColors | null;
   hairShadowOffset: { x: number; y: number; z: number };
   hairShadowWorldPosition: { x: number; y: number; z: number };
   funit: RuntimeFUnitDebug;
@@ -955,7 +960,6 @@ export class Haruki3DEngine {
       controllerRimLightInfluence: light.rimLightInfluence,
       controllerRimShadowSharpness: light.rimShadowSharpness,
       rimDirection: getSekaiPreviewRimDirection(),
-      skinTintEnabled: true,
     });
     this.hairMaterial = createSekaiBodyMaterial({
       baseColor: "#7b5b4a",
@@ -974,7 +978,6 @@ export class Haruki3DEngine {
       controllerRimLightInfluence: light.rimLightInfluence,
       controllerRimShadowSharpness: light.rimShadowSharpness,
       rimDirection: getSekaiPreviewRimDirection(),
-      skinTintEnabled: false,
       hairShadowEnabled: false,
       useLambert: true,
       headPosition: this.hairHeadPosition,
@@ -1044,6 +1047,7 @@ export class Haruki3DEngine {
     this.lastNativeMeshInstallDiagnostics = null;
     this.currentBodyAsset = characterAsset.bodyAsset;
     this.currentHeadAsset = characterAsset.headAsset;
+    this.characterLighting.setCharacterSkinColors(characterAsset.skinColors ?? null);
     this.lastConstraintSetupDiagnostics = null;
     this.applyCharacterHeight(characterAsset.bodyAsset.characterHeightMeters ?? this.characterHeight);
     const loaded = await this.loadCombinedCharacterAsset(characterAsset);
@@ -1080,6 +1084,7 @@ export class Haruki3DEngine {
 
     this.bodySlot.add(loaded.root);
     this.currentPrefabSourceGraph = loaded.prefabSourceGraph;
+    applyUnityCharacterHeight(loaded.prefabSourceGraph, this.characterHeight);
     if (loaded.prefabSourceGraph.root !== loaded.root) {
       this.bodySlot.add(loaded.prefabSourceGraph.root);
     }
@@ -1092,17 +1097,17 @@ export class Haruki3DEngine {
       characterAsset.headAsset
     );
     this.prepareCombinedComposition();
-    this.currentExtraBoneRuntime = SekaiExtraBoneRuntime.fromPjskRuntimeExtension(
-      this.currentRuntimeExtension,
-      loaded.prefabSourceGraph.root
-    );
-    this.currentSpringRuntime = this.createSpringRuntime(loaded.prefabSourceGraph.root);
     this.currentConstraintRuntime = createUnityPrefabConstraintRuntime(
       loaded.prefabSourceGraph,
       this.currentRuntimeExtension,
       this.characterHeight
     );
     this.syncUnityPrefabSourceGraph();
+    this.currentExtraBoneRuntime = SekaiExtraBoneRuntime.fromPjskRuntimeExtension(
+      this.currentRuntimeExtension,
+      loaded.prefabSourceGraph.root
+    );
+    this.currentSpringRuntime = this.createSpringRuntime(loaded.prefabSourceGraph.root);
     await Promise.all([
       this.reloadAnimationPlayback({
         resetSpring: preservedAnimation === null,
@@ -1304,12 +1309,11 @@ export class Haruki3DEngine {
     const faceFront = faceTbnLight.z / faceLightLength;
     const useLimiter = (this.faceMaterial.uniforms.uUseFaceShadowLimiter?.value ?? 1) > 0.5;
     const rangeLimit = this.faceMaterial.uniforms.uFaceShadowLimitRange?.value ?? 0;
-    const faceSdfBias = this.faceMaterial.uniforms.uFaceSdfBias?.value ?? 0;
     const headDotY = this.headDotDirectionalLight.y;
     const faceSdfLimit = THREE.MathUtils.clamp(
       (useLimiter
         ? Math.min(Math.max((1 - Math.abs(2 * headDotY - 1)) * 0.5, 0), rangeLimit)
-        : headDotY) + faceSdfBias,
+        : headDotY),
       0,
       1
     );
@@ -1618,20 +1622,7 @@ export class Haruki3DEngine {
       .map((name) => this.findNodeByImportedName(root, name))
       .filter((node): node is THREE.Object3D => node !== null)
       .map((node) => node.getWorldPosition(new THREE.Vector3()));
-    if (toePositions.length > 0) {
-      return toePositions;
-    }
-    const candidates = [
-      this.findNodeByImportedName(root, "Position"),
-      this.findNodeByImportedName(root, "Hip"),
-      this.findNodeByImportedName(root, "Hips"),
-      this.findNodeByImportedName(root, "Waist"),
-      this.findNodeByImportedName(root, "Root"),
-    ];
-    const target = candidates.find((node): node is THREE.Object3D => node !== null) ?? root;
-    const position = new THREE.Vector3();
-    target.getWorldPosition(position);
-    return [position];
+    return toePositions;
   }
 
   getCanvas() {
@@ -2014,11 +2005,15 @@ export class Haruki3DEngine {
 
   private applyCharacterHeight(height: number) {
     const nextHeight = THREE.MathUtils.clamp(height || 1, 0.5, 2);
-    if (Math.abs(nextHeight - this.characterHeight) < 0.0001) {
+    const changed = Math.abs(nextHeight - this.characterHeight) >= 0.0001;
+    this.characterHeight = nextHeight;
+    this.characterRoot.scale.setScalar(1);
+    if (this.currentPrefabSourceGraph) {
+      applyUnityCharacterHeight(this.currentPrefabSourceGraph, nextHeight);
+    }
+    if (!changed) {
       return;
     }
-    this.characterHeight = nextHeight;
-    this.characterRoot.scale.setScalar(nextHeight);
     const pose = getDefaultCameraPose(nextHeight);
     this.setCameraTarget(pose.target);
     this.camera.position.copy(pose.position);
@@ -2289,6 +2284,15 @@ export class Haruki3DEngine {
           skipped.visible = false;
           return skipped;
         }
+        const rawMaterial = sourceMaterial.userData.pjskRawMaterial as
+          | RawMaterialProperties
+          | undefined;
+        if (!isSekaiOutlinePassEnabled(rawMaterial)) {
+          const skipped = new THREE.MeshBasicMaterial();
+          skipped.name = "pjsk_shell_outline_disabled";
+          skipped.visible = false;
+          return skipped;
+        }
         const lighting = sourceMaterial.userData.pjskLighting as
           | MaterialLightingSettings
           | undefined;
@@ -2299,9 +2303,10 @@ export class Haruki3DEngine {
           Boolean(mesh.geometry.getAttribute("uv2"));
         const outlineMaterial = createSekaiOutlineMaterial(
           Boolean(mesh.geometry.getAttribute("color")),
-          sourceMaterial.userData.pjskRawMaterial,
+          rawMaterial,
           useSecondNormal,
-          extractSekaiOutlineMainTexture(sourceMaterial)
+          extractSekaiOutlineMainTexture(sourceMaterial),
+          sourceMaterial
         );
         this.characterLighting.applyOutlineMaterial(outlineMaterial);
         return outlineMaterial;

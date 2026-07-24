@@ -27,6 +27,33 @@ test("stable runtime URLs use the one-month browser asset contract", () => {
   ).join("\n"), /max-age=2592000 without immutable/);
 });
 
+test("the master-version discovery catalog is revalidated", () => {
+  const catalogUrl =
+    "https://assets.example/jp/parts/by-role/5/idol/runtime-role-catalog.msgpack.br";
+  assert.deepEqual(validateAssetHeaders(
+    catalogUrl,
+    new Headers({
+      "cache-control": "no-cache",
+      "content-type": "application/msgpack",
+    })
+  ), []);
+  assert.match(validateAssetHeaders(
+    catalogUrl,
+    new Headers({
+      "cache-control": oneMonth,
+      "content-type": "application/msgpack",
+    })
+  ).join("\n"), /role catalog must be revalidated/);
+
+  assert.deepEqual(validateAssetHeaders(
+    "https://assets.example/jp/parts/by-role/5/idol/part-registry.msgpack.br?masterVersion=2026072501",
+    new Headers({
+      "cache-control": oneMonth,
+      "content-type": "application/msgpack",
+    })
+  ), []);
+});
+
 test("header validation rejects double Brotli decoding and stale MIME types", () => {
   assert.match(
     validateAssetHeaders(

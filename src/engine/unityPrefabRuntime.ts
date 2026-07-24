@@ -75,6 +75,21 @@ export type NativeMeshInstallDiagnostics = {
   warnings: string[];
 };
 
+export function applyUnityCharacterHeight(
+  graph: UnityPrefabSourceGraph,
+  characterHeight: number
+) {
+  const height = THREE.MathUtils.clamp(characterHeight || 1, 0.5, 2);
+  const positionNote = graph.nodeByPath.get("body/Position");
+  if (!positionNote) {
+    throw new Error("Official CharacterModel PositionNote 'body/Position' was not found.");
+  }
+  positionNote.scale.setScalar(height);
+  positionNote.updateMatrix();
+  graph.root.updateMatrixWorld(true);
+  return positionNote;
+}
+
 type RuntimePrefabTransformSource = {
   pathId?: number;
   name?: string | null;
@@ -545,45 +560,12 @@ function resolveUnityPrefabSourceScaleCorrection(extension: unknown) {
       bodyManifest.CharacterHeightMeters ??
       bodyManifest.characterHeightMeters
   );
-  const bodyBundlePath = String(
-    character.bodyBundlePath ??
-      character.BodyBundlePath ??
-      bodyManifest.BundlePath ??
-      bodyManifest.bundlePath ??
-      ""
-  ).replace(/\\/g, "/");
-  const characterModelScaleMeters = resolveCharacterModelScaleMeters(
-    bodyBundlePath,
-    characterHeightMeters
-  );
-  const scale = characterHeightMeters && characterHeightMeters > 0 && characterModelScaleMeters
-    ? characterModelScaleMeters / characterHeightMeters
-    : 1;
-  const hasModelScaleOverride = characterHeightMeters !== null &&
-    characterModelScaleMeters !== null &&
-    Math.abs(characterModelScaleMeters - characterHeightMeters) > 0.000001;
   return {
     characterHeightMeters,
-    characterModelScaleMeters,
-    scale,
-    reason: hasModelScaleOverride ? "frida-body-character-model-scale" : "identity",
+    characterModelScaleMeters: characterHeightMeters,
+    scale: 1,
+    reason: "master-character-height-via-position-note",
   };
-}
-
-function resolveCharacterModelScaleMeters(
-  bodyBundlePath: string,
-  characterHeightMeters: number | null
-) {
-  const normalized = bodyBundlePath.toLowerCase();
-  if (
-    characterHeightMeters !== null &&
-    Math.abs(characterHeightMeters - 1.68) < 0.0001 &&
-    normalized.includes("/body/99/0141/") &&
-    normalized.endsWith("/ladies_s.bundle")
-  ) {
-    return 1.64;
-  }
-  return characterHeightMeters;
 }
 
 export function installUnityRuntimeNativeMeshes(
@@ -863,26 +845,36 @@ export function makeUnityPrefabHeadFollowDebugSnapshot(
   }
   const root = graph.root;
   root.updateMatrixWorld(true);
-  const nodeByPath = buildPrefabNodePathLookup(root);
+  const assembly = readRuntimeUnitySetup0414(extension)?.bodyHeadAssembly;
+  const liveNodeByPath = buildPrefabNodePathLookup(root);
   const resolveKeyNode = (
     candidates: readonly string[]
   ): PrefabHeadFollowNodeDebug | null => {
-    const resolved = resolvePrefabNodeCandidate(nodeByPath, candidates);
+    const resolved = resolvePrefabGraphNode(graph.nodeByPath, candidates)
+      ?? resolvePrefabNodeCandidate(liveNodeByPath, candidates);
     return resolved ? makePrefabNodeDebug(resolved.node, root) : null;
   };
   const bodyNeck = resolveKeyNode([
+    assembly?.parentCombineNodeAPath ?? "",
+    graph.debug.sourcePath ?? "",
     "body/Position/PositionOffset/Hip/Waist/Spine/Chest/Neck",
     "body/Position/Hip/Waist/Spine/Chest/Neck",
   ]);
   const bodyHead = resolveKeyNode([
+    assembly?.parentCombineNodeBPath ?? "",
+    graph.debug.sourcePath ? `${graph.debug.sourcePath}/Head` : "",
     "body/Position/PositionOffset/Hip/Waist/Spine/Chest/Neck/Head",
     "body/Position/Hip/Waist/Spine/Chest/Neck/Head",
   ]);
   const facePosition = resolveKeyNode(["face/Position"]);
   const faceNeck = resolveKeyNode([
+    assembly?.childCombineNodeAPath ?? "",
+    graph.debug.targetPath ?? "",
     "face/Position/Hip/Waist/Spine/Chest/Neck",
   ]);
   const faceHead = resolveKeyNode([
+    assembly?.childCombineNodeBPath ?? "",
+    graph.debug.targetPath ? `${graph.debug.targetPath}/Head` : "",
     "face/Position/Hip/Waist/Spine/Chest/Neck/Head",
   ]);
   const meshContainerPosition = resolveKeyNode([

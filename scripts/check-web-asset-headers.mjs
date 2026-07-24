@@ -26,6 +26,7 @@ export function validateAssetHeaders(rawUrl, headers, webOrigin = null) {
   const errors = [];
   let expectedType = null;
   let asset = true;
+  const roleCatalog = pathname.endsWith("/runtime-role-catalog.msgpack.br");
 
   if (pathname.endsWith(".msgpack.br")) expectedType = "application/msgpack";
   else if (pathname.endsWith(".ktx2")) expectedType = "image/ktx2";
@@ -40,6 +41,9 @@ export function validateAssetHeaders(rawUrl, headers, webOrigin = null) {
   } else {
     errors.push("unsupported asset extension");
   }
+  if (roleCatalog) {
+    asset = false;
+  }
 
   if (expectedType && type !== expectedType) {
     errors.push(`expected Content-Type ${expectedType}, received ${type || "<missing>"}`);
@@ -50,7 +54,9 @@ export function validateAssetHeaders(rawUrl, headers, webOrigin = null) {
   if (asset && !hasAssetCache(headers)) {
     errors.push(`assets require public max-age=${assetMaxAge} without immutable`);
   }
-  if (!asset && (hasAssetCache(headers) || !hasRevalidation(headers))) {
+  if (roleCatalog && (hasAssetCache(headers) || !hasRevalidation(headers))) {
+    errors.push("runtime role catalog must be revalidated to discover the current masterVersion");
+  } else if (!asset && (hasAssetCache(headers) || !hasRevalidation(headers))) {
     errors.push("HTML must be revalidated instead of using the asset cache policy");
   }
 

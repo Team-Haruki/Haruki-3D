@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   evaluateSekaiBaseShadow,
   evaluateSekaiFaceShadow,
-  evaluateSekaiHighlightRolloff,
+  evaluateSekaiSkinColor,
   previewLightDefaults,
   sekaiCostumeShopControllerDefaults,
   sekaiCostumeShopDirectionalLightDirection,
@@ -30,7 +30,7 @@ test("costume preview uses the official costume-shop directional transform", () 
     previewLightDefaults.x,
     previewLightDefaults.y,
     previewLightDefaults.z
-  ) - 1) < 1e-12);
+  ) - 1) < 1e-7);
   assert.equal(previewLightDefaults.shadowThreshold, 0.40625);
   assert.equal(previewLightDefaults.characterAmbient, 1);
   assert.equal(previewLightDefaults.rimColorAlpha, 1);
@@ -53,12 +53,12 @@ test("costume preview controller defaults come from the coherent 6.6.2 frame", (
     rimEdgeSmoothness: 0.0010000000474974513,
     rimEmission: 0,
     rimLightInfluence: 1,
-    shadowRimColor: { r: 0.5, g: 0.5, b: 0.5 },
+    shadowRimColor: { r: 0, g: 0, b: 0 },
     rimShadowSharpness: 0.5,
   });
-  assert.ok(Math.abs(sekaiCostumeShopRimLightDirection.x - 0.8137976813493737) < 1e-12);
-  assert.ok(Math.abs(sekaiCostumeShopRimLightDirection.y + 0.3420201433256687) < 1e-12);
-  assert.ok(Math.abs(sekaiCostumeShopRimLightDirection.z - 0.4698463103929543) < 1e-12);
+  assert.ok(Math.abs(sekaiCostumeShopRimLightDirection.x - 0.833125114440918) < 1e-12);
+  assert.ok(Math.abs(sekaiCostumeShopRimLightDirection.y + 0.3420201539993286) < 1e-12);
+  assert.ok(Math.abs(sekaiCostumeShopRimLightDirection.z - 0.43465474247932434) < 1e-12);
 });
 
 test("official base toon uses half Lambert only when enabled", () => {
@@ -112,8 +112,6 @@ test("official FaceSDF mirrors UV choice and reuses the toon band", () => {
     mirroredSdf: 0.1,
     headDotX: -0.5,
     headDotY: 0.75,
-    mirror: 1,
-    bias: 0,
     useLimiter: true,
     rangeLimit: 0.25,
     width: 0.2,
@@ -125,11 +123,33 @@ test("official FaceSDF mirrors UV choice and reuses the toon band", () => {
   assert.ok(Math.abs(result.shadow - 0.9259259259259258) < 1e-6);
 });
 
-test("official highlight rolloff preserves mids and compresses bright channels", () => {
+test("official skin path uses shaded C/S red and H.r as a binary selector", () => {
   assert.deepEqual(
-    evaluateSekaiHighlightRolloff([0.25, 0.5, 1], 1, 0.5),
-    [0.25, 0.5, 0.75]
+    evaluateSekaiSkinColor({
+      skinValue: 0,
+      globalShadow: [0.5, 0.5, 0.5],
+      defaultSkin: [1, 0.9, 0.8],
+      shadow1Skin: [0.8, 0.6, 0.7],
+      shadow2Skin: [0.6, 0.3, 0.4],
+    }),
+    [0.3, 0.15, 0.2]
   );
-  const bright = evaluateSekaiHighlightRolloff([1, 1, 1], 2, 0.98);
-  assert.ok(bright.every((channel) => channel > 0.98 && channel < 1));
+  assert.deepEqual(
+    evaluateSekaiSkinColor({
+      skinValue: 0.5,
+      globalShadow: [0.5, 0.5, 0.5],
+      defaultSkin: [1, 0.9, 0.8],
+      shadow1Skin: [0.8, 0.6, 0.7],
+      shadow2Skin: [0.6, 0.3, 0.4],
+    }),
+    [0.4, 0.3, 0.35]
+  );
+  const lit = evaluateSekaiSkinColor({
+    skinValue: 1,
+    globalShadow: [0.5, 0.5, 0.5],
+    defaultSkin: [1, 0.9, 0.8],
+    shadow1Skin: [0.8, 0.6, 0.7],
+    shadow2Skin: [0.6, 0.3, 0.4],
+  });
+  assert.ok(lit.every((channel, index) => Math.abs(channel - [1, 0.9, 0.8][index]) < 1e-12));
 });

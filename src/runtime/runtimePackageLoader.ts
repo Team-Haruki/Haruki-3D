@@ -40,6 +40,7 @@ export type RuntimePackageLoadOptions = {
 
 const parsedRuntimeMetadata = new Map<string, { version: string; value: unknown }>();
 const parsedRuntimeMetadataLimit = 16;
+const runtimeMetadataRequests = new Map<string, Promise<unknown>>();
 
 export async function loadRuntimePackageFromBaseUrl(
   baseUrl: string,
@@ -89,28 +90,39 @@ export function resolveRuntimePackageUrl(baseUrl: string, relativePath: string) 
   return new URL(normalized, base).toString();
 }
 
+function withRuntimeMasterVersion(url: string, masterVersion: string | undefined) {
+  if (!masterVersion) {
+    return url;
+  }
+  const versioned = new URL(url, window.location.href);
+  versioned.searchParams.set("masterVersion", masterVersion);
+  return versioned.toString();
+}
+
 async function loadPartPackageSetFromBaseUrl(
   baseUrl: string,
   options: RuntimePackageLoadOptions
 ): Promise<PartPackageSet> {
   const role = parseRuntimeRoleIdOption(options.roleId);
   const scopedRoot = `parts/by-role/${role.characterId}/${runtimePathUnitSegment(role.unit)}`;
-  const [registryInput, roleCatalog] = await Promise.all([
-    fetchRuntimeMessagePack(
-      resolveRuntimePackageUrl(baseUrl, `${scopedRoot}/part-registry.msgpack.br`)
-    ) as Promise<PartRegistryInput>,
-    fetchRuntimeMessagePack(
-      resolveRuntimePackageUrl(baseUrl, `${scopedRoot}/runtime-role-catalog.msgpack.br`)
-    ) as Promise<RuntimeRoleCatalog>,
-  ]);
+  const roleCatalog = await fetchRuntimeMessagePack(
+    resolveRuntimePackageUrl(baseUrl, `${scopedRoot}/runtime-role-catalog.msgpack.br`)
+  ) as RuntimeRoleCatalog;
+  const roles = validateScopedRoleCatalog(roleCatalog, role.characterId, role.unit);
+  const registryInput = await fetchRuntimeMessagePack(
+    withRuntimeMasterVersion(
+      resolveRuntimePackageUrl(baseUrl, `${scopedRoot}/part-registry.msgpack.br`),
+      roleCatalog.masterVersion
+    )
+  ) as PartRegistryInput;
   const registry = normalizePartRegistry(registryInput);
   const compatibility = null;
-  const roles = validateScopedRoleCatalog(roleCatalog, role.characterId, role.unit);
   const packages = new Map<string, PartRuntimePackage>();
   if (options.deferDefaultSelection) {
     return {
       registry,
       roles,
+      masterVersion: roleCatalog.masterVersion,
       compatibility,
       packages,
       roleRuntimes: new Map<string, RoleRuntimePackage>(),
@@ -157,11 +169,13 @@ async function loadPartPackageSetFromBaseUrl(
   const roleRuntimes = await loadRoleRuntimePackages(
     baseUrl,
     roles,
+    roleCatalog.masterVersion,
     targetRoleIds
   );
   return {
     registry,
     roles,
+    masterVersion: roleCatalog.masterVersion,
     compatibility,
     packages,
     roleRuntimes,
@@ -188,12 +202,20 @@ export async function ensureRoleRuntimePackage(
     return null;
   }
   const runtime = await fetchOptionalRuntimeMessagePack<RoleRuntimePackage>(
-    resolveRuntimePackageUrl(partSet.baseUrl, entry.roleRuntimePath)
+    withRuntimeMasterVersion(
+      resolveRuntimePackageUrl(partSet.baseUrl, entry.roleRuntimePath),
+      partSet.masterVersion
+    )
   );
   if (!runtime) {
     return null;
   }
-  const normalized = normalizeRoleRuntimePackage(partSet.baseUrl, entry.roleRuntimePath, runtime);
+  const normalized = normalizeRoleRuntimePackage(
+    partSet.baseUrl,
+    entry.roleRuntimePath,
+    runtime,
+    partSet.masterVersion
+  );
   const normalizedCharacterId = normalized.role?.characterId ?? characterId;
   const normalizedUnit = normalized.role?.unit ?? unit;
   partSet.roleRuntimes.set(runtimeRoleId(normalizedCharacterId, normalizedUnit), normalized);
@@ -203,6 +225,7 @@ export async function ensureRoleRuntimePackage(
 async function loadRoleRuntimePackages(
   baseUrl: string,
   roles: RuntimeRoleCatalogEntry[],
+  masterVersion: string,
   targetRoleIds: ReadonlySet<string> | null = null
 ): Promise<Map<string, RoleRuntimePackage>> {
   const result = new Map<string, RoleRuntimePackage>();
@@ -213,7 +236,10 @@ async function loadRoleRuntimePackages(
   const loaded = await Promise.all(entries.map(async (entry) => ({
     entry,
     runtime: await fetchOptionalRuntimeMessagePack<RoleRuntimePackage>(
-      resolveRuntimePackageUrl(baseUrl, entry.roleRuntimePath!)
+      withRuntimeMasterVersion(
+        resolveRuntimePackageUrl(baseUrl, entry.roleRuntimePath!),
+        masterVersion
+      )
     ),
   })));
   for (const item of loaded) {
@@ -222,7 +248,12 @@ async function loadRoleRuntimePackages(
     }
     const characterId = item.runtime.role?.characterId ?? item.entry.characterId;
     const unit = item.runtime.role?.unit ?? item.entry.unit ?? null;
-    const runtime = normalizeRoleRuntimePackage(baseUrl, item.entry.roleRuntimePath!, item.runtime);
+    const runtime = normalizeRoleRuntimePackage(
+      baseUrl,
+      item.entry.roleRuntimePath!,
+      item.runtime,
+      masterVersion
+    );
     result.set(runtimeRoleId(characterId, unit), runtime);
   }
   return result;
@@ -231,21 +262,26 @@ async function loadRoleRuntimePackages(
 function normalizeRoleRuntimePackage(
   baseUrl: string,
   roleRuntimePath: string,
-  runtime: RoleRuntimePackage
+  runtime: RoleRuntimePackage,
+  masterVersion?: string
 ): RoleRuntimePackage {
   const motionPackage = runtime.motionPackage;
   const unityMotionJson = motionPackage?.unityMotionJson;
-  if (!unityMotionJson || /^[a-z][a-z0-9+.-]*:/i.test(unityMotionJson) || unityMotionJson.startsWith("/")) {
+  if (!unityMotionJson) {
     return runtime;
   }
+  const resolvedMotionUrl =
+    /^[a-z][a-z0-9+.-]*:/i.test(unityMotionJson) || unityMotionJson.startsWith("/")
+      ? new URL(unityMotionJson, window.location.href).toString()
+      : resolveRuntimePackageUrl(
+          baseUrl,
+          resolveSiblingRuntimePath(roleRuntimePath, unityMotionJson)
+        );
   return {
     ...runtime,
     motionPackage: {
       ...motionPackage,
-      unityMotionJson: resolveRuntimePackageUrl(
-        baseUrl,
-        resolveSiblingRuntimePath(roleRuntimePath, unityMotionJson)
-      ),
+      unityMotionJson: withRuntimeMasterVersion(resolvedMotionUrl, masterVersion),
     },
   };
 }
@@ -303,9 +339,12 @@ async function ensureCompatibilityForSelection(
     return;
   }
   partSet.compatibility = await fetchRuntimeMessagePack(
-    resolveRuntimePackageUrl(
-      baseUrl,
-      `parts/compat/by-unit/${runtimePathUnitSegment(unit)}/head-hair-compatibility.msgpack.br`
+    withRuntimeMasterVersion(
+      resolveRuntimePackageUrl(
+        baseUrl,
+        `parts/compat/by-unit/${runtimePathUnitSegment(unit)}/head-hair-compatibility.msgpack.br`
+      ),
+      partSet.masterVersion
     )
   ) as HeadHairCompatibility;
 }
@@ -328,7 +367,11 @@ function validateScopedRoleCatalog(
   characterId: number,
   unit: string | null
 ): RuntimeRoleCatalogEntry[] {
-  const roles = catalog?.version === 2 && typeof catalog.masterVersion === "string" && catalog.masterVersion.length > 0 && Array.isArray(catalog.roles)
+  const supportedVersion =
+    catalog?.version === 2 ||
+    catalog?.version === 3 ||
+    catalog?.version === 4;
+  const roles = supportedVersion && typeof catalog.masterVersion === "string" && catalog.masterVersion.length > 0 && Array.isArray(catalog.roles)
     ? catalog.roles
     : [];
   if (roles.length !== 1) {
@@ -349,11 +392,31 @@ function validateScopedRoleCatalog(
     !Number.isInteger(role.bodyCostume3dId) || role.bodyCostume3dId <= 0 ||
     !Number.isInteger(role.headCostume3dId) || role.headCostume3dId <= 0 ||
     !Number.isInteger(role.hairCostume3dId) || role.hairCostume3dId <= 0 ||
+    (catalog.version >= 3 && !isRuntimeSkinColors(role.skinColors)) ||
+    (
+      catalog.version >= 4 &&
+      (
+        typeof role.characterHeightMeters !== "number" ||
+        !Number.isFinite(role.characterHeightMeters) ||
+        role.characterHeightMeters <= 0
+      )
+    ) ||
     role.roleRuntimePath !== expectedRuntimePath
   ) {
     throw new Error(`Runtime role catalog is invalid for ${runtimeRoleId(characterId, unit)}.`);
   }
   return roles;
+}
+
+function isRuntimeSkinColors(value: RuntimeRoleCatalogEntry["skinColors"]) {
+  const isColor = (color: unknown) =>
+    typeof color === "string" && /^#[0-9a-f]{6}$/i.test(color);
+  return Boolean(
+    value &&
+    isColor(value.default) &&
+    isColor(value.shadow1) &&
+    isColor(value.shadow2)
+  );
 }
 
 function expectedRuntimeRoleIdentity(roleId: number): { characterId: number; unit: string } | null {
@@ -398,14 +461,28 @@ function withPartRuntimePackagePath(
 }
 
 export async function fetchRuntimeMessagePack(url: string) {
-  if (!url.endsWith(".msgpack.br")) {
+  if (!/\.msgpack\.br(?:[?#]|$)/i.test(url)) {
     throw new Error(`Runtime metadata must use .msgpack.br: ${url}`);
   }
-  const response = await fetch(url);
-  if (!response.ok) {
-    throw new Error(`Failed to load ${url}: HTTP ${response.status}`);
+  const existing = runtimeMetadataRequests.get(url);
+  if (existing) {
+    return existing;
   }
-  return readMessagePackBrotliRuntime(response, url);
+  const request = (async () => {
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to load ${url}: HTTP ${response.status}`);
+    }
+    return readMessagePackBrotliRuntime(response, url);
+  })();
+  runtimeMetadataRequests.set(url, request);
+  try {
+    return await request;
+  } finally {
+    if (runtimeMetadataRequests.get(url) === request) {
+      runtimeMetadataRequests.delete(url);
+    }
+  }
 }
 
 async function readMessagePackBrotliRuntime(response: Response, url: string) {

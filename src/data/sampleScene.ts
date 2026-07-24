@@ -132,14 +132,10 @@ export type MaterialLightingSettings = {
   useLambert?: boolean | null;
   useValueTex?: boolean | null;
   useFaceSdf?: boolean | null;
-  useSkinColor?: boolean | null;
-  skinMaskMode?: number | null;
-  faceSdfMirror?: number | null;
-  faceSdfBias?: number | null;
   useFaceShadowLimiter?: boolean | null;
   rangeLimit?: number | null;
-  faceSkinShadowStrength?: number | null;
   hairShadow?: boolean | null;
+  headNormalBlend?: number | null;
 };
 
 export type RawMaterialTextureProperty = {
@@ -326,9 +322,9 @@ export function sekaiPluginLightLocationToThreeDirection(location: Vec3): Vec3 {
   };
 }
 
-// CharacterLightConstants.DIRECTIONAL_LIGHT_ROTATION is (-15, 50, 0) in the
-// costume shop. Unity applies Euler rotations in Z-X-Y order; converting its
-// transform.forward into the viewer's mirrored-X basis gives this direction.
+// CharacterLightConstants.DIRECTIONAL_LIGHT_ROTATION is (-15, 50, 0), but the
+// light is parented below CameraRoot. Use the coherent CostumeShop frame's
+// final world-space forward, converted into the viewer's mirrored-X basis.
 export const sekaiCostumeShopDirectionalLightRotationDegrees: Vec3 = {
   x: -15,
   y: 50,
@@ -336,15 +332,15 @@ export const sekaiCostumeShopDirectionalLightRotationDegrees: Vec3 = {
 };
 
 export const sekaiCostumeShopDirectionalLightDirection: Vec3 = {
-  x: -0.7399421116938479,
-  y: 0.2588190451025207,
-  z: 0.6208851530148456,
+  x: -0.7127446532249451,
+  y: 0.258819043636322,
+  z: 0.6519262194633484,
 };
 
 export const sekaiCostumeShopRimLightDirection: Vec3 = {
-  x: 0.8137976813493737,
-  y: -0.3420201433256687,
-  z: 0.4698463103929543,
+  x: 0.833125114440918,
+  y: -0.3420201539993286,
+  z: 0.43465474247932434,
 };
 
 export const sekaiCostumeShopControllerDefaults = {
@@ -358,7 +354,7 @@ export const sekaiCostumeShopControllerDefaults = {
   rimEdgeSmoothness: 0.0010000000474974513,
   rimEmission: 0,
   rimLightInfluence: 1,
-  shadowRimColor: { r: 0.5, g: 0.5, b: 0.5 },
+  shadowRimColor: { r: 0, g: 0, b: 0 },
   rimShadowSharpness: 0.5,
 } as const;
 
@@ -466,10 +462,10 @@ export const sekaiVrmMigrationProfile: SekaiVrmMigrationProfile = {
       "materialSlots",
       "textureRoles",
       "morphChannelBindings",
-    "bodyHeadAssembly",
-    "springBoneSourceMetadata",
-    "characterControllers",
-  ],
+      "bodyHeadAssembly",
+      "springBoneSourceMetadata",
+      "characterControllers",
+    ],
     materialKinds: [
       "body",
       "hair",
@@ -490,9 +486,8 @@ export const sekaiVrmMigrationProfile: SekaiVrmMigrationProfile = {
     "plugin/viewer tuned preview lighting",
   ],
   unresolvedBeforeTrueParity: [
-    "browser equivalent of the runtime face SDF bone-basis driver",
-    "portable runtime face motion outside the native prefab package",
-    "exact Unity shader controller animation tracks",
+    "driver UBO colors that remain unattributed to a named renderer/material",
+    "browser-external host input semantics for interactive CostumeShop camera controls",
   ],
 };
 

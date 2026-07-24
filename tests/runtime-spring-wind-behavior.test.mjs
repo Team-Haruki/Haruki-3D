@@ -71,6 +71,40 @@ test("clearing timeline controls restores official per-bone values and manager d
   assert.equal(snapshot.topOffsets[0].bonePaused, false);
 });
 
+test("spring reset preserves serialized local bone scale", () => {
+  const root = new THREE.Group();
+  addNode(root, "wind");
+  const boneA = addNode(root, "boneA");
+  addNode(root, "boneB");
+  boneA.scale.set(1.2, 0.9, 1.1);
+
+  const runtime = UnityPrefabSpringRuntime.fromPjskRuntimeExtension(
+    makeWindRuntimeExtension(),
+    root
+  );
+
+  assert.ok(runtime);
+  boneA.scale.setScalar(2);
+  runtime.resetPose();
+  assert.deepEqual(boneA.scale.toArray(), [1.2, 0.9, 1.1]);
+});
+
+test("official includeInactive spring discovery retains serialized inactive children", () => {
+  const root = new THREE.Group();
+  addNode(root, "wind");
+  addNode(root, "boneA");
+  addNode(root, "boneB");
+  const extension = makeWindRuntimeExtension();
+  const setup = extension.pjskSpringBone.runtimeUnitySetup;
+  setup.managers[0].activeSelf = false;
+  setup.bones[0].activeInHierarchy = false;
+
+  const runtime = UnityPrefabSpringRuntime.fromPjskRuntimeExtension(extension, root);
+
+  assert.ok(runtime);
+  assert.equal(runtime.getSnapshot().boneCount, 2);
+});
+
 function makeWindRuntimeExtension() {
   return {
     pjskSpringBone: {

@@ -161,7 +161,9 @@ function serveRuntimeFile(root, relativePath, req, res) {
   }
 
   serveResolvedFile(filePath, req, res, {
-    "cache-control": "public, max-age=2592000",
+    "cache-control": /(?:^|\/)runtime-role-catalog\.msgpack\.br$/.test(relativePath)
+      ? "no-cache"
+      : "public, max-age=2592000",
   });
 }
 
@@ -336,6 +338,7 @@ function validateCaptureRequest(input) {
     ),
     springDebugBones: readStringList(input.springDebugBones, input.springDebugBone),
     springDebugAllOffsets: readBoolean(input.springDebugAllOffsets),
+    includeDebugSnapshots: readBoolean(input.includeDebugSnapshots),
   };
 }
 
@@ -345,7 +348,10 @@ function normalizeBodyDebugMode(value) {
   }
   const normalized = String(value);
   return [
+    "off",
     "skin",
+    "main_color",
+    "skin_color",
     "h_r",
     "h_g",
     "h_b",
@@ -927,6 +933,7 @@ async function captureRoleParts(input) {
       imageId: request.imageId,
       cacheMode: request.cacheMode,
       output: outputPath,
+      ...(request.includeDebugSnapshots ? { snapshots: result.snapshots } : {}),
     };
   } finally {
     if (fs.existsSync(tempOutputPath)) {

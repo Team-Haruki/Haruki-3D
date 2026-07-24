@@ -58,6 +58,27 @@ test("projected shadow updates retain official toe-layer state", () => {
   shadow.dispose();
 });
 
+test("a missing toe never duplicates the remaining projected shadow", () => {
+  installFakeCanvasDocument();
+  const shadow = new CharacterProjectedShadowController();
+  shadow.update({
+    targetWorldPositions: [new THREE.Vector3(-0.1, 0.05, 0.2)],
+    lightWorldPosition: new THREE.Vector3(1, 2, -1),
+    characterHeight: 1,
+    visible: true,
+  });
+
+  assert.equal(shadow.group.children[0].visible, false);
+  assert.equal(shadow.group.children[1].visible, true);
+  assert.equal(shadow.group.children[2].visible, false);
+  assert.equal(shadow.group.children[3].visible, false);
+  assert.deepEqual(
+    shadow.getDebugSnapshot(1).targetPositions,
+    [{ x: -0.1, y: 0.05, z: 0.2 }, { x: 0, y: 0, z: 0 }]
+  );
+  shadow.dispose();
+});
+
 test("capture backgrounds retain deterministic dimensions and draw operations", () => {
   const firstLog = installFakeCanvasDocument();
   const first = createCaptureBackgroundTexture(700, 500);

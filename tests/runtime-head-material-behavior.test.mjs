@@ -170,6 +170,7 @@ test("face material cloning preserves Unity Gamma controller values", async () =
         materialPathId: 2,
         materialName: "mtl_chr_face_00",
         materialKind: "face",
+        valueTex: "/face-h.ktx2",
         mode: "clean",
       }],
       proxy: {
@@ -182,7 +183,13 @@ test("face material cloning preserves Unity Gamma controller values", async () =
         hairArc: 1,
       },
     },
-    textureLoader: { async loadAsync() { throw new Error("unexpected texture load"); } },
+    textureLoader: {
+      async loadAsync(url) {
+        const texture = new THREE.Texture();
+        texture.name = url;
+        return texture;
+      },
+    },
     templates: { body: bodyTemplate, hair: bodyTemplate, face: faceTemplate },
     view: { bodyDebugMode: 0, faceDebugMode: 0, faceSdfEnabled: true },
     hair: {
@@ -197,4 +204,15 @@ test("face material cloning preserves Unity Gamma controller values", async () =
   assert.equal(gammaHex(mesh.material.uniforms.uControllerAmbientColor.value), "123456");
   assert.equal(gammaHex(mesh.material.uniforms.uPartsAmbientColor.value), "234567");
   assert.equal(gammaHex(mesh.material.uniforms.uGlobalShadowColor.value), "345678");
+  assert.equal(mesh.material.uniforms.uUseFaceShadowLimiter.value, 1);
+  assert.equal(mesh.material.uniforms.uHasValueTex.value, 1);
+  assert.equal(mesh.material.uniforms.uUseValueTex.value, 0);
+  assert.match(
+    mesh.material.vertexShader,
+    /inverseTransformDirection\(\s*transformedNormal,\s*viewMatrix\s*\)/
+  );
+  assert.doesNotMatch(
+    mesh.material.vertexShader,
+    /mat3\(modelMatrix\) \* objectNormal/
+  );
 });

@@ -2,6 +2,12 @@ import type { BodyAssetManifest, HeadAssetManifest } from "../data/sampleScene";
 
 export type RuntimeNumericArray = number[] | Float32Array | Uint16Array | Uint32Array;
 
+export type RuntimeSkinColors = {
+  default: string;
+  shadow1: string;
+  shadow2: string;
+};
+
 export type RuntimeCombinedCharacterAsset = {
   id: string;
   displayName: string;
@@ -13,5 +19,6 @@ export type RuntimeCombinedCharacterAsset = {
   unityMotionJsonPath?: string;
   bodyAsset: BodyAssetManifest;
   headAsset: HeadAssetManifest;
+  skinColors?: RuntimeSkinColors;
   runtimeExtension?: unknown;
 };

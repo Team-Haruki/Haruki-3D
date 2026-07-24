@@ -6,6 +6,7 @@ import {
   createSekaiOutlineMaterial,
   evaluateSekaiOutlineColor,
   evaluateSekaiOutlineFovFactor,
+  isSekaiOutlinePassEnabled,
   readRawMaterialBoolean,
   readRawMaterialColor,
   readRawMaterialFloat,
@@ -59,7 +60,7 @@ test("raw material lookup preserves unknown exported color properties", () => {
   );
 });
 
-test("raw material feature state prefers values and preserves keyword truth", () => {
+test("raw material feature state prefers values and preserves serialized enabled keywords", () => {
   const raw = rawMaterial({
     floatProperties: [{ name: "_UseLambert", value: 0 }],
     intProperties: [{ name: "_USELAMBERT", value: 1 }],
@@ -70,7 +71,14 @@ test("raw material feature state prefers values and preserves keyword truth", ()
   assert.equal(readRawMaterialFloat(raw, "_uselambert"), 0);
   assert.equal(readRawMaterialBoolean(raw, "_UseLambert", "_LAMBERT"), false);
   assert.equal(readRawMaterialBoolean(raw, "_HairShadow", "_hair_shadow"), true);
-  assert.equal(readRawMaterialBoolean(raw, "_UseFaceSDF", "_use_face_sdf"), false);
+  assert.equal(readRawMaterialBoolean(raw, "_UseFaceSDF", "_use_face_sdf"), true);
+});
+
+test("disabled Unity Outline passes never create a browser shell", () => {
+  assert.equal(isSekaiOutlinePassEnabled(rawMaterial()), true);
+  assert.equal(isSekaiOutlinePassEnabled(rawMaterial({
+    disabledShaderPasses: ["ShadowCaster", "oUtLiNe"],
+  })), false);
 });
 
 test("official outline consumes material tint, main texture transform, and alpha clip", () => {
@@ -137,7 +145,7 @@ test("official outline consumes material tint, main texture transform, and alpha
   texture.dispose();
 });
 
-test("outline color matches the captured 6.6.2 material/global blend formula", () => {
+test("non-Toon outline fallback keeps the bounded material/global blend", () => {
   assert.deepEqual(sekaiCostumeShopOutlineControllerDefaults, {
     color: { r: 0, g: 0, b: 0 },
     blending: 0.5,
@@ -151,4 +159,55 @@ test("outline color matches the captured 6.6.2 material/global blend formula", (
     ),
     { r: 0.25, g: 0.175, b: 0.35 }
   );
+});
+
+test("outline reuses the character Toon color path instead of a flat shell", () => {
+  const source = new THREE.ShaderMaterial({
+    uniforms: {
+      uMainTex: { value: new THREE.Texture() },
+      uSharedValue: { value: 0.25 },
+    },
+    vertexShader: `
+      #include <common>
+      #include <beginnormal_vertex>
+      #include <begin_vertex>
+      #include <skinning_vertex>
+      void main() {
+        vec4 viewPosition = viewMatrix * modelMatrix * vec4(transformed, 1.0);
+        gl_Position = projectionMatrix * viewPosition;
+      }
+    `,
+    fragmentShader: `
+      vec3 outputColor(vec3 color) {
+        return color;
+      }
+      void main() {
+        gl_FragColor = vec4(outputColor(vec3(uSharedValue)), 1.0);
+      }
+    `,
+  });
+  const material = createSekaiOutlineMaterial(
+    true,
+    rawMaterial({
+      floatProperties: [{ name: "_OutlineOffset", value: 10 }],
+    }),
+    false,
+    null,
+    source
+  );
+
+  assert.ok(material instanceof THREE.ShaderMaterial);
+  assert.equal(material.uniforms.uSharedValue, source.uniforms.uSharedValue);
+  assert.match(material.vertexShader, /outlineWidth \* outlineScale/);
+  assert.match(material.vertexShader, /uSekaiOutlineOffset/);
+  assert.match(material.fragmentShader, /uSekaiCharacterOutlineColor/);
+  assert.match(material.fragmentShader, /uSekaiCharacterOutlineBlending/);
+  assert.doesNotMatch(material.fragmentShader, /return color;\s*}/);
+  assert.equal(material.side, THREE.BackSide);
+  assert.equal(material.depthWrite, true);
+  assert.equal(material.blending, THREE.NoBlending);
+
+  material.dispose();
+  source.uniforms.uMainTex.value.dispose();
+  source.dispose();
 });

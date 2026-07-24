@@ -380,6 +380,11 @@ test("complete heads inherit missing role eye textures without importing default
     bodyCostume3dId: 100,
     headCostume3dId: 3,
     hairCostume3dId: 202,
+    skinColors: {
+      default: "#feefe0",
+      shadow1: "#efafbb",
+      shadow2: "#e07889",
+    },
     roleRuntimePath: "roles/2/light_sound/role-runtime.msgpack.br",
   }];
   const completeHead = partSet.packages.get(fixture.exclusive.packagePath);
@@ -418,4 +423,74 @@ test("complete heads inherit missing role eye textures without importing default
     combined.runtimeExtension.textureRoles.map((entry) => entry.source),
     ["parts/body", fixture.exclusive.packagePath]
   );
+  assert.deepEqual(combined.skinColors, {
+    default: "#feefe0",
+    shadow1: "#efafbb",
+    shadow2: "#e07889",
+  });
+});
+
+test("shared part sources use the selected role master height", async () => {
+  const fixture = makeFixture();
+  const partSet = makeComposablePartSet(fixture.registry, ["head"]);
+  partSet.roles = [{
+    roleId: 2,
+    characterId: 2,
+    characterHeightMeters: 1.59,
+    unit: "light_sound",
+    bodyCostume3dId: 100,
+    headCostume3dId: 3,
+    hairCostume3dId: 102,
+    roleRuntimePath: "roles/2/light_sound/role-runtime.msgpack.br",
+  }];
+  for (const runtime of partSet.packages.values()) {
+    runtime.manifest.characterHeightMeters = 1.68;
+  }
+
+  const wardrobe = new CustomWardrobeController({ resolveUrl: (value) => value });
+  wardrobe.loadPartPackageSet(partSet, { composeDefault: false });
+  wardrobe.selectRole(2, "light_sound");
+  const combined = await wardrobe.setCustomSelection(
+    selection(fixture.exclusive.packagePath)
+  );
+
+  assert.equal(combined.bodyAsset.characterHeightMeters, 1.59);
+  assert.equal(combined.headAsset.characterHeightMeters, 1.59);
+  assert.equal(combined.runtimeExtension.bodyManifest.characterHeightMeters, 1.59);
+  assert.equal(combined.runtimeExtension.headManifest.characterHeightMeters, 1.59);
+});
+
+test("legacy role catalogs recover master height from the role default body", async () => {
+  const fixture = makeFixture();
+  const defaultBody = {
+    costume3dId: 50,
+    partType: "body",
+    characterId: 2,
+    unit: "light_sound",
+    packagePath: "parts/default-body",
+    status: "available",
+  };
+  const registry = [...fixture.registry, defaultBody];
+  const partSet = makeComposablePartSet(registry, ["head"]);
+  partSet.roles = [{
+    roleId: 2,
+    characterId: 2,
+    unit: "light_sound",
+    bodyCostume3dId: 50,
+    headCostume3dId: 3,
+    hairCostume3dId: 102,
+    roleRuntimePath: "roles/2/light_sound/role-runtime.msgpack.br",
+  }];
+  partSet.packages.get("parts/body").manifest.characterHeightMeters = 1.68;
+  partSet.packages.get(defaultBody.packagePath).manifest.characterHeightMeters = 1.59;
+
+  const wardrobe = new CustomWardrobeController({ resolveUrl: (value) => value });
+  wardrobe.loadPartPackageSet(partSet, { composeDefault: false });
+  wardrobe.selectRole(2, "light_sound");
+  const combined = await wardrobe.setCustomSelection(
+    selection(fixture.exclusive.packagePath)
+  );
+
+  assert.equal(combined.bodyAsset.characterHeightMeters, 1.59);
+  assert.equal(combined.headAsset.characterHeightMeters, 1.59);
 });

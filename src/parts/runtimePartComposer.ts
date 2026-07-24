@@ -3,7 +3,10 @@ import type {
   HeadAssetManifest,
   RawMaterialProperties,
 } from "../data/sampleScene";
-import type { RuntimeCombinedCharacterAsset } from "../runtime/runtimeTypes";
+import type {
+  RuntimeCombinedCharacterAsset,
+  RuntimeSkinColors,
+} from "../runtime/runtimeTypes";
 
 export type RuntimePartType = "body" | "head" | "hair" | "head_optional";
 
@@ -31,9 +34,11 @@ export type PartRegistryEntry = {
 export type RuntimeRoleCatalogEntry = {
   roleId: number;
   characterId: number;
+  characterHeightMeters?: number;
   bodyCostume3dId: number;
   headCostume3dId: number;
   hairCostume3dId: number;
+  skinColors?: RuntimeSkinColors;
   unit?: string | null;
   roleRuntimePath: string;
 };
@@ -127,6 +132,7 @@ export type RoleRuntimePackage = {
 export type PartPackageSet = {
   registry: PartRegistryEntry[];
   roles: RuntimeRoleCatalogEntry[];
+  masterVersion?: string;
   compatibility: HeadHairCompatibility | null;
   packages: Map<string, PartRuntimePackage>;
   roleRuntimes: Map<string, RoleRuntimePackage>;
@@ -526,7 +532,12 @@ export function composeRuntimeCombinedCharacterAsset(
   const contributingRuntimes = filterRuntimeContributors(allRuntimes, headHairComposition);
 
   const roleRuntime = partSet.roleRuntimes.get(selectionRoleId) ?? null;
+  const role = partSet.roles.find((candidate) =>
+    runtimeRoleId(candidate.characterId, candidate.unit) === selectionRoleId
+  );
+  const characterHeightMeters = resolveRoleCharacterHeightMeters(partSet, role, body);
   const bodyManifest = normalizeBodyManifestFromPart(body, resolveUrl);
+  bodyManifest.characterHeightMeters = characterHeightMeters;
   applyRoleRuntimeMotion(bodyManifest, roleRuntime);
   const headManifest = normalizeHeadManifestFromParts(
     filterRuntimeContributors([head, accessory, optional].filter(Boolean) as PartRuntimePackage[], headHairComposition),
@@ -534,6 +545,7 @@ export function composeRuntimeCombinedCharacterAsset(
     resolveUrl,
     roleDefaultFaceRuntime
   );
+  headManifest.characterHeightMeters = characterHeightMeters;
   const runtimeExtension = composeRuntimeExtension(
     contributingRuntimes,
     bodyManifest,
@@ -549,8 +561,61 @@ export function composeRuntimeCombinedCharacterAsset(
     unityRuntimeJsonPath: "viewer-composed-part-runtime",
     bodyAsset: bodyManifest,
     headAsset: headManifest,
+    skinColors: role?.skinColors,
     runtimeExtension,
   };
+}
+
+function resolveRoleCharacterHeightMeters(
+  partSet: PartPackageSet,
+  role: RuntimeRoleCatalogEntry | undefined,
+  selectedBody: PartRuntimePackage
+) {
+  if (!role) {
+    const selectedManifest = isRecord(selectedBody.manifest)
+      ? selectedBody.manifest
+      : null;
+    const selectedHeight = selectedManifest?.characterHeightMeters;
+    if (
+      typeof selectedHeight === "number" &&
+      Number.isFinite(selectedHeight) &&
+      selectedHeight > 0
+    ) {
+      return selectedHeight;
+    }
+    throw new Error("Runtime role catalog entry is missing.");
+  }
+  if (
+    typeof role.characterHeightMeters === "number" &&
+    Number.isFinite(role.characterHeightMeters) &&
+    role.characterHeightMeters > 0
+  ) {
+    return role.characterHeightMeters;
+  }
+  const defaultBodyEntry = findRegistryPart(
+    partSet,
+    role.characterId,
+    role.unit,
+    "body",
+    role.bodyCostume3dId
+  );
+  const defaultBodyRuntime = defaultBodyEntry
+    ? partSet.packages.get(defaultBodyEntry.packagePath)
+    : null;
+  const manifest = isRecord(defaultBodyRuntime?.manifest)
+    ? defaultBodyRuntime.manifest
+    : null;
+  const legacyHeight = manifest?.characterHeightMeters;
+  if (
+    typeof legacyHeight === "number" &&
+    Number.isFinite(legacyHeight) &&
+    legacyHeight > 0
+  ) {
+    return legacyHeight;
+  }
+  throw new Error(
+    `Runtime role ${runtimeRoleId(role.characterId, role.unit)} is missing master characterHeightMeters.`
+  );
 }
 
 export function resolveRoleDefaultHairRegistryEntry(

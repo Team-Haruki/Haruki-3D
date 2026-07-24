@@ -95,6 +95,34 @@ test("SekaiEyelash view alpha follows the captured FaceFront smoothstep", () => 
   assert.equal(eyebrow.uniforms.uAlphaScale.value, 0.5);
 });
 
+test("SekaiEyelash prefers exported per-material view parameters", () => {
+  const material = createSekaiLayerMaterial(null, "alpha");
+  configureSekaiEyelashPass(material, 0x01, "eyelash", {
+    shaderFileId: 0,
+    shaderPathId: 1,
+    textureProperties: [],
+    colorProperties: [],
+    floatProperties: [
+      { name: "_EyelashTransparent", value: 0.35 },
+      { name: "_EyelashFaceCameraEdge1", value: 0.8 },
+      { name: "_EyelashFaceCameraEdge2", value: 0.4 },
+    ],
+    intProperties: [],
+    validKeywords: [],
+    invalidKeywords: [],
+    lightmapFlags: 0,
+    enableInstancingVariants: false,
+    doubleSidedGi: false,
+    customRenderQueue: -1,
+    stringTags: {},
+    disabledShaderPasses: [],
+  });
+
+  assert.equal(updateSekaiEyelashPassView(material, 0.8), 0.35);
+  assert.equal(updateSekaiEyelashPassView(material, 0.4), 0);
+  assert.ok(Math.abs(updateSekaiEyelashPassView(material, 0.6) - 0.175) < 1e-9);
+});
+
 test("face layers and hair share one character formation stencil bit", () => {
   const prepass = new THREE.ShaderMaterial();
   const hair = new THREE.ShaderMaterial();

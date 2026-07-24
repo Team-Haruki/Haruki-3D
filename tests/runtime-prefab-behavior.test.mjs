@@ -2,12 +2,58 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import {
+  applyUnityCharacterHeight,
   buildUnityPrefabSourceGraph,
   createUnityPrefabConstraintRuntime,
   installUnityRuntimeNativeMeshes,
   makeUnityPrefabHeadFollowDebugSnapshot,
   syncUnityPrefabSourceGraph,
 } from "../dist/haruki-3d-engine-internal.js";
+
+test("character height follows the official PositionNote scale boundary", () => {
+  const extension = makeRuntimeExtension();
+  extension.runtimeUnitySetup.prefabGraphs[0].transforms.push(
+    transform(15, "body/Position", 1),
+    transform(16, "body/Body", 1)
+  );
+  const graph = buildUnityPrefabSourceGraph(extension);
+
+  assert.ok(graph);
+  applyUnityCharacterHeight(graph, 1.68);
+
+  assert.deepEqual(graph.root.scale.toArray(), [1, 1, 1]);
+  assert.deepEqual(
+    graph.nodeByPath.get("body/Position").scale.toArray(),
+    [1.68, 1.68, 1.68]
+  );
+  assert.deepEqual(
+    graph.nodeByPath.get("body/Body").scale.toArray(),
+    [1, 1, 1]
+  );
+});
+
+test("character height never applies a one-off body bundle scale override", () => {
+  const extension = makeRuntimeExtension();
+  extension.character = {
+    characterHeightMeters: 1.68,
+    bodyBundlePath:
+      "live_pv/model/characterv2/body/99/0141/ladies_s.bundle",
+  };
+  extension.runtimeUnitySetup.prefabGraphs[0].transforms.push(
+    transform(15, "body/Position", 1)
+  );
+
+  const graph = buildUnityPrefabSourceGraph(extension);
+
+  assert.ok(graph);
+  assert.deepEqual(graph.root.scale.toArray(), [1, 1, 1]);
+  assert.deepEqual(graph.debug.sourceScaleCorrection, {
+    characterHeightMeters: 1.68,
+    characterModelScaleMeters: 1.68,
+    scale: 1,
+    reason: "master-character-height-via-position-note",
+  });
+});
 
 test("0414 prefab runtime applies official model combine and installs native meshes", () => {
   const extension = makeRuntimeExtension();
@@ -126,6 +172,10 @@ test("prefab debug snapshot preserves fallback state until a graph is loaded", (
   assert.equal(snapshot.active, true);
   assert.equal(snapshot.sourcePath, "body/Neck");
   assert.equal(snapshot.setupVersion, "0414");
+  assert.deepEqual(snapshot.keyNodes.bodyNeck.worldPosition, { x: -1, y: 2, z: 3 });
+  assert.deepEqual(snapshot.keyNodes.faceNeck.worldPosition, { x: -1, y: 2, z: 3 });
+  assert.equal(snapshot.assemblyDistances.bodyNeckToFaceNeck, 0);
+  assert.equal(snapshot.assemblyDistances.bodyHeadToFaceHead, 0);
 });
 
 test("persistent constraints retain resolved transform bindings between frames", () => {

@@ -43,6 +43,7 @@ export type BodyMaterialUniforms = {
   hairShadowEnabled?: boolean;
   useLambert?: boolean;
   headPosition?: THREE.Vector3;
+  headNormalBlend?: number;
   saturation?: number;
   value?: number;
   contrast?: number;
@@ -61,14 +62,6 @@ export type BodyMaterialUniforms = {
   controllerShadowRimColorWeight?: number;
   controllerRimShadowSharpness?: number;
   bodyDebugMode?: number;
-  skinTintEnabled?: boolean;
-  useSkinColor?: boolean;
-  skinMaskMode?: number;
-  skinAmbientColor?: THREE.ColorRepresentation;
-  faceSkinShadowStrength?: number;
-  finalSaturation?: number;
-  brightness?: number;
-  highlightRolloff?: number;
   alphaCutoff?: number;
 };
 
@@ -98,6 +91,17 @@ function capturedColor(
     : sekaiGammaColor(value);
 }
 
+function textureUvMatrix(texture: THREE.Texture | null | undefined) {
+  if (!texture) {
+    return new THREE.Matrix3();
+  }
+  texture.updateMatrix();
+  // Material ST belongs to the binding, not to a shared image. Runtime package
+  // loading may coalesce the same texture URL across several material slots,
+  // so keep an immutable per-material copy of the matrix.
+  return texture.matrix.clone();
+}
+
 const sekaiGammaTextureFunctionsGlsl = `
   vec3 sekaiGammaTexture(vec3 linearColor) {
     vec3 safeColor = max(linearColor, vec3(0.0));
@@ -115,7 +119,7 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
   return new THREE.ShaderMaterial({
     transparent: false,
     depthWrite: true,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
     vertexColors: true,
     uniforms: {
       uBaseColor: { value: sekaiGammaColor(initial.baseColor) },
@@ -184,6 +188,7 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
       uMainTex: { value: initial.mainTex ?? null },
       uShadowTex: { value: initial.shadowTex ?? null },
       uValueTex: { value: initial.valueTex ?? null },
+      uMainTexTransform: { value: textureUvMatrix(initial.mainTex) },
       uUseMainTex: { value: initial.mainTex ? 1.0 : 0.0 },
       uUseShadowTex: { value: initial.shadowTex ? 1.0 : 0.0 },
       uHasValueTex: { value: initial.valueTex ? 1.0 : 0.0 },
@@ -225,19 +230,10 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
       uHeadPosition: {
         value: (initial.headPosition ?? new THREE.Vector3()).clone(),
       },
+      uHeadNormalBlend: { value: initial.headNormalBlend ?? 0.7 },
       uSaturation: { value: initial.saturation ?? 0.5 },
       uValue: { value: initial.value ?? 0.5 },
       uContrast: { value: initial.contrast ?? 0.5 },
-      uSkinTintEnabled: { value: initial.skinTintEnabled === false ? 0.0 : 1.0 },
-      uUseSkinColor: {
-        value: (initial.useSkinColor ?? initial.skinTintEnabled ?? true) ? 1.0 : 0.0,
-      },
-      uSkinMaskMode: { value: initial.skinMaskMode ?? 0.0 },
-      uSkinAmbientColor: { value: sekaiGammaColor(initial.skinAmbientColor ?? "#ffffff") },
-      uFaceSkinShadowStrength: { value: initial.faceSkinShadowStrength ?? 0.1 },
-      uFinalSaturation: { value: initial.finalSaturation ?? 1.0 },
-      uBrightness: { value: initial.brightness ?? 1.0 },
-      uHighlightRolloff: { value: initial.highlightRolloff ?? 0.5 },
       uAlphaCutoff: { value: initial.alphaCutoff ?? 0.0 },
     },
     vertexShader: `
@@ -252,6 +248,10 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
       varying vec3 vModelPosition;
       varying vec2 vUv;
 
+      uniform float uHairShadowEnabled;
+      uniform vec3 uHeadPosition;
+      uniform float uHeadNormalBlend;
+
       void main() {
         #include <uv_vertex>
         #include <color_vertex>
@@ -265,7 +265,23 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
         vec4 worldPosition = modelMatrix * vec4(transformed, 1.0);
         vec4 viewPosition = viewMatrix * worldPosition;
         vWorldPosition = worldPosition.xyz;
-        vWorldNormal = normalize(mat3(modelMatrix) * objectNormal);
+        vec3 worldNormal = inverseTransformDirection(
+          transformedNormal,
+          viewMatrix
+        );
+        if (uHairShadowEnabled > 0.5) {
+          vec3 headToVertex = worldPosition.xyz - uHeadPosition;
+          float headToVertexLengthSquared = dot(headToVertex, headToVertex);
+          if (headToVertexLengthSquared > 1e-12) {
+            vec3 radialNormal =
+              headToVertex * inversesqrt(headToVertexLengthSquared);
+            worldNormal = normalize(
+              worldNormal +
+              uHeadNormalBlend * (radialNormal - worldNormal)
+            );
+          }
+        }
+        vWorldNormal = worldNormal;
         vViewPosition = viewPosition.xyz;
         vModelPosition = transformed;
         vUv = uv;
@@ -303,6 +319,7 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
       uniform sampler2D uMainTex;
       uniform sampler2D uShadowTex;
       uniform sampler2D uValueTex;
+      uniform mat3 uMainTexTransform;
       uniform float uUseMainTex;
       uniform float uUseShadowTex;
       uniform float uHasValueTex;
@@ -326,20 +343,10 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
       uniform float uFadeMode;
       uniform float uHueSinAngle;
       uniform float uHueCosAngle;
-      uniform float uHairShadowEnabled;
       uniform float uUseLambert;
-      uniform vec3 uHeadPosition;
       uniform float uSaturation;
       uniform float uValue;
       uniform float uContrast;
-      uniform float uSkinTintEnabled;
-      uniform float uUseSkinColor;
-      uniform float uSkinMaskMode;
-      uniform vec3 uSkinAmbientColor;
-      uniform float uFaceSkinShadowStrength;
-      uniform float uFinalSaturation;
-      uniform float uBrightness;
-      uniform float uHighlightRolloff;
       uniform float uAlphaCutoff;
 
       varying vec3 vWorldPosition;
@@ -378,10 +385,11 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
         vec3 lightDir = normalize(uLightDirection);
         vec3 viewDir = normalize(uCameraPosition - vWorldPosition);
         float ndl = dot(normal, lightDir);
+        vec2 mainUv = (uMainTexTransform * vec3(vUv, 1.0)).xy;
         vec4 mainSample = vec4(1.0);
         vec3 mainColor = uBaseColor;
         if (uUseMainTex > 0.5) {
-          mainSample = sekaiGammaTexture(texture2D(uMainTex, vUv));
+          mainSample = sekaiGammaTexture(texture2D(uMainTex, mainUv));
           if (uAlphaCutoff > 0.0 && mainSample.a < uAlphaCutoff) {
             discard;
           }
@@ -391,21 +399,17 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
         if (uUseShadowTex > 0.5) {
           shadowValue = mix(
             shadowValue,
-            sekaiGammaTexture(texture2D(uShadowTex, vUv).rgb),
+            sekaiGammaTexture(texture2D(uShadowTex, mainUv).rgb),
             clamp(uShadowTexWeight, 0.0, 1.0)
           );
         }
         vec4 valueSample = vec4(0.0, 0.0, 0.5, 0.0);
         if (uHasValueTex > 0.5) {
-          valueSample = texture2D(uValueTex, vUv);
+          valueSample = texture2D(uValueTex, mainUv);
         }
-        float skinMask = sekaiSkinMask(
-          mainColor,
-          valueSample,
-          min(uUseSkinColor, uSkinTintEnabled),
-          uSkinMaskMode,
-          uUseValueTex
-        );
+        float skinMask = uHasValueTex > 0.5
+          ? step(0.5, valueSample.r)
+          : 0.0;
         float hMask = valueSample.b;
         float hAlpha = valueSample.a;
         float vertexOutlineIntensity = 1.0;
@@ -451,7 +455,25 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
         vec3 shadowColor = weightedShadowColor;
         if (uBodyDebugMode > 0.5 && uBodyDebugMode < 12.5) {
           float debugValue = skinMask;
-          if (uBodyDebugMode > 3.5 && uBodyDebugMode < 4.5) {
+          if (uBodyDebugMode > 1.5 && uBodyDebugMode < 2.5) {
+            gl_FragColor = vec4(outputColor(clamp(mainColor, 0.0, 1.0)), 1.0);
+            return;
+          } else if (uBodyDebugMode > 2.5 && uBodyDebugMode < 3.5) {
+            float debugSkinValue = mix(
+              mainColor.r,
+              shadowValue.r,
+              clamp(shadowBand, 0.0, 1.0)
+            );
+            vec3 debugSkinColor = applyMaterialHsvc(sekaiSkinRamp(
+              debugSkinValue,
+              mix(vec3(1.0), uGlobalShadowColor, clamp(uGlobalShadowAlpha, 0.0, 1.0)),
+              uSkinColorDefault,
+              uSkinColor1,
+              uSkinColor2
+            ));
+            gl_FragColor = vec4(outputColor(clamp(debugSkinColor, 0.0, 1.0)), 1.0);
+            return;
+          } else if (uBodyDebugMode > 3.5 && uBodyDebugMode < 4.5) {
             debugValue = valueSample.r;
           } else if (uBodyDebugMode > 4.5 && uBodyDebugMode < 5.5) {
             debugValue = valueSample.g;
@@ -483,22 +505,29 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
           gl_FragColor = vec4(outputColor(clamp(shadowColor, 0.0, 1.0)), 1.0);
           return;
         }
-        vec3 baseShadedColor = mix(adjustedMainColor, weightedShadowColor, shadowBand);
-        vec3 skinColor = applyMaterialHsvc(
-          mainColor * sekaiSkinRamp(
-            shadowBand,
-            uSkinAmbientColor,
-            uSkinColorDefault,
-            uSkinColor1,
-            uSkinColor2
-          )
+        vec3 globalShadow = mix(
+          vec3(1.0),
+          uGlobalShadowColor,
+          clamp(uGlobalShadowAlpha, 0.0, 1.0)
         );
+        vec3 baseShadedColor = mix(
+          adjustedMainColor,
+          weightedShadowColor * globalShadow,
+          shadowBand
+        );
+        float skinValue = mix(
+          mainColor.r,
+          shadowValue.r,
+          clamp(shadowBand, 0.0, 1.0)
+        );
+        vec3 skinColor = applyMaterialHsvc(sekaiSkinRamp(
+          skinValue,
+          globalShadow,
+          uSkinColorDefault,
+          uSkinColor1,
+          uSkinColor2
+        ));
         vec3 color = mix(baseShadedColor, skinColor, skinMask);
-        float globalShadowWeight =
-          clamp(uGlobalShadowAlpha, 0.0, 1.0) *
-          clamp(shadowBand, 0.0, 1.0) *
-          (1.0 - skinMask);
-        color *= mix(vec3(1.0), uGlobalShadowColor, globalShadowWeight);
 
         float halfLambert = clamp(dot(normal, normalize(lightDir + viewDir)), 0.0, 1.0);
         float specEnabled = step(0.0001, uSpecularPower);
@@ -609,14 +638,10 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
           return;
         }
         color = ambientTarget;
-        float finalLuma = dot(color, vec3(0.299, 0.587, 0.114));
-        color = mix(vec3(finalLuma), color, uFinalSaturation);
-        color = sekaiApplyHighlightRolloff(
-          color,
-          uBrightness,
-          uHighlightRolloff
+        gl_FragColor = vec4(
+          outputColor(clamp(color, 0.0, 1.0)),
+          uUseMainTex > 0.5 ? mainSample.a : 1.0
         );
-        gl_FragColor = vec4(outputColor(clamp(color, 0.0, 1.0)), 1.0);
       }
     `,
   });
@@ -682,6 +707,7 @@ export function updateSekaiBodyMaterial(
   material.uniforms.uMainTex.value = next.mainTex ?? null;
   material.uniforms.uShadowTex.value = next.shadowTex ?? null;
   material.uniforms.uValueTex.value = next.valueTex ?? null;
+  material.uniforms.uMainTexTransform.value = textureUvMatrix(next.mainTex);
   material.uniforms.uUseMainTex.value = next.mainTex ? 1.0 : 0.0;
   material.uniforms.uUseShadowTex.value = next.shadowTex ? 1.0 : 0.0;
   material.uniforms.uHasValueTex.value = next.valueTex ? 1.0 : 0.0;
@@ -715,6 +741,9 @@ export function updateSekaiBodyMaterial(
   if (next.headPosition && material.uniforms.uHeadPosition) {
     material.uniforms.uHeadPosition.value.copy(next.headPosition);
   }
+  if (next.headNormalBlend !== undefined && material.uniforms.uHeadNormalBlend) {
+    material.uniforms.uHeadNormalBlend.value = next.headNormalBlend;
+  }
   material.uniforms.uCharacterAmbientIntensity.value = next.characterAmbientIntensity ?? 0.3;
   material.uniforms.uRimColorAlpha.value =
     next.rimColorAlpha ?? material.uniforms.uRimColorAlpha.value;
@@ -747,20 +776,6 @@ export function updateSekaiBodyMaterial(
   if (material.uniforms.uContrast) {
     material.uniforms.uContrast.value = next.contrast ?? material.uniforms.uContrast.value;
   }
-  material.uniforms.uSkinTintEnabled.value = next.skinTintEnabled === false ? 0.0 : 1.0;
-  material.uniforms.uUseSkinColor.value =
-    (next.useSkinColor ?? next.skinTintEnabled ?? true) ? 1.0 : 0.0;
-  material.uniforms.uSkinMaskMode.value =
-    next.skinMaskMode ?? material.uniforms.uSkinMaskMode.value;
-  setSekaiGammaColor(material.uniforms.uSkinAmbientColor.value, next.skinAmbientColor ?? "#ffffff");
-  material.uniforms.uFaceSkinShadowStrength.value =
-    next.faceSkinShadowStrength ?? material.uniforms.uFaceSkinShadowStrength.value;
-  material.uniforms.uFinalSaturation.value =
-    next.finalSaturation ?? material.uniforms.uFinalSaturation.value;
-  material.uniforms.uBrightness.value =
-    next.brightness ?? material.uniforms.uBrightness.value;
-  material.uniforms.uHighlightRolloff.value =
-    next.highlightRolloff ?? material.uniforms.uHighlightRolloff.value;
 }
 
 export function updateSekaiBodyCamera(
@@ -794,12 +809,6 @@ export type FaceMaterialUniforms = {
   fadeMode?: number;
   useLambert?: boolean;
   shadowTexWeight?: number;
-  faceSdfMirror?: number;
-  faceSdfBias?: number;
-  useSkinColor?: boolean;
-  skinMaskMode?: number;
-  faceSkinShadowStrength?: number;
-  skinAmbientColor?: THREE.ColorRepresentation;
   hueSinAngle?: number;
   hueCosAngle?: number;
   saturation?: number;
@@ -809,11 +818,22 @@ export type FaceMaterialUniforms = {
   partsAmbientAlpha?: number;
   controllerAmbientColor?: THREE.ColorRepresentation;
   controllerAmbientIntensity?: number;
+  controllerSpecularColor?: THREE.ColorRepresentation;
+  controllerSpecularIntensity?: number;
+  controllerRimColor?: THREE.ColorRepresentation;
+  controllerShadowRimColor?: THREE.ColorRepresentation;
+  controllerRimColorWeight?: number;
+  controllerShadowRimColorWeight?: number;
+  controllerRimRange?: number;
+  controllerRimEdgeSmoothness?: number;
+  controllerRimLightInfluence?: number;
+  controllerRimShadowSharpness?: number;
+  rimColorAlpha?: number;
+  rimDirection?: THREE.Vector3;
+  specularPower?: number;
+  rimThreshold?: number;
   globalShadowColor?: THREE.ColorRepresentation;
   globalShadowAlpha?: number;
-  finalSaturation?: number;
-  brightness?: number;
-  highlightRolloff?: number;
   alphaCutoff?: number;
 };
 
@@ -824,7 +844,7 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
     },
     transparent: false,
     depthWrite: true,
-    side: THREE.DoubleSide,
+    side: THREE.FrontSide,
     uniforms: {
       uBaseColor: { value: sekaiGammaColor(initial.baseColor) },
       uWarmColor: { value: sekaiGammaColor(initial.warmColor) },
@@ -835,12 +855,14 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
       uShadowTex: { value: initial.shadowTex ?? null },
       uValueTex: { value: initial.valueTex ?? null },
       uFaceShadowTex: { value: initial.faceShadowTex ?? null },
+      uMainTexTransform: { value: textureUvMatrix(initial.mainTex) },
       uUseMainTex: { value: initial.mainTex ? 1.0 : 0.0 },
       uUseShadowTex: { value: initial.shadowTex ? 1.0 : 0.0 },
       uHasValueTex: { value: initial.valueTex ? 1.0 : 0.0 },
       uUseValueTex: { value: (initial.useValueTex ?? Boolean(initial.valueTex)) ? 1.0 : 0.0 },
       uUseFaceShadowTex: { value: initial.faceShadowTex ? 1.0 : 0.0 },
       uLightDirection: { value: initial.lightDirection.clone().normalize() },
+      uCameraPosition: { value: new THREE.Vector3() },
       uHeadDotDirectionalLight: {
         value: (initial.headDotDirectionalLight ?? new THREE.Vector2(0, 0)).clone(),
       },
@@ -856,12 +878,6 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
       uFadeMode: { value: initial.fadeMode ?? 0.0 },
       uUseLambert: { value: initial.useLambert === false ? 0.0 : 1.0 },
       uShadowTexWeight: { value: initial.shadowTexWeight ?? 1.0 },
-      uFaceSdfMirror: { value: initial.faceSdfMirror ?? 1.0 },
-      uFaceSdfBias: { value: initial.faceSdfBias ?? 0.0 },
-      uUseSkinColor: { value: initial.useSkinColor === false ? 0.0 : 1.0 },
-      uSkinMaskMode: { value: initial.skinMaskMode ?? 0.0 },
-      uFaceSkinShadowStrength: { value: initial.faceSkinShadowStrength ?? 0.1 },
-      uSkinAmbientColor: { value: sekaiGammaColor(initial.skinAmbientColor ?? "#ffffff") },
       uHueSinAngle: { value: initial.hueSinAngle ?? 0.0 },
       uHueCosAngle: { value: initial.hueCosAngle ?? 1.0 },
       uSaturation: { value: initial.saturation ?? 0.5 },
@@ -876,25 +892,90 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
         ),
       },
       uControllerAmbientIntensity: { value: initial.controllerAmbientIntensity ?? 1.0 },
+      uControllerSpecularColor: {
+        value: capturedColor(
+          initial.controllerSpecularColor,
+          sekaiCostumeShopControllerDefaults.specularColor
+        ),
+      },
+      uControllerSpecularIntensity: {
+        value: initial.controllerSpecularIntensity ?? 1.0,
+      },
+      uControllerRimColor: {
+        value: capturedColor(
+          initial.controllerRimColor,
+          sekaiCostumeShopControllerDefaults.rimColor
+        ),
+      },
+      uControllerShadowRimColor: {
+        value: capturedColor(
+          initial.controllerShadowRimColor,
+          sekaiCostumeShopControllerDefaults.shadowRimColor
+        ),
+      },
+      uControllerRimColorWeight: {
+        value: initial.controllerRimColorWeight ?? 1.0,
+      },
+      uControllerShadowRimColorWeight: {
+        value: initial.controllerShadowRimColorWeight ?? 1.0,
+      },
+      uControllerRimRange: {
+        value:
+          initial.controllerRimRange ??
+          sekaiCostumeShopControllerDefaults.rimRange,
+      },
+      uControllerRimEdgeSmoothness: {
+        value:
+          initial.controllerRimEdgeSmoothness ??
+          sekaiCostumeShopControllerDefaults.rimEdgeSmoothness,
+      },
+      uControllerRimLightInfluence: {
+        value:
+          initial.controllerRimLightInfluence ??
+          sekaiCostumeShopControllerDefaults.rimLightInfluence,
+      },
+      uControllerRimShadowSharpness: {
+        value:
+          initial.controllerRimShadowSharpness ??
+          sekaiCostumeShopControllerDefaults.rimShadowSharpness,
+      },
+      uRimColorAlpha: {
+        value:
+          initial.rimColorAlpha ??
+          sekaiCostumeShopControllerDefaults.rimColorAlpha,
+      },
+      uRimDirection: {
+        value: (
+          initial.rimDirection ??
+          new THREE.Vector3(
+            sekaiCostumeShopRimLightDirection.x,
+            sekaiCostumeShopRimLightDirection.y,
+            sekaiCostumeShopRimLightDirection.z
+          )
+        ).clone().normalize(),
+      },
+      uSpecularPower: { value: initial.specularPower ?? 0.0 },
+      uRimThreshold: { value: initial.rimThreshold ?? 0.2 },
       uGlobalShadowColor: { value: sekaiGammaColor(initial.globalShadowColor ?? "#ffffff") },
       uGlobalShadowAlpha: { value: initial.globalShadowAlpha ?? 1.0 },
-      uFinalSaturation: { value: initial.finalSaturation ?? 1.0 },
-      uBrightness: { value: initial.brightness ?? 1.0 },
-      uHighlightRolloff: { value: initial.highlightRolloff ?? 0.5 },
       uAlphaCutoff: { value: initial.alphaCutoff ?? 0.0 },
     },
+    vertexColors: true,
     vertexShader: `
       #include <common>
       #include <uv_pars_vertex>
+      #include <color_pars_vertex>
       #include <skinning_pars_vertex>
       #include <morphtarget_pars_vertex>
 
+      varying vec3 vWorldPosition;
       varying vec3 vWorldNormal;
       varying vec2 vUv;
       varying vec2 vFaceShadowUv;
 
       void main() {
         #include <uv_vertex>
+        #include <color_vertex>
         #include <beginnormal_vertex>
         #include <morphnormal_vertex>
         #include <skinbase_vertex>
@@ -905,10 +986,14 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
         #include <skinning_vertex>
 
         vec4 worldPosition = modelMatrix * vec4(transformed, 1.0);
-        vWorldNormal = normalize(mat3(modelMatrix) * objectNormal);
+        vWorldPosition = worldPosition.xyz;
+        vWorldNormal = inverseTransformDirection(
+          transformedNormal,
+          viewMatrix
+        );
         vUv = uv;
         #ifdef USE_UV1
-          vFaceShadowUv = abs(uv1.x) + abs(uv1.y) > 0.000001 ? uv1 : uv;
+          vFaceShadowUv = uv1;
         #else
           vFaceShadowUv = uv;
         #endif
@@ -917,6 +1002,7 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
     `,
     fragmentShader: `
       #include <common>
+      #include <color_pars_fragment>
 
       uniform vec3 uBaseColor;
       uniform vec3 uWarmColor;
@@ -927,12 +1013,14 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
       uniform sampler2D uShadowTex;
       uniform sampler2D uValueTex;
       uniform sampler2D uFaceShadowTex;
+      uniform mat3 uMainTexTransform;
       uniform float uUseMainTex;
       uniform float uUseShadowTex;
       uniform float uHasValueTex;
       uniform float uUseValueTex;
       uniform float uUseFaceShadowTex;
       uniform vec3 uLightDirection;
+      uniform vec3 uCameraPosition;
       uniform vec2 uHeadDotDirectionalLight;
       uniform float uUseFaceShadowLimiter;
       uniform float uFaceShadowLimitRange;
@@ -946,12 +1034,6 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
       uniform float uFadeMode;
       uniform float uUseLambert;
       uniform float uShadowTexWeight;
-      uniform float uFaceSdfMirror;
-      uniform float uFaceSdfBias;
-      uniform float uUseSkinColor;
-      uniform float uSkinMaskMode;
-      uniform float uFaceSkinShadowStrength;
-      uniform vec3 uSkinAmbientColor;
       uniform float uHueSinAngle;
       uniform float uHueCosAngle;
       uniform float uSaturation;
@@ -961,13 +1043,25 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
       uniform float uPartsAmbientAlpha;
       uniform vec3 uControllerAmbientColor;
       uniform float uControllerAmbientIntensity;
+      uniform vec3 uControllerSpecularColor;
+      uniform float uControllerSpecularIntensity;
+      uniform vec3 uControllerRimColor;
+      uniform vec3 uControllerShadowRimColor;
+      uniform float uControllerRimColorWeight;
+      uniform float uControllerShadowRimColorWeight;
+      uniform float uControllerRimRange;
+      uniform float uControllerRimEdgeSmoothness;
+      uniform float uControllerRimLightInfluence;
+      uniform float uControllerRimShadowSharpness;
+      uniform float uRimColorAlpha;
+      uniform vec3 uRimDirection;
+      uniform float uSpecularPower;
+      uniform float uRimThreshold;
       uniform vec3 uGlobalShadowColor;
       uniform float uGlobalShadowAlpha;
-      uniform float uFinalSaturation;
-      uniform float uBrightness;
-      uniform float uHighlightRolloff;
       uniform float uAlphaCutoff;
 
+      varying vec3 vWorldPosition;
       varying vec3 vWorldNormal;
       varying vec2 vUv;
       varying vec2 vFaceShadowUv;
@@ -981,10 +1075,12 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
       }
 
       void main() {
+        vec2 mainUv = (uMainTexTransform * vec3(vUv, 1.0)).xy;
+        vec2 faceShadowUv = vFaceShadowUv;
         vec4 mainSample = vec4(1.0);
         vec3 mainColor = uBaseColor;
         if (uUseMainTex > 0.5) {
-          mainSample = sekaiGammaTexture(texture2D(uMainTex, vUv));
+          mainSample = sekaiGammaTexture(texture2D(uMainTex, mainUv));
           if (uAlphaCutoff > 0.0 && mainSample.a < uAlphaCutoff) {
             discard;
           }
@@ -992,20 +1088,16 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
         }
 
         vec3 sampledShadow = uUseShadowTex > 0.5
-          ? sekaiGammaTexture(texture2D(uShadowTex, vUv).rgb)
+          ? sekaiGammaTexture(texture2D(uShadowTex, mainUv).rgb)
           : uWarmColor;
         vec3 shadowColor = mix(mainColor, sampledShadow, clamp(uShadowTexWeight, 0.0, 1.0));
         vec4 valueSample = vec4(0.0, 0.0, 0.5, 0.0);
         if (uHasValueTex > 0.5) {
-          valueSample = texture2D(uValueTex, vUv);
+          valueSample = texture2D(uValueTex, mainUv);
         }
-        float skinMask = sekaiSkinMask(
-          mainColor,
-          valueSample,
-          uUseSkinColor,
-          uSkinMaskMode,
-          uUseValueTex
-        );
+        float skinMask = uHasValueTex > 0.5
+          ? step(0.5, valueSample.r)
+          : 0.0;
         float shadowBand = sekaiBaseShadow(
           dot(normalize(vWorldNormal), normalize(uLightDirection)),
           valueSample.b,
@@ -1019,9 +1111,12 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
         float faceThreshold = 0.0;
         float faceShadow = 0.0;
         if ((uFaceSdfEnabled > 0.5 || uFaceDebugMode > 0.5) && uUseFaceShadowTex > 0.5) {
-          float sdf0 = texture2D(uFaceShadowTex, vFaceShadowUv).r;
-          float sdf1 = texture2D(uFaceShadowTex, vec2(-vFaceShadowUv.x, vFaceShadowUv.y)).r;
-          sdfValue = uFaceSdfMirror * uHeadDotDirectionalLight.x <= 0.0 ? sdf1 : sdf0;
+          float sdf0 = texture2D(uFaceShadowTex, faceShadowUv).r;
+          float sdf1 = texture2D(
+            uFaceShadowTex,
+            vec2(-faceShadowUv.x, faceShadowUv.y)
+          ).r;
+          sdfValue = uHeadDotDirectionalLight.x <= 0.0 ? sdf1 : sdf0;
           faceThreshold = uHeadDotDirectionalLight.y;
           if (uUseFaceShadowLimiter > 0.5) {
             faceThreshold = min(
@@ -1029,7 +1124,7 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
               uFaceShadowLimitRange
             );
           }
-          faceThreshold = clamp(faceThreshold + uFaceSdfBias, 0.0, 1.0);
+          faceThreshold = clamp(faceThreshold, 0.0, 1.0);
           faceShadow = sekaiFaceShadow(sdfValue, faceThreshold, uShadowWidth, uFadeMode);
           if (uFaceDebugMode > 0.5) {
             if (uFaceDebugMode < 1.5) {
@@ -1067,20 +1162,25 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
           uValue,
           uContrast
         );
+        vec3 globalShadow = mix(
+          vec3(1.0),
+          uGlobalShadowColor,
+          clamp(uGlobalShadowAlpha, 0.0, 1.0)
+        );
         vec3 baseShadedColor = mix(
           adjustedMainColor,
-          shadowColor,
+          shadowColor * globalShadow,
           clamp(shadowBand, 0.0, 1.0)
         );
-        float skinShadow =
-          uFaceSdfEnabled > 0.5
-            ? clamp(shadowBand, 0.0, 1.0) *
-              clamp(uFaceSkinShadowStrength, 0.0, 0.1)
-            : clamp(shadowBand, 0.0, 1.0);
+        float skinValue = mix(
+          mainColor.r,
+          mix(mainColor.r, sampledShadow.r, clamp(uShadowTexWeight, 0.0, 1.0)),
+          clamp(shadowBand, 0.0, 1.0)
+        );
         vec3 skinColor = sekaiApplyHsvc(
-          mainColor * sekaiSkinRamp(
-            skinShadow,
-            uSkinAmbientColor,
+          sekaiSkinRamp(
+            skinValue,
+            globalShadow,
             uSkinColorDefault,
             uSkinColor1,
             uSkinColor2
@@ -1092,25 +1192,92 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
           uContrast
         );
         vec3 color = mix(baseShadedColor, skinColor, skinMask);
-        float globalShadowWeight =
-          clamp(uGlobalShadowAlpha, 0.0, 1.0) *
-          clamp(shadowBand, 0.0, 1.0) *
-          (1.0 - skinMask);
-        color *= mix(vec3(1.0), uGlobalShadowColor, globalShadowWeight);
+
+        vec3 normal = normalize(vWorldNormal);
+        vec3 lightDir = normalize(uLightDirection);
+        vec3 viewDir = normalize(uCameraPosition - vWorldPosition);
+        float vertexRimMask = 1.0;
+        #ifdef USE_COLOR
+        vertexRimMask = clamp(vColor.g, 0.0, 1.0);
+        #endif
+
+        float halfLambert = clamp(
+          dot(normal, normalize(lightDir + viewDir)),
+          0.0,
+          1.0
+        );
+        float specEnabled = step(0.0001, uSpecularPower);
+        float specPower = 10.0 / max(uSpecularPower, 0.0001);
+        float specular = pow(halfLambert, specPower) * valueSample.a * specEnabled;
+
+        float nDotV = clamp(dot(normal, viewDir), 0.0, 1.0);
+        vec3 rimDirection = normalize(uRimDirection);
+        float nDotRim = dot(normal, rimDirection);
+        float vDotRim = clamp(dot(viewDir, rimDirection), 0.0, 1.0);
+        float rimRange = max(uControllerRimRange, 0.0);
+        rimRange = rimRange > 10.0 ? rimRange * 0.01 : rimRange;
+        rimRange = min(rimRange, 10.0);
+        float rimSmoothness = max(uControllerRimEdgeSmoothness, 0.00001);
+        float rimInfluence = clamp(uControllerRimLightInfluence, 0.0, 1.0);
+        float viewFresnel = pow(
+          1.0 - nDotV,
+          max(10.0 - clamp(rimRange, 0.0, 10.0), 0.001)
+        );
+        float directedRim =
+          viewFresnel * mix(1.0, vDotRim, rimInfluence);
+        float sidedRim = nDotRim < 0.05
+          ? directedRim
+          : directedRim * (1.0 - 2.0 * rimInfluence);
+        float rim = sekaiSmooth01(clamp(
+          (sidedRim - uRimThreshold) / rimSmoothness,
+          0.0,
+          1.0
+        ));
+        vec3 controllerRimBase = mix(
+          vec3(0.5),
+          uControllerRimColor,
+          clamp(uControllerRimColorWeight, 0.0, 1.0)
+        );
+        vec3 controllerShadowRimBase = mix(
+          controllerRimBase,
+          uControllerShadowRimColor,
+          clamp(uControllerShadowRimColorWeight, 0.0, 1.0)
+        );
+        float rimShadowSharpness = clamp(
+          uControllerRimShadowSharpness,
+          0.0,
+          1.0
+        );
+        float rimColorMix = sekaiSmooth01(clamp(
+          (nDotRim - (rimShadowSharpness - 1.0)) /
+            max(2.0 * (1.0 - rimShadowSharpness), 0.00001),
+          0.0,
+          1.0
+        ));
+        vec3 rimColor = mix(
+          controllerRimBase,
+          controllerShadowRimBase,
+          rimColorMix
+        );
+        color += rimColor *
+          rim *
+          vertexRimMask *
+          max(uRimColorAlpha, 0.0);
+        color +=
+          uControllerSpecularColor *
+          uControllerSpecularIntensity *
+          specular;
+
         color = sekaiApplyCharacterAmbient(
           color,
           uControllerAmbientColor,
           uControllerAmbientIntensity,
           vec4(uPartsAmbientColor, uPartsAmbientAlpha)
         );
-        float finalLuma = dot(color, vec3(0.299, 0.587, 0.114));
-        color = mix(vec3(finalLuma), color, uFinalSaturation);
-        color = sekaiApplyHighlightRolloff(
-          color,
-          uBrightness,
-          uHighlightRolloff
+        gl_FragColor = vec4(
+          outputColor(clamp(color, 0.0, 1.0)),
+          uUseMainTex > 0.5 ? mainSample.a : 1.0
         );
-        gl_FragColor = vec4(outputColor(clamp(color, 0.0, 1.0)), 1.0);
       }
     `,
   });
@@ -1129,6 +1296,7 @@ export function updateSekaiFaceMaterial(
   material.uniforms.uShadowTex.value = next.shadowTex ?? null;
   material.uniforms.uValueTex.value = next.valueTex ?? null;
   material.uniforms.uFaceShadowTex.value = next.faceShadowTex ?? null;
+  material.uniforms.uMainTexTransform.value = textureUvMatrix(next.mainTex);
   material.uniforms.uUseMainTex.value = next.mainTex ? 1.0 : 0.0;
   material.uniforms.uUseShadowTex.value = next.shadowTex ? 1.0 : 0.0;
   material.uniforms.uHasValueTex.value = next.valueTex ? 1.0 : 0.0;
@@ -1152,14 +1320,6 @@ export function updateSekaiFaceMaterial(
   material.uniforms.uFadeMode.value = next.fadeMode ?? material.uniforms.uFadeMode.value;
   material.uniforms.uUseLambert.value = next.useLambert === false ? 0.0 : 1.0;
   material.uniforms.uShadowTexWeight.value = next.shadowTexWeight ?? material.uniforms.uShadowTexWeight.value;
-  material.uniforms.uFaceSdfMirror.value = next.faceSdfMirror ?? material.uniforms.uFaceSdfMirror.value;
-  material.uniforms.uFaceSdfBias.value = next.faceSdfBias ?? material.uniforms.uFaceSdfBias.value;
-  material.uniforms.uUseSkinColor.value = next.useSkinColor === false ? 0.0 : 1.0;
-  material.uniforms.uSkinMaskMode.value =
-    next.skinMaskMode ?? material.uniforms.uSkinMaskMode.value;
-  material.uniforms.uFaceSkinShadowStrength.value =
-    next.faceSkinShadowStrength ?? material.uniforms.uFaceSkinShadowStrength.value;
-  setSekaiGammaColor(material.uniforms.uSkinAmbientColor.value, next.skinAmbientColor ?? "#ffffff");
   material.uniforms.uHueSinAngle.value =
     next.hueSinAngle ?? material.uniforms.uHueSinAngle.value;
   material.uniforms.uHueCosAngle.value =
@@ -1179,15 +1339,60 @@ export function updateSekaiFaceMaterial(
   material.uniforms.uControllerAmbientIntensity.value =
     next.controllerAmbientIntensity ??
     material.uniforms.uControllerAmbientIntensity.value;
+  if (next.controllerSpecularColor !== undefined) {
+    setSekaiGammaColor(
+      material.uniforms.uControllerSpecularColor.value,
+      next.controllerSpecularColor
+    );
+  }
+  material.uniforms.uControllerSpecularIntensity.value =
+    next.controllerSpecularIntensity ??
+    material.uniforms.uControllerSpecularIntensity.value;
+  if (next.controllerRimColor !== undefined) {
+    setSekaiGammaColor(
+      material.uniforms.uControllerRimColor.value,
+      next.controllerRimColor
+    );
+  }
+  if (next.controllerShadowRimColor !== undefined) {
+    setSekaiGammaColor(
+      material.uniforms.uControllerShadowRimColor.value,
+      next.controllerShadowRimColor
+    );
+  }
+  material.uniforms.uControllerRimColorWeight.value =
+    next.controllerRimColorWeight ??
+    material.uniforms.uControllerRimColorWeight.value;
+  material.uniforms.uControllerShadowRimColorWeight.value =
+    next.controllerShadowRimColorWeight ??
+    material.uniforms.uControllerShadowRimColorWeight.value;
+  material.uniforms.uControllerRimRange.value =
+    next.controllerRimRange ??
+    material.uniforms.uControllerRimRange.value;
+  material.uniforms.uControllerRimEdgeSmoothness.value =
+    next.controllerRimEdgeSmoothness ??
+    material.uniforms.uControllerRimEdgeSmoothness.value;
+  material.uniforms.uControllerRimLightInfluence.value =
+    next.controllerRimLightInfluence ??
+    material.uniforms.uControllerRimLightInfluence.value;
+  material.uniforms.uControllerRimShadowSharpness.value =
+    next.controllerRimShadowSharpness ??
+    material.uniforms.uControllerRimShadowSharpness.value;
+  material.uniforms.uRimColorAlpha.value =
+    next.rimColorAlpha ??
+    material.uniforms.uRimColorAlpha.value;
+  if (next.rimDirection) {
+    material.uniforms.uRimDirection.value.copy(next.rimDirection).normalize();
+  }
+  material.uniforms.uSpecularPower.value =
+    next.specularPower ??
+    material.uniforms.uSpecularPower.value;
+  material.uniforms.uRimThreshold.value =
+    next.rimThreshold ??
+    material.uniforms.uRimThreshold.value;
   setSekaiGammaColor(material.uniforms.uGlobalShadowColor.value, next.globalShadowColor ?? "#ffffff");
   material.uniforms.uGlobalShadowAlpha.value =
     next.globalShadowAlpha ?? material.uniforms.uGlobalShadowAlpha.value;
-  material.uniforms.uFinalSaturation.value =
-    next.finalSaturation ?? material.uniforms.uFinalSaturation.value;
-  material.uniforms.uBrightness.value =
-    next.brightness ?? material.uniforms.uBrightness.value;
-  material.uniforms.uHighlightRolloff.value =
-    next.highlightRolloff ?? material.uniforms.uHighlightRolloff.value;
   material.uniforms.uAlphaCutoff.value =
     next.alphaCutoff ?? material.uniforms.uAlphaCutoff.value;
   if (next.faceDebugMode !== undefined) {
@@ -1278,6 +1483,7 @@ export function createSekaiLayerMaterial(
     polygonOffsetUnits: isEyelight ? -0.5 : -1,
     uniforms: {
       uMainTex: { value: texture },
+      uMainTexTransform: { value: textureUvMatrix(texture) },
       uUseMainTex: { value: texture ? 1.0 : 0.0 },
       uMode: { value: mode === "eye" ? 1.0 : isEyelight ? 2.0 : 0.0 },
       uTintColor: { value: sekaiGammaColor(options?.tintColor ?? "#ffffff") },
@@ -1354,6 +1560,7 @@ export function createSekaiLayerMaterial(
       #include <common>
 
       uniform sampler2D uMainTex;
+      uniform mat3 uMainTexTransform;
       uniform float uUseMainTex;
       uniform float uMode;
       uniform vec3 uTintColor;
@@ -1387,7 +1594,7 @@ export function createSekaiLayerMaterial(
       }
 
       void main() {
-        vec2 uv = vUv;
+        vec2 uv = (uMainTexTransform * vec3(vUv, 1.0)).xy;
         if (uUseAtlas > 0.5) {
           vec2 tile = max(uAtlasTile, vec2(1.0));
           float sampleIndex = floor(max(uAtlasSample, 0.0));

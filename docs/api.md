@@ -246,7 +246,8 @@ Use these response headers:
 | `.js` / `.mjs` | `text/javascript` | `public, max-age=2592000` |
 | `.wasm` | `application/wasm` | `public, max-age=2592000` |
 | `.ktx2` | `image/ktx2` | `public, max-age=2592000` |
-| `.msgpack.br` | `application/msgpack` | `public, max-age=2592000` |
+| `runtime-role-catalog.msgpack.br` | `application/msgpack` | revalidate |
+| other `.msgpack.br` | `application/msgpack` | `public, max-age=2592000` |
 | entry HTML | `text/html` | revalidate |
 
 Serve `.msgpack.br` as already-compressed binary data:
@@ -269,6 +270,12 @@ Access-Control-Expose-Headers: X-Haruki-File-Version
 
 Without it the runtime still works; only the small in-memory parsed-metadata
 reuse is skipped.
+
+The role catalog is the lightweight discovery document. The kernel revalidates
+it first, then appends its `masterVersion` to stable registry, compatibility,
+role-runtime, and motion URLs. This gives each masterdata generation a distinct
+browser cache key while keeping its files reusable for one month. Hashed part
+packages and texture CAS objects keep their content-addressed URLs.
 
 Use stable per-region runtime URLs and the browser's normal HTTP cache:
 

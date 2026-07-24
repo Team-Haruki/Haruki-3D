@@ -7,6 +7,7 @@ import {
   sekaiCostumeShopControllerDefaults,
 } from "../data/sampleScene";
 import { updateSekaiFaceMaterial } from "../materials/sekaiFaceMaterial";
+import { applyRawMaterialTextureTransform } from "./rawMaterialRuntime";
 import {
   createSekaiLayerMaterial,
   type SekaiLayerAtlas,
@@ -14,6 +15,7 @@ import {
 import {
   cloneBodyShaderMaterial,
   applyRawMaterialShaderUniforms,
+  configureSekaiBaseStencilClear,
   configureSekaiEyelashPass,
   configureSekaiFaceLayerStencilPrepass,
   configureSekaiHairStencil,
@@ -26,7 +28,6 @@ import {
   sortHeadMeshGroupsByMaterialKind,
   syncReplacementTextureFromOriginal,
   tuneLightingForPreview,
-  usesSekaiSkinTint,
   type RuntimeMaterialDebug,
 } from "./characterMaterialRuntime";
 
@@ -98,6 +99,8 @@ function pushBoundMaterialDebug(
     shaderValueShadowInfluence: uniforms?.uValueShadowInfluence?.value ?? null,
     shaderHairShadowEnabled:
       slot.materialKind === "hair" ? uniforms?.uHairShadowEnabled?.value ?? null : null,
+    shaderHeadNormalBlend:
+      slot.materialKind === "hair" ? uniforms?.uHeadNormalBlend?.value ?? null : null,
     shaderLambertEnabled: uniforms?.uUseLambert?.value ?? null,
     shaderBodyDebugMode: uniforms?.uBodyDebugMode?.value ?? null,
     shaderSpecularPower: uniforms?.uSpecularPower?.value ?? null,
@@ -112,15 +115,15 @@ function pushBoundMaterialDebug(
     shaderCharacterAmbient: uniforms?.uCharacterAmbientIntensity?.value ?? null,
     shaderShadowTexWeight: uniforms?.uShadowTexWeight?.value ?? null,
     shaderSaturation: uniforms?.uSaturation?.value ?? null,
-    shaderSkinTintEnabled: uniforms?.uSkinTintEnabled?.value ?? null,
+    shaderPartsAmbientAlpha: uniforms?.uPartsAmbientAlpha?.value ?? null,
     shaderSkinColorDefault: uniforms?.uSkinColorDefault?.value
-      ? `#${uniforms.uSkinColorDefault.value.getHexString()}`
+      ? `#${uniforms.uSkinColorDefault.value.getHexString(THREE.LinearSRGBColorSpace)}`
       : null,
     shaderSkinColor1: uniforms?.uSkinColor1?.value
-      ? `#${uniforms.uSkinColor1.value.getHexString()}`
+      ? `#${uniforms.uSkinColor1.value.getHexString(THREE.LinearSRGBColorSpace)}`
       : null,
     shaderSkinColor2: uniforms?.uSkinColor2?.value
-      ? `#${uniforms.uSkinColor2.value.getHexString()}`
+      ? `#${uniforms.uSkinColor2.value.getHexString(THREE.LinearSRGBColorSpace)}`
       : null,
     shaderFaceDebugMode: uniforms?.uFaceDebugMode?.value ?? null,
     shaderFaceSdfEnabled: uniforms?.uFaceSdfEnabled?.value ?? null,
@@ -228,7 +231,12 @@ function cloneFaceShaderMaterial(
     headDotDirectionalLight: source.uniforms.uHeadDotDirectionalLight?.value,
     faceDebugMode: source.uniforms.uFaceDebugMode?.value ?? 0,
     faceSdfEnabled: false,
-    useValueTex: params.lighting?.useValueTex ?? Boolean(params.valueTex),
+    // Face H.b is authored as fully lit so FaceSDF can own the facial side
+    // shadow in-game. SSSekai's parameter-free face material deliberately
+    // leaves H disconnected, preserving the model-normal shadow under the jaw.
+    // Keep H loaded for the remaining masks, but do not let it erase the
+    // geometric face band unless the material explicitly opts in.
+    useValueTex: params.lighting?.useValueTex ?? false,
     shadowThreshold:
       params.lighting?.sekaiShadowThreshold ?? source.uniforms.uShadowThreshold?.value ?? 0.5,
     shadowWeight: source.uniforms.uShadowWeight?.value ?? 1.0,
@@ -237,22 +245,11 @@ function cloneFaceShaderMaterial(
     useLambert: params.lighting?.useLambert ?? true,
     shadowTexWeight:
       params.lighting?.shadowTexWeight ?? source.uniforms.uShadowTexWeight?.value ?? 1.0,
-    faceSdfMirror: params.lighting?.faceSdfMirror ?? source.uniforms.uFaceSdfMirror?.value ?? 1.0,
-    faceSdfBias: params.lighting?.faceSdfBias ?? source.uniforms.uFaceSdfBias?.value ?? 0.0,
     useFaceShadowLimiter:
       params.lighting?.useFaceShadowLimiter ??
       ((source.uniforms.uUseFaceShadowLimiter?.value ?? 1.0) > 0.5),
     faceShadowLimitRange:
       params.lighting?.rangeLimit ?? source.uniforms.uFaceShadowLimitRange?.value ?? 0,
-    useSkinColor: params.lighting?.useSkinColor ?? true,
-    skinMaskMode: params.lighting?.skinMaskMode ?? source.uniforms.uSkinMaskMode?.value ?? 0,
-    faceSkinShadowStrength:
-      params.lighting?.faceSkinShadowStrength ??
-      source.uniforms.uFaceSkinShadowStrength?.value ??
-      0.1,
-    skinAmbientColor: source.uniforms.uSkinAmbientColor
-      ? source.uniforms.uSkinAmbientColor.value.clone()
-      : "#ffffff",
     hueSinAngle: params.lighting?.hueSinAngle ?? source.uniforms.uHueSinAngle?.value ?? 0,
     hueCosAngle: params.lighting?.hueCosAngle ?? source.uniforms.uHueCosAngle?.value ?? 1,
     saturation: params.lighting?.saturation ?? source.uniforms.uSaturation?.value ?? 0.5,
@@ -272,26 +269,63 @@ function cloneFaceShaderMaterial(
           sekaiCostumeShopControllerDefaults.ambientColor.b
         ),
     controllerAmbientIntensity: source.uniforms.uControllerAmbientIntensity?.value ?? 1,
+    controllerSpecularColor: source.uniforms.uControllerSpecularColor
+      ? source.uniforms.uControllerSpecularColor.value.clone()
+      : new THREE.Color().setRGB(
+          sekaiCostumeShopControllerDefaults.specularColor.r,
+          sekaiCostumeShopControllerDefaults.specularColor.g,
+          sekaiCostumeShopControllerDefaults.specularColor.b
+        ),
+    controllerSpecularIntensity:
+      source.uniforms.uControllerSpecularIntensity?.value ?? 1,
+    controllerRimColor: source.uniforms.uControllerRimColor
+      ? source.uniforms.uControllerRimColor.value.clone()
+      : new THREE.Color().setRGB(
+          sekaiCostumeShopControllerDefaults.rimColor.r,
+          sekaiCostumeShopControllerDefaults.rimColor.g,
+          sekaiCostumeShopControllerDefaults.rimColor.b
+        ),
+    controllerShadowRimColor: source.uniforms.uControllerShadowRimColor
+      ? source.uniforms.uControllerShadowRimColor.value.clone()
+      : new THREE.Color().setRGB(
+          sekaiCostumeShopControllerDefaults.shadowRimColor.r,
+          sekaiCostumeShopControllerDefaults.shadowRimColor.g,
+          sekaiCostumeShopControllerDefaults.shadowRimColor.b
+        ),
+    controllerRimColorWeight:
+      source.uniforms.uControllerRimColorWeight?.value ?? 1,
+    controllerShadowRimColorWeight:
+      source.uniforms.uControllerShadowRimColorWeight?.value ?? 1,
+    controllerRimRange:
+      source.uniforms.uControllerRimRange?.value ??
+      sekaiCostumeShopControllerDefaults.rimRange,
+    controllerRimEdgeSmoothness:
+      source.uniforms.uControllerRimEdgeSmoothness?.value ??
+      sekaiCostumeShopControllerDefaults.rimEdgeSmoothness,
+    controllerRimLightInfluence:
+      source.uniforms.uControllerRimLightInfluence?.value ??
+      sekaiCostumeShopControllerDefaults.rimLightInfluence,
+    controllerRimShadowSharpness:
+      source.uniforms.uControllerRimShadowSharpness?.value ??
+      sekaiCostumeShopControllerDefaults.rimShadowSharpness,
+    rimColorAlpha:
+      source.uniforms.uRimColorAlpha?.value ??
+      sekaiCostumeShopControllerDefaults.rimColorAlpha,
+    rimDirection: source.uniforms.uRimDirection?.value.clone(),
+    specularPower:
+      params.lighting?.specularPower ??
+      source.uniforms.uSpecularPower?.value ??
+      0,
+    rimThreshold:
+      params.lighting?.rimThreshold ??
+      source.uniforms.uRimThreshold?.value ??
+      0.2,
     globalShadowColor: source.uniforms.uGlobalShadowColor
       ? source.uniforms.uGlobalShadowColor.value.clone()
       : "#ffffff",
     globalShadowAlpha: source.uniforms.uGlobalShadowAlpha?.value ?? 1,
-    finalSaturation: source.uniforms.uFinalSaturation?.value ?? 1,
-    brightness: source.uniforms.uBrightness?.value ?? 1,
-    highlightRolloff: source.uniforms.uHighlightRolloff?.value ?? 0.5,
   });
   return material;
-}
-
-function configureBaseStencilClear(material: THREE.Material) {
-  material.stencilWrite = true;
-  material.stencilRef = 0;
-  material.stencilFunc = THREE.AlwaysStencilFunc;
-  material.stencilFuncMask = 0xff;
-  material.stencilWriteMask = 0xff;
-  material.stencilFail = THREE.KeepStencilOp;
-  material.stencilZFail = THREE.KeepStencilOp;
-  material.stencilZPass = THREE.ReplaceStencilOp;
 }
 
 function disposeReplacedMaterials(
@@ -386,6 +420,14 @@ export async function bindHeadRuntimeMaterials({
       loadRuntimeTexture(textureLoader, slot.valueTex, THREE.NoColorSpace),
       loadRuntimeTexture(textureLoader, slot.faceShadowTex, THREE.NoColorSpace),
     ]);
+    applyRawMaterialTextureTransform(mainTex, slot.rawMaterial, "_MainTex");
+    applyRawMaterialTextureTransform(shadowTex, slot.rawMaterial, "_ShadowTex");
+    applyRawMaterialTextureTransform(valueTex, slot.rawMaterial, "_ValueTex");
+    applyRawMaterialTextureTransform(
+      faceShadowTex,
+      slot.rawMaterial,
+      "_FaceShadowTex"
+    );
     if (!slot.materialKind) {
       throw new Error(
         `Head material ${slot.materialName ?? slot.materialKey} is missing materialKind.`
@@ -420,7 +462,12 @@ export async function bindHeadRuntimeMaterials({
         { ...layerOptions, strictAlpha: true }
       );
       overlayMaterial.side = THREE.FrontSide;
-      configureSekaiEyelashPass(overlayMaterial, CHARACTER_STENCIL_BIT, "eye");
+      configureSekaiEyelashPass(
+        overlayMaterial,
+        CHARACTER_STENCIL_BIT,
+        "eye",
+        slot.rawMaterial
+      );
       overlayMaterial.userData.pjskMaterialKind = "eye_through_hair";
       material.userData.pjskOverlayMaterial = overlayMaterial;
       material.userData.pjskStencilPrepassMaterial = stencilPrepassMaterial;
@@ -444,7 +491,12 @@ export async function bindHeadRuntimeMaterials({
         layerOptions
       );
       overlayMaterial.side = THREE.FrontSide;
-      configureSekaiEyelashPass(overlayMaterial, CHARACTER_STENCIL_BIT, "eyelight");
+      configureSekaiEyelashPass(
+        overlayMaterial,
+        CHARACTER_STENCIL_BIT,
+        "eyelight",
+        slot.rawMaterial
+      );
       overlayMaterial.userData.pjskMaterialKind = "eyelight_through_hair";
       material.userData.pjskOverlayMaterial = overlayMaterial;
     } else if (kind === "eyelash" || kind === "eyebrow") {
@@ -464,7 +516,12 @@ export async function bindHeadRuntimeMaterials({
         strictAlpha: true,
       });
       overlayMaterial.side = THREE.FrontSide;
-      configureSekaiEyelashPass(overlayMaterial, CHARACTER_STENCIL_BIT, kind);
+      configureSekaiEyelashPass(
+        overlayMaterial,
+        CHARACTER_STENCIL_BIT,
+        kind,
+        slot.rawMaterial
+      );
       overlayMaterial.userData.pjskMaterialKind = kind === "eyelash"
         ? "eyelash_through_hair"
         : "eyebrow_through_hair";
@@ -478,7 +535,6 @@ export async function bindHeadRuntimeMaterials({
         baseColor: headAsset.proxy.hairColor,
         shadowColor: headAsset.proxy.hairShadowColor,
         lighting,
-        skinTintEnabled: false,
         hairShadowEnabled:
           hair.proximityShadowEnabled &&
           hair.controllerPresent &&
@@ -500,11 +556,10 @@ export async function bindHeadRuntimeMaterials({
         skinColor1: headAsset.proxy.skinColor1 ?? headAsset.proxy.faceShadeColor,
         skinColor2: headAsset.proxy.skinColor2 ?? headAsset.proxy.faceShadeColor,
         lighting,
-        skinTintEnabled: usesSekaiSkinTint(kind),
         bodyDebugMode: view.bodyDebugMode,
         alphaCutoff: kind === "accessory" ? ACCESSORY_ALPHA_CUTOFF : 0,
       });
-      configureBaseStencilClear(material);
+      configureSekaiBaseStencilClear(material);
     } else {
       const faceMaterial = cloneFaceShaderMaterial(templates.face, {
         mainTex,
@@ -522,7 +577,7 @@ export async function bindHeadRuntimeMaterials({
         faceMaterial.uniforms.uFaceDebugMode.value = view.faceDebugMode;
       }
       faceMaterial.side = THREE.FrontSide;
-      configureBaseStencilClear(faceMaterial);
+      configureSekaiBaseStencilClear(faceMaterial);
       material = faceMaterial;
     }
 
@@ -614,6 +669,9 @@ export async function bindHeadRuntimeMaterials({
         mainMap
       ) {
         resolvedSlot.material.uniforms.uMainTex.value = mainMap;
+        if (resolvedSlot.material.uniforms.uMainTexTransform) {
+          resolvedSlot.material.uniforms.uMainTexTransform.value = mainMap.matrix;
+        }
         resolvedSlot.material.uniforms.uUseMainTex.value = 1;
         for (const layerMaterial of [
           resolvedSlot.overlayMaterial,
@@ -622,6 +680,9 @@ export async function bindHeadRuntimeMaterials({
         ]) {
           if (layerMaterial instanceof THREE.ShaderMaterial) {
             layerMaterial.uniforms.uMainTex.value = mainMap;
+            if (layerMaterial.uniforms.uMainTexTransform) {
+              layerMaterial.uniforms.uMainTexTransform.value = mainMap.matrix;
+            }
             layerMaterial.uniforms.uUseMainTex.value = 1;
           }
         }

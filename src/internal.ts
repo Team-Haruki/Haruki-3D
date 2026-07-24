@@ -83,9 +83,10 @@ export {
 export {
   evaluateSekaiBaseShadow,
   evaluateSekaiFaceShadow,
-  evaluateSekaiHighlightRolloff,
+  evaluateSekaiSkinColor,
   type SekaiBaseShadowInput,
   type SekaiFaceShadowInput,
+  type SekaiSkinColorInput,
 } from "./materials/sekaiCharacterLighting";
 export {
   normalizeHarukiRenderRecipe,
@@ -137,15 +138,18 @@ export {
 export {
   createSekaiOutlineMaterial,
   evaluateSekaiOutlineColor,
+  isSekaiOutlinePassEnabled,
   sekaiCostumeShopOutlineControllerDefaults,
 } from "./engine/sekaiOutlineRuntime";
 export {
+  applyRawMaterialTextureTransform,
   readRawMaterialBoolean,
   readRawMaterialColor,
   readRawMaterialFloat,
   readRawMaterialTexture,
 } from "./engine/rawMaterialRuntime";
 export {
+  applyUnityCharacterHeight,
   buildUnityPrefabSourceGraph,
   createUnityPrefabConstraintRuntime,
   installUnityRuntimeNativeMeshes,
@@ -159,10 +163,12 @@ export {
 export {
   applyRawMaterialShaderUniforms,
   bindBodyRuntimeMaterials,
+  configureSekaiBaseStencilClear,
   configureSekaiEyelashPass,
   configureSekaiFaceLayerStencilPrepass,
   configureSekaiHairStencil,
   createSekaiThroughHairOverlayMesh,
+  tuneLightingForPreview,
   updateSekaiEyelashPassView,
   type RuntimeMaterialDebug,
 } from "./engine/characterMaterialRuntime";

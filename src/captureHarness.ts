@@ -157,6 +157,8 @@ function readBodyDebugMode(params: URLSearchParams): BodyDebugMode {
   const mode = params.get("bodyDebugMode");
   switch (mode) {
     case "skin":
+    case "main_color":
+    case "skin_color":
     case "h_r":
     case "h_g":
     case "h_b":
@@ -291,7 +293,7 @@ function setCaptureError(error: unknown) {
 
 function waitForPresentedFrame() {
   return new Promise<void>((resolve) => {
-    requestAnimationFrame(() => requestAnimationFrame(resolve));
+    requestAnimationFrame(() => requestAnimationFrame(() => resolve()));
   });
 }
 

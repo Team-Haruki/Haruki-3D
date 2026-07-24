@@ -157,13 +157,73 @@ test("preview light updates lights, proxy colors, and material controller state 
   assert.deepEqual(face.uniforms.uLightDirection.value.toArray(), [1, 0, 0]);
 });
 
+test("character master skin colors override every loaded skin-capable material", () => {
+  const body = bodyTemplate("#111111");
+  const hair = bodyTemplate("#222222");
+  const face = createSekaiFaceMaterial({
+    baseColor: "#333333",
+    warmColor: "#444444",
+    lightDirection: new THREE.Vector3(0, 0, 1),
+    lightIntensity: 1,
+    ambientIntensity: 1,
+  });
+  const loaded = bodyTemplate("#555555");
+  const bodySlot = new THREE.Group();
+  bodySlot.add(new THREE.Mesh(new THREE.BufferGeometry(), loaded));
+  const debug = {
+    hairShadowMode: "off",
+    body: [{
+      shaderSkinColorDefault: "#111111",
+      shaderSkinColor1: "#222222",
+      shaderSkinColor2: "#333333",
+    }],
+    head: [],
+  };
+  const runtime = new CharacterLightingRuntime({
+    bodyMaterial: body,
+    hairMaterial: hair,
+    faceMaterial: face,
+    bodySlot,
+    headSlot: new THREE.Group(),
+    directionalLight: new THREE.DirectionalLight(),
+    fillLight: new THREE.AmbientLight(),
+    debug,
+  });
+
+  runtime.setCharacterSkinColors({
+    default: "#feefe0",
+    shadow1: "#efafbb",
+    shadow2: "#e07889",
+  });
+
+  const gammaHex = color => color.getHexString(THREE.LinearSRGBColorSpace);
+  for (const material of [body, hair, face, loaded]) {
+    assert.equal(gammaHex(material.uniforms.uSkinColorDefault.value), "feefe0");
+    assert.equal(gammaHex(material.uniforms.uSkinColor1.value), "efafbb");
+    assert.equal(gammaHex(material.uniforms.uSkinColor2.value), "e07889");
+  }
+  assert.deepEqual(debug.skinColors, {
+    default: "#feefe0",
+    shadow1: "#efafbb",
+    shadow2: "#e07889",
+  });
+  assert.deepEqual(
+    debug.body.map(entry => [
+      entry.shaderSkinColorDefault,
+      entry.shaderSkinColor1,
+      entry.shaderSkinColor2,
+    ]),
+    [["#feefe0", "#efafbb", "#e07889"]]
+  );
+});
+
 test("body shader starts with the captured CostumeShop controller state", () => {
   const body = bodyTemplate("#111111");
 
   assert.deepEqual(body.uniforms.uControllerAmbientColor.value.toArray(), [0.5, 0.5, 0.5]);
   assert.equal(body.uniforms.uControllerAmbientIntensity.value, 1);
   assert.deepEqual(body.uniforms.uControllerRimColor.value.toArray(), [0.5, 0.5, 0.5]);
-  assert.deepEqual(body.uniforms.uControllerShadowRimColor.value.toArray(), [0.5, 0.5, 0.5]);
+  assert.deepEqual(body.uniforms.uControllerShadowRimColor.value.toArray(), [0, 0, 0]);
   assert.equal(body.uniforms.uControllerRimColorWeight.value, 1);
   assert.equal(body.uniforms.uControllerShadowRimColorWeight.value, 1);
   assert.equal(body.uniforms.uControllerRimRange.value, 7);
@@ -174,4 +234,33 @@ test("body shader starts with the captured CostumeShop controller state", () => 
   assert.equal(body.uniforms.uControllerRimEmission.value, 0);
   assert.equal(body.uniforms.uControllerRimLightInfluence.value, 1);
   assert.equal(body.uniforms.uControllerRimShadowSharpness.value, 0.5);
+  assert.equal(body.uniforms.uFinalSaturation, undefined);
+  assert.equal(body.uniforms.uBrightness, undefined);
+  assert.equal(body.uniforms.uHighlightRolloff, undefined);
+  assert.doesNotMatch(body.fragmentShader, /sekaiApplyHighlightRolloff/);
+});
+
+test("face shader uses the same captured controller lighting path as body", () => {
+  const face = createSekaiFaceMaterial({
+    baseColor: "#333333",
+    warmColor: "#222222",
+    lightDirection: new THREE.Vector3(0, 0, 1),
+    lightIntensity: 1,
+    ambientIntensity: 1,
+  });
+
+  assert.deepEqual(face.uniforms.uControllerAmbientColor.value.toArray(), [0.5, 0.5, 0.5]);
+  assert.deepEqual(face.uniforms.uControllerSpecularColor.value.toArray(), [1, 1, 1]);
+  assert.deepEqual(face.uniforms.uControllerRimColor.value.toArray(), [0.5, 0.5, 0.5]);
+  assert.deepEqual(face.uniforms.uControllerShadowRimColor.value.toArray(), [0, 0, 0]);
+  assert.equal(face.uniforms.uControllerRimRange.value, 7);
+  assert.equal(face.uniforms.uControllerRimEdgeSmoothness.value, 0.0010000000474974513);
+  assert.equal(face.uniforms.uControllerRimLightInfluence.value, 1);
+  assert.equal(face.uniforms.uControllerRimShadowSharpness.value, 0.5);
+  assert.equal(face.uniforms.uFinalSaturation, undefined);
+  assert.equal(face.uniforms.uBrightness, undefined);
+  assert.equal(face.uniforms.uHighlightRolloff, undefined);
+  assert.doesNotMatch(face.fragmentShader, /sekaiApplyHighlightRolloff/);
+  assert.match(face.fragmentShader, /color \+= rimColor/);
+  assert.match(face.fragmentShader, /uControllerSpecularColor/);
 });

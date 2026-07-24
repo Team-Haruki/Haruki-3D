@@ -39,6 +39,11 @@ export type RuntimeProjectedShadowDebug = {
     scale: { x: number; y: number; z: number };
     opacity: number;
   };
+  pairs: Array<{
+    targetPosition: { x: number; y: number; z: number };
+    directionalOpacity: number;
+    crossOpacity: number;
+  }>;
 };
 
 export const defaultProjectedShadowSettings: ProjectedShadowSettings = {
@@ -140,7 +145,14 @@ export class CharacterProjectedShadowController {
     }
 
     for (const [index, pair] of this.pairs.entries()) {
-      const target = targets[Math.min(index, targets.length - 1)];
+      const target = targets[index];
+      if (!target) {
+        pair.directionalAnchor.visible = false;
+        pair.crossAnchor.visible = false;
+        pair.initialToeHeight = null;
+        pair.targetWorldPosition.set(0, 0, 0);
+        continue;
+      }
       pair.targetWorldPosition.copy(target);
       pair.initialToeHeight ??= target.y;
       pair.directionalAnchor.visible = this.settings.directionalShadow;
@@ -202,6 +214,11 @@ export class CharacterProjectedShadowController {
         scale: vectorSnapshot(new THREE.Vector3(this.settings.crossSize, 1, this.settings.crossSize)),
         opacity: Number(pair.crossMaterial.opacity.toFixed(4)),
       },
+      pairs: this.pairs.map((current) => ({
+        targetPosition: vectorSnapshot(current.targetWorldPosition),
+        directionalOpacity: Number(current.directionalMaterial.opacity.toFixed(4)),
+        crossOpacity: Number(current.crossMaterial.opacity.toFixed(4)),
+      })),
     };
   }
 

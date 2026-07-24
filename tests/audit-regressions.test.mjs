@@ -16,6 +16,8 @@ test("runtime files expose a stable version for parsed metadata invalidation", (
   const source = readSource("capture-server.mjs");
   assert.match(source, /"x-haruki-file-version": `\$\{stat\.size\}-\$\{Math\.trunc\(stat\.mtimeMs\)\}`/);
   assert.match(source, /"access-control-expose-headers": "x-haruki-file-version"/);
+  assert.match(source, /runtime-role-catalog\\\.msgpack\\\.br/);
+  assert.match(source, /\? "no-cache"/);
 });
 
 test("engine serves and loads only final MessagePack Brotli runtime files", () => {
@@ -251,7 +253,10 @@ test("capture waits for a presented browser frame before acknowledging", () => {
     "async function bootstrapCapture"
   );
 
-  assert.match(source, /requestAnimationFrame\(\(\) =>\s*requestAnimationFrame\(resolve\)\)/);
+  assert.match(
+    source,
+    /requestAnimationFrame\(\(\) =>\s*requestAnimationFrame\(\(\) => resolve\(\)\)\)/
+  );
   assert.match(requestHandler, /await waitForPresentedFrame\(\)/);
 });
 
@@ -394,7 +399,7 @@ test("runtime package URLs cannot escape their region root", () => {
   const snippet = sourceSlice(
     source,
     "export function resolveRuntimePackageUrl",
-    "async function loadPartPackageSetFromBaseUrl"
+    "function withRuntimeMasterVersion"
   )
     .replace("export function", "function")
     .replace("baseUrl: string, relativePath: string", "baseUrl, relativePath");

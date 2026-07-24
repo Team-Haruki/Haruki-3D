@@ -301,6 +301,7 @@ type RuntimeBone = {
   node: THREE.Object3D;
   state: UtjSpringBoneState;
   initialLocalRotation: THREE.Quaternion;
+  initialLocalScale: THREE.Vector3;
   skinAnimationLocalRotation: THREE.Quaternion;
   lastAppliedLocalRotation: THREE.Quaternion;
   hasAppliedLocalRotation: boolean;
@@ -397,7 +398,6 @@ export class UnityPrefabSpringRuntime {
   private readonly headPosition = new THREE.Vector3();
   private readonly localRotation = new THREE.Quaternion();
   private readonly skinAnimationLocalRotation = new THREE.Quaternion();
-  private readonly unitScale = new THREE.Vector3(1, 1, 1);
   private readonly colliderLocalToWorld = new THREE.Matrix4();
   private readonly colliderWorldToLocal = new THREE.Matrix4();
   private readonly frameColliderCache = new Map<RuntimeCollider, UtjCollider>();
@@ -449,13 +449,13 @@ export class UnityPrefabSpringRuntime {
     const bones: RuntimeBone[] = [];
 
     for (const manager of setup.managers ?? []) {
-      if (!isSourceActive(manager) || !isRuntimePathActive(manager.nodePath ?? manager.poseRoot, activeRoots)) {
+      if (!isRuntimePathActive(manager.nodePath ?? manager.poseRoot, activeRoots)) {
         continue;
       }
       const forceProviders = resolveForceProviders(resolution, manager, forceProviderCache);
       for (const bonePathId of manager.bonePathIds ?? []) {
         const sourceBone = boneByPathId.get(bonePathId);
-        if (!sourceBone || !isSourceActive(sourceBone) || !isRuntimePathActive(sourceBone.nodePath, activeRoots)) {
+        if (!sourceBone || !isRuntimePathActive(sourceBone.nodePath, activeRoots)) {
           continue;
         }
         const node = resolveNodeForPart(resolution, sourceBone.nodePath, sourceBone.runtimePartIndex);
@@ -737,7 +737,7 @@ export class UnityPrefabSpringRuntime {
       bone.skinAnimationLocalRotation.copy(bone.initialLocalRotation);
       bone.lastAppliedLocalRotation.copy(bone.initialLocalRotation);
       bone.hasAppliedLocalRotation = false;
-      bone.node.scale.copy(this.unitScale);
+      bone.node.scale.copy(bone.initialLocalScale);
       bone.node.updateMatrix();
       bone.node.updateMatrixWorld(true);
     }
@@ -1141,7 +1141,6 @@ export class UnityPrefabSpringRuntime {
     ));
     bone.lastAppliedLocalRotation.copy(bone.node.quaternion);
     bone.hasAppliedLocalRotation = true;
-    bone.node.scale.copy(this.unitScale);
     bone.node.updateMatrix();
     bone.node.updateMatrixWorld(true);
   }
@@ -1474,6 +1473,7 @@ function createRuntimeBone(
     node,
     state: createUtjSpringBoneState(headPosition, tailPosition),
     initialLocalRotation,
+    initialLocalScale: node.scale.clone(),
     skinAnimationLocalRotation: initialLocalRotation.clone(),
     lastAppliedLocalRotation: initialLocalRotation.clone(),
     hasAppliedLocalRotation: false,
@@ -1625,7 +1625,7 @@ function buildRuntimeColliders(
     if (typeof source.index !== "number") {
       continue;
     }
-    if (!isSourceActive(source) || !isRuntimePathActive(source.nodePath, activeRoots)) {
+    if (!isRuntimePathActive(source.nodePath, activeRoots)) {
       continue;
     }
     const node = resolveNodeForPart(resolution, source.nodePath, source.runtimePartIndex);
@@ -2049,16 +2049,6 @@ function isRuntimePathActive(path: string | null | undefined, activeRoots: Reado
   }
   const root = normalizeRootName(rootNameFromPath(path));
   return root !== null && activeRoots.has(root);
-}
-
-function isSourceActive(source: {
-  enabled?: boolean;
-  activeSelf?: boolean;
-  activeInHierarchy?: boolean;
-}): boolean {
-  return source.enabled !== false &&
-    source.activeSelf !== false &&
-    source.activeInHierarchy !== false;
 }
 
 function resolveLengthLimitTargets(

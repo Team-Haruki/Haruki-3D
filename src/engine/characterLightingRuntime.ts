@@ -5,6 +5,7 @@ import type {
   MaterialLightingSettings,
   PreviewLightState,
 } from "../data/sampleScene";
+import type { RuntimeSkinColors } from "../runtime/runtimeTypes";
 import {
   sekaiCostumeShopControllerDefaults,
 } from "../data/sampleScene";
@@ -32,7 +33,8 @@ import {
 } from "./characterMaterialRuntime";
 
 export type BodyDebugMode =
-  | "off" | "skin" | "h_r" | "h_g" | "h_b" | "h_a" | "vertex_r" | "vertex_g"
+  | "off" | "skin" | "main_color" | "skin_color"
+  | "h_r" | "h_g" | "h_b" | "h_a" | "vertex_r" | "vertex_g"
   | "base_shadow" | "ndotl_raw" | "h_b_adjusted_shadow" | "ambient_target"
   | "ambient_weight" | "ambient_tint" | "specular" | "specular_mask"
   | "specular_add" | "rim_raw" | "rim_add" | "rim_gate" | "rim_color"
@@ -52,6 +54,7 @@ export type HairShadowMode = "off" | "sekai_head_position" | "head_proximity";
 
 type CharacterLightingDebug = {
   hairShadowMode: HairShadowMode;
+  skinColors?: RuntimeSkinColors | null;
   body: RuntimeMaterialDebug[];
   head: RuntimeMaterialDebug[];
 };
@@ -73,7 +76,8 @@ function normalizeHairShadowMode(mode: HairShadowMode): HairShadowMode {
 }
 
 const bodyDebugUniformByMode: Readonly<Partial<Record<BodyDebugMode, number>>> = {
-  skin: 1, h_r: 4, h_g: 5, h_b: 6, h_a: 7, vertex_r: 8, vertex_g: 9,
+  skin: 1, main_color: 2, skin_color: 3,
+  h_r: 4, h_g: 5, h_b: 6, h_a: 7, vertex_r: 8, vertex_g: 9,
   base_shadow: 10, ndotl_raw: 11, h_b_adjusted_shadow: 12, ambient_target: 13,
   ambient_weight: 14, ambient_tint: 15, specular: 16, rim_raw: 17, rim_add: 18,
   rim_gate: 19, rim_color: 20, rim_scalar: 21, specular_mask: 22, specular_add: 23,
@@ -153,6 +157,7 @@ export class CharacterLightingRuntime {
   );
   private controllerOutlineBlending: number =
     sekaiCostumeShopOutlineControllerDefaults.blending;
+  private skinColors: RuntimeSkinColors | null = null;
 
   constructor(private readonly options: CharacterLightingRuntimeOptions) {
     this.toonValueShadowInfluence = options.valueShadowInfluence ?? 1;
@@ -251,6 +256,45 @@ export class CharacterLightingRuntime {
     this.applyBodyDebug();
     this.applyToonShadowPreview();
     this.applyHairShadowMode();
+    this.applyCharacterSkinColors();
+  }
+
+  setCharacterSkinColors(colors: RuntimeSkinColors | null) {
+    this.skinColors = colors ? { ...colors } : null;
+    this.options.debug.skinColors = this.skinColors ? { ...this.skinColors } : null;
+    this.applyCharacterSkinColors();
+  }
+
+  private applyCharacterSkinColors() {
+    const colors = this.skinColors;
+    if (!colors) return;
+    const apply = (material: THREE.ShaderMaterial) => {
+      if (material.uniforms.uSkinColorDefault) {
+        setSekaiGammaColor(material.uniforms.uSkinColorDefault.value, colors.default);
+      }
+      if (material.uniforms.uSkinColor1) {
+        setSekaiGammaColor(material.uniforms.uSkinColor1.value, colors.shadow1);
+      }
+      if (material.uniforms.uSkinColor2) {
+        setSekaiGammaColor(material.uniforms.uSkinColor2.value, colors.shadow2);
+      }
+    };
+    [this.options.bodyMaterial, this.options.hairMaterial, this.options.faceMaterial]
+      .forEach(apply);
+    this.forEachShaderMaterial(apply);
+    for (const entries of this.debugEntries) {
+      for (const entry of entries) {
+        if (entry.shaderSkinColorDefault !== undefined && entry.shaderSkinColorDefault !== null) {
+          entry.shaderSkinColorDefault = colors.default.toLowerCase();
+        }
+        if (entry.shaderSkinColor1 !== undefined && entry.shaderSkinColor1 !== null) {
+          entry.shaderSkinColor1 = colors.shadow1.toLowerCase();
+        }
+        if (entry.shaderSkinColor2 !== undefined && entry.shaderSkinColor2 !== null) {
+          entry.shaderSkinColor2 = colors.shadow2.toLowerCase();
+        }
+      }
+    }
   }
 
   private shouldEnableFaceSdf() {
@@ -513,7 +557,6 @@ export class CharacterLightingRuntime {
       controllerShadowRimColorWeight: bodyMaterial.uniforms.uControllerShadowRimColorWeight.value,
       controllerRimShadowSharpness: next.rimShadowSharpness,
       bodyDebugMode: view.bodyDebugMode,
-      skinTintEnabled: true,
     });
     updateSekaiBodyMaterial(hairMaterial, {
       baseColor: headAsset?.proxy.hairColor ?? "#7b5b4a",
@@ -549,7 +592,6 @@ export class CharacterLightingRuntime {
       controllerRimColorWeight: hairMaterial.uniforms.uControllerRimColorWeight.value,
       controllerShadowRimColorWeight: hairMaterial.uniforms.uControllerShadowRimColorWeight.value,
       controllerRimShadowSharpness: next.rimShadowSharpness,
-      skinTintEnabled: false,
       hairShadowEnabled: false,
     });
     updateSekaiFaceMaterial(faceMaterial, {
@@ -568,13 +610,31 @@ export class CharacterLightingRuntime {
       partsAmbientAlpha: faceMaterial.uniforms.uPartsAmbientAlpha.value,
       controllerAmbientColor: faceMaterial.uniforms.uControllerAmbientColor.value.clone(),
       controllerAmbientIntensity: faceMaterial.uniforms.uControllerAmbientIntensity.value,
+      controllerSpecularColor:
+        faceMaterial.uniforms.uControllerSpecularColor.value.clone(),
+      controllerSpecularIntensity:
+        faceMaterial.uniforms.uControllerSpecularIntensity.value,
+      controllerRimColor:
+        faceMaterial.uniforms.uControllerRimColor.value.clone(),
+      controllerShadowRimColor:
+        faceMaterial.uniforms.uControllerShadowRimColor.value.clone(),
+      controllerRimColorWeight:
+        faceMaterial.uniforms.uControllerRimColorWeight.value,
+      controllerShadowRimColorWeight:
+        faceMaterial.uniforms.uControllerShadowRimColorWeight.value,
+      controllerRimRange: next.rimRange,
+      controllerRimEdgeSmoothness: next.rimEdgeSmoothness,
+      controllerRimLightInfluence: next.rimLightInfluence,
+      controllerRimShadowSharpness: next.rimShadowSharpness,
+      rimColorAlpha: next.rimColorAlpha,
+      rimDirection: getSekaiPreviewRimDirection(),
+      specularPower: faceMaterial.uniforms.uSpecularPower.value,
+      rimThreshold: faceMaterial.uniforms.uRimThreshold.value,
       globalShadowColor: faceMaterial.uniforms.uGlobalShadowColor.value.clone(),
       globalShadowAlpha: faceMaterial.uniforms.uGlobalShadowAlpha.value,
-      finalSaturation: faceMaterial.uniforms.uFinalSaturation.value,
-      brightness: faceMaterial.uniforms.uBrightness.value,
-      highlightRolloff: faceMaterial.uniforms.uHighlightRolloff.value,
     });
     this.updateLoadedMaterialLight(next, faceShadowLightDirection);
+    this.applyCharacterSkinColors();
   }
 
   updateLoadedMaterialLight(next: PreviewLightState, faceShadowLightDirection: THREE.Vector3) {
@@ -648,7 +708,11 @@ export class CharacterLightingRuntime {
         )
       : setSekaiGammaColor(new THREE.Color(), colors.rimColor);
     const shadowRim = colors.shadowRimColor == null
-      ? rim.clone()
+      ? new THREE.Color().setRGB(
+          sekaiCostumeShopControllerDefaults.shadowRimColor.r,
+          sekaiCostumeShopControllerDefaults.shadowRimColor.g,
+          sekaiCostumeShopControllerDefaults.shadowRimColor.b
+        )
       : setSekaiGammaColor(new THREE.Color(), colors.shadowRimColor);
     const apply = (material: THREE.ShaderMaterial) => {
       material.uniforms.uControllerAmbientColor?.value.copy(ambient);
@@ -731,12 +795,16 @@ export class CharacterLightingRuntime {
         const mesh = node as THREE.Mesh;
         if (!mesh.isMesh || !mesh.userData.pjskOutlineShell) return;
         const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-        for (const material of materials) if (material instanceof THREE.MeshBasicMaterial) this.applyOutlineMaterial(material);
+        for (const material of materials) {
+          if (material.userData.pjskOutlineController) {
+            this.applyOutlineMaterial(material);
+          }
+        }
       });
     }
   }
 
-  applyOutlineMaterial(material: THREE.MeshBasicMaterial) {
+  applyOutlineMaterial(material: THREE.Material) {
     applySekaiOutlineController(
       material,
       this.controllerOutlineColor,
