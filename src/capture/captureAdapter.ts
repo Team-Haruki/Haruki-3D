@@ -101,10 +101,10 @@ export class HarukiCaptureAdapter {
     const warmupMs = Math.max(Math.trunc(request.warmupMs ?? 0), 0);
     const warmupMode = request.warmupMode ?? "animation";
     const advanceWarmupAnimation = warmupMode === "animation";
-    const duration = Math.max(this.engine.getAnimationSnapshot().duration, 0);
     const seekTargetPhase = (targetPhase: number) => clip === "motion"
       ? this.engine.seekAnimationPhase(targetPhase)
       : this.engine.seekAnimationLoopPhase(targetPhase);
+    const duration = Math.max(seekTargetPhase(phase).duration, 0);
     const startPhase = advanceWarmupAnimation && warmupFrames > 0 && duration > 0
       ? THREE.MathUtils.euclideanModulo(
         phase - warmupFrames / (60 * duration),
@@ -112,7 +112,9 @@ export class HarukiCaptureAdapter {
       )
       : phase;
 
-    seekTargetPhase(startPhase);
+    if (startPhase !== phase) {
+      seekTargetPhase(startPhase);
+    }
 
     if (warmupFrames > 0) {
       this.engine.setAnimationPaused(!advanceWarmupAnimation);
@@ -144,5 +146,6 @@ export class HarukiCaptureAdapter {
     }
     this.engine.stepRuntimeFrame(0, { advanceAnimation: false });
     this.engine.renderFrame();
+    this.engine.finishCaptureFrame();
   }
 }

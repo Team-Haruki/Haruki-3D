@@ -63,25 +63,35 @@ test("0414 prefab runtime applies official model combine and installs native mes
   const nativeMeshes = installUnityRuntimeNativeMeshes(graph, extension);
   assert.equal(graph.root.name, "UnityPrefabSourceRoot");
   assert.equal(nativeMeshes.error, null);
-  assert.equal(nativeMeshes.meshCount, 1);
+  assert.equal(nativeMeshes.meshCount, 2);
   assert.equal(nativeMeshes.skinnedMeshCount, 0);
+  assert.deepEqual(nativeMeshes.skinBindings, []);
 
   const bodyRoot = graph.nodeByPath.get("body");
   const faceNeck = graph.nodeByPath.get("face/Neck");
   const faceHead = graph.nodeByPath.get("face/Neck/Head");
   const renderer = graph.nodeByPath.get("face/Face");
-  const movedTarget = graph.nodeByPath.get("face/Neck/hat_target");
+  const visorRenderer = graph.nodeByPath.get("face/Visor");
+  const discardedTarget = graph.nodeByPath.get("body/hat_target");
+  const discardedFaceControl = graph.nodeByPath.get("face/BS");
+  const discardedFaceRoot = graph.nodeByPath.get("face");
   const drainedBodyChild = graph.nodeByPath.get(
     "body/Neck/Head/BodyChild"
   );
 
   assert.equal(graph.nodeByPath.get("body/Neck"), faceNeck);
   assert.equal(graph.nodeByPath.get("body/Neck/Head"), faceHead);
+  assert.equal(graph.bodyAttach, faceNeck);
+  assert.equal(graph.headRoot, faceNeck);
+  assert.equal(graph.headOrigin, faceNeck);
   assert.equal(faceNeck.parent, bodyRoot);
   assert.deepEqual(faceNeck.position.toArray(), [-1, 2, 3]);
   assert.deepEqual(faceHead.position.toArray(), [-4, 5, 6]);
   assert.equal(renderer.parent, bodyRoot);
-  assert.equal(movedTarget.parent, bodyRoot);
+  assert.equal(visorRenderer.parent, bodyRoot);
+  assert.equal(discardedTarget, undefined);
+  assert.equal(discardedFaceControl, undefined);
+  assert.equal(discardedFaceRoot, undefined);
   assert.equal(drainedBodyChild.parent, faceHead);
 
   const mesh = renderer.children.find((node) => node instanceof THREE.Mesh);
@@ -93,6 +103,15 @@ test("0414 prefab runtime applies official model combine and installs native mes
   assert.equal(graph.debug.active, true);
   assert.equal(graph.debug.sourcePath, "body/Neck");
   assert.equal(graph.debug.targetPath, "face/Neck");
+  assert.deepEqual(graph.debug.assemblyCounts, {
+    inputTransforms: 11,
+    retainedTransforms: 6,
+    removedTransforms: 5,
+    capturedCommonRemovedTransforms: 14,
+    removedAtLeastCapturedCommonCount: false,
+  });
+  assert.equal(graph.debug.keyNodes.modelCombineBodyNeck.destroyed, true);
+  assert.equal(graph.debug.keyNodes.modelCombineFaceNeck.destroyed, false);
 });
 
 test("prefab runtime binds skinned morph meshes and applies exported constraints", () => {
@@ -138,6 +157,20 @@ test("prefab runtime binds skinned morph meshes and applies exported constraints
 
   assert.equal(nativeMeshes.error, null);
   assert.equal(nativeMeshes.skinnedMeshCount, 1);
+  assert.deepEqual(nativeMeshes.skinBindings, [{
+    meshName: "FaceMesh",
+    partKind: "face",
+    rendererTransformPath: "face/Face",
+    rootBonePath: null,
+    rootBoneResolved: false,
+    effectiveRootBonePath: null,
+    effectiveRootBoneResolved: false,
+    boneCount: 1,
+    restTranslation: { x: -5, y: 7, z: 9 },
+    restScale: { x: 1, y: 1, z: 1 },
+    restMatrixSpread: 0,
+    restMatrixSpreadBonePath: null,
+  }]);
   assert.ok(mesh);
   assert.equal(mesh.skeleton.bones[0], graph.nodeByPath.get("face/Neck/Head"));
   assert.deepEqual(mesh.skeleton.boneInverses[0].toArray(), identityMatrix());
@@ -174,8 +207,8 @@ test("prefab debug snapshot preserves fallback state until a graph is loaded", (
   assert.equal(snapshot.setupVersion, "0414");
   assert.deepEqual(snapshot.keyNodes.bodyNeck.worldPosition, { x: -1, y: 2, z: 3 });
   assert.deepEqual(snapshot.keyNodes.faceNeck.worldPosition, { x: -1, y: 2, z: 3 });
-  assert.equal(snapshot.assemblyDistances.bodyNeckToFaceNeck, 0);
-  assert.equal(snapshot.assemblyDistances.bodyHeadToFaceHead, 0);
+  assert.equal(snapshot.assemblyDistances.bodyNeckToFaceNeck, null);
+  assert.equal(snapshot.assemblyDistances.bodyHeadToFaceHead, null);
 });
 
 test("persistent constraints retain resolved transform bindings between frames", () => {
@@ -223,11 +256,13 @@ function makeRuntimeExtension() {
           transform(2, "body/Neck", 1, [1, 2, 3]),
           transform(3, "body/Neck/Head", 2, [4, 5, 6]),
           transform(4, "body/Neck/Head/BodyChild", 3),
+          transform(5, "body/hat_target", 1),
           transform(10, "face", null),
           transform(11, "face/Neck", 10, [7, 8, 9]),
           transform(12, "face/Neck/Head", 11),
-          transform(13, "face/Neck/hat_target", 11),
+          transform(13, "face/BS", 10),
           transform(14, "face/Face", 10),
+          transform(15, "face/Visor", 10),
         ],
       }],
       bodyHeadAssembly: {
@@ -259,6 +294,20 @@ function makeRuntimeExtension() {
           slotIndex: 0,
           materialKey: "face:0",
           materialName: "FaceMaterial",
+          indices: [0, 1, 2],
+        }],
+      }, {
+        partKind: "face",
+        meshPath: "face/Visor/VisorMesh",
+        meshName: "VisorMesh",
+        rendererTransformPath: "face/Visor",
+        positions: [0, 0, 0, 1, 0, 0, 0, 1, 0],
+        normals: [0, 0, 1, 0, 0, 1, 0, 0, 1],
+        uv0: [0, 0, 1, 0, 0, 1],
+        submeshes: [{
+          slotIndex: 0,
+          materialKey: "face:1",
+          materialName: "VisorMaterial",
           indices: [0, 1, 2],
         }],
       }],

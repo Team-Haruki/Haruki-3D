@@ -547,8 +547,6 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
         rimFactorX = rimFactorX > 10.0 ? rimFactorX * 0.01 : rimFactorX;
         rimFactorX = min(rimFactorX, 10.0);
         float rimFactorY = max(uControllerRimEdgeSmoothness, 0.00001);
-        // uControllerRimEmission remains independently bound. Its pixel-stage
-        // operation is not yet closed by the available GPU data.
         float rimFactorW = clamp(uControllerRimLightInfluence, 0.0, 1.0);
         float viewFresnel = pow(
           1.0 - nDotV,
@@ -619,6 +617,7 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
           return;
         }
         color += rimAdd;
+        color += rimAdd * uControllerRimEmission;
         color += specularAdd;
 
         vec3 ambientTarget = sekaiApplyCharacterAmbient(
@@ -826,6 +825,7 @@ export type FaceMaterialUniforms = {
   controllerShadowRimColorWeight?: number;
   controllerRimRange?: number;
   controllerRimEdgeSmoothness?: number;
+  controllerRimEmission?: number;
   controllerRimLightInfluence?: number;
   controllerRimShadowSharpness?: number;
   rimColorAlpha?: number;
@@ -928,6 +928,11 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
         value:
           initial.controllerRimEdgeSmoothness ??
           sekaiCostumeShopControllerDefaults.rimEdgeSmoothness,
+      },
+      uControllerRimEmission: {
+        value:
+          initial.controllerRimEmission ??
+          sekaiCostumeShopControllerDefaults.rimEmission,
       },
       uControllerRimLightInfluence: {
         value:
@@ -1051,6 +1056,7 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
       uniform float uControllerShadowRimColorWeight;
       uniform float uControllerRimRange;
       uniform float uControllerRimEdgeSmoothness;
+      uniform float uControllerRimEmission;
       uniform float uControllerRimLightInfluence;
       uniform float uControllerRimShadowSharpness;
       uniform float uRimColorAlpha;
@@ -1259,10 +1265,12 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
           controllerShadowRimBase,
           rimColorMix
         );
-        color += rimColor *
+        vec3 rimAdd = rimColor *
           rim *
           vertexRimMask *
           max(uRimColorAlpha, 0.0);
+        color += rimAdd;
+        color += rimAdd * uControllerRimEmission;
         color +=
           uControllerSpecularColor *
           uControllerSpecularIntensity *
@@ -1372,6 +1380,9 @@ export function updateSekaiFaceMaterial(
   material.uniforms.uControllerRimEdgeSmoothness.value =
     next.controllerRimEdgeSmoothness ??
     material.uniforms.uControllerRimEdgeSmoothness.value;
+  material.uniforms.uControllerRimEmission.value =
+    next.controllerRimEmission ??
+    material.uniforms.uControllerRimEmission.value;
   material.uniforms.uControllerRimLightInfluence.value =
     next.controllerRimLightInfluence ??
     material.uniforms.uControllerRimLightInfluence.value;

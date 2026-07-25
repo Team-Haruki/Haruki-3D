@@ -32,6 +32,13 @@ export type PrefabHeadFollowDebug = {
   targetPaths?: string[];
   mountedHeadRootCount?: number;
   mountedHeadOriginPaths?: string[];
+  assemblyCounts?: {
+    inputTransforms: number;
+    retainedTransforms: number;
+    removedTransforms: number;
+    capturedCommonRemovedTransforms: number;
+    removedAtLeastCapturedCommonCount: boolean;
+  };
   positionRoots?: PrefabHeadFollowNodeDebug[];
   keyNodes?: Record<string, PrefabHeadFollowNodeDebug | null>;
   assemblyDistances?: {
@@ -44,6 +51,7 @@ export type PrefabHeadFollowNodeDebug = {
   path: string;
   canonicalPath: string;
   parentPath: string | null;
+  destroyed: boolean;
   localPosition: { x: number; y: number; z: number };
   localQuaternion: { x: number; y: number; z: number; w: number };
   worldPosition: { x: number; y: number; z: number };
@@ -64,6 +72,9 @@ export type UnityPrefabSourceGraph = {
   headRootPath: string | null;
   headOrigin: THREE.Object3D | null;
   headOriginPath: string | null;
+  bodyRootBone: THREE.Object3D | null;
+  bodyRootBonePath: string | null;
+  headRendererPaths: string[];
   debug: PrefabHeadFollowDebug;
 };
 
@@ -71,8 +82,24 @@ export type NativeMeshInstallDiagnostics = {
   meshCount: number;
   boneCount: number;
   skinnedMeshCount: number;
+  skinBindings: NativeMeshSkinBindingDiagnostics[];
   error: string | null;
   warnings: string[];
+};
+
+export type NativeMeshSkinBindingDiagnostics = {
+  meshName: string;
+  partKind: string | null;
+  rendererTransformPath: string | null;
+  rootBonePath: string | null;
+  rootBoneResolved: boolean;
+  effectiveRootBonePath: string | null;
+  effectiveRootBoneResolved: boolean;
+  boneCount: number;
+  restTranslation: { x: number; y: number; z: number };
+  restScale: { x: number; y: number; z: number };
+  restMatrixSpread: number;
+  restMatrixSpreadBonePath: string | null;
 };
 
 export function applyUnityCharacterHeight(
@@ -224,84 +251,6 @@ function resolvePrefabGraphNode(
   return null;
 }
 
-function collectUnityPrefabHeadRoots(
-  root: THREE.Object3D,
-  primaryHeadRoot: THREE.Object3D | null
-) {
-  const roots: THREE.Object3D[] = [];
-  const seen = new Set<THREE.Object3D>();
-  const primaryPath = String(primaryHeadRoot?.userData.pjskTransformPath ?? "face");
-  const add = (node: THREE.Object3D | null) => {
-    if (!node || seen.has(node)) {
-      return;
-    }
-    seen.add(node);
-    roots.push(node);
-  };
-
-  add(primaryHeadRoot);
-  root.traverse((node) => {
-    if (node === root) {
-      return;
-    }
-    const transformPath = String(node.userData.pjskTransformPath ?? "");
-    if (transformPath === primaryPath) {
-      add(node);
-    }
-  });
-  return roots;
-}
-
-function getUnityPrefabTransformPath(node: THREE.Object3D) {
-  const path = node.userData.pjskTransformPath;
-  return typeof path === "string" && path.length > 0 ? path : null;
-}
-
-function resolveUnityPrefabMountedHeadOrigin(
-  mountedHeadRoot: THREE.Object3D,
-  assembly: RuntimeUnityBodyHeadAssemblySource
-): { path: string; node: THREE.Object3D } | null {
-  const rootPath = getUnityPrefabTransformPath(mountedHeadRoot);
-  const absoluteOriginPath = assembly.childOriginPath;
-  const relativeOriginPath =
-    rootPath && absoluteOriginPath?.startsWith(`${rootPath}/`)
-      ? absoluteOriginPath.slice(rootPath.length + 1)
-      : null;
-  let absoluteMatch: { path: string; node: THREE.Object3D } | null = null;
-  let relativeMatch: { path: string; node: THREE.Object3D } | null = null;
-
-  mountedHeadRoot.traverse((node) => {
-    if (absoluteMatch) {
-      return;
-    }
-    const transformPath = getUnityPrefabTransformPath(node);
-    if (absoluteOriginPath && transformPath === absoluteOriginPath) {
-      absoluteMatch = { path: absoluteOriginPath, node };
-      return;
-    }
-    if (relativeOriginPath) {
-      const relativePath = buildObjectPath(node, mountedHeadRoot, true);
-      if (relativePath === relativeOriginPath) {
-        relativeMatch = { path: `${rootPath}/${relativePath}`, node };
-      }
-    }
-  });
-
-  return absoluteMatch ?? relativeMatch;
-}
-
-function computeUnityPrefabRestOffset(
-  root: THREE.Object3D,
-  origin: THREE.Object3D
-) {
-  root.updateMatrixWorld(true);
-  origin.updateMatrixWorld(true);
-  return new THREE.Matrix4()
-    .copy(root.matrixWorld)
-    .invert()
-    .multiply(origin.matrixWorld);
-}
-
 function isModelCombineSetupAssembly(
   assembly: RuntimeUnityBodyHeadAssemblySource | undefined
 ): assembly is RuntimeUnityBodyHeadAssemblySource {
@@ -325,34 +274,46 @@ function drainChildrenKeepingLocal(
   }
 }
 
-function moveKnownFaceRendererTransforms(
+function moveFaceRendererTransforms(
   nodeByPath: Map<string, THREE.Object3D>,
-  childRootPath: string | null | undefined,
+  rendererPaths: readonly string[],
   destParent: THREE.Object3D,
-  faceRendererName: string
 ) {
-  if (!childRootPath) {
-    return;
-  }
-  for (const rendererName of new Set([faceRendererName, "Face", "Hair", "Acc"])) {
-    const node = nodeByPath.get(`${childRootPath}/${rendererName}`);
-    if (node) {
+  const movedPaths: string[] = [];
+  const movedNodes = new Set<THREE.Object3D>();
+  for (const rendererPath of rendererPaths) {
+    const node = nodeByPath.get(rendererPath);
+    if (node && !movedNodes.has(node)) {
       setParentKeepingLocal(node, destParent);
+      movedNodes.add(node);
+      movedPaths.push(rendererPath);
     }
   }
+  return movedPaths;
 }
 
-function detachNode(node: THREE.Object3D) {
+function detachRuntimeSubtree(
+  node: THREE.Object3D,
+  nodeByPath: Map<string, THREE.Object3D>
+) {
   if (node.parent) {
     node.parent.remove(node);
   }
-  node.userData.pjskModelCombineDestroyed = true;
+  node.traverse((child) => {
+    child.userData.pjskModelCombineDestroyed = true;
+    for (const [path, candidate] of nodeByPath.entries()) {
+      if (candidate === child) {
+        nodeByPath.delete(path);
+      }
+    }
+  });
 }
 
 function applyOfficialModelCombineSetup(
   root: THREE.Group,
   nodeByPath: Map<string, THREE.Object3D>,
-  assembly: RuntimeUnityBodyHeadAssemblySource
+  assembly: RuntimeUnityBodyHeadAssemblySource,
+  headRendererPaths: readonly string[]
 ) {
   const childMoveSuffix = assembly.childMoveSuffix ?? "_target";
   const parentRootPath = assembly.parentRootPath;
@@ -369,26 +330,54 @@ function applyOfficialModelCombineSetup(
   const faceNodeB = resolvePrefabGraphNode(nodeByPath, [
     assembly.childCombineNodeBPath,
   ]);
+  const childRoot = resolvePrefabGraphNode(nodeByPath, [childRootPath]);
 
-  if (!parentRootPath || !childRootPath || !bodyNodeA || !bodyNodeB || !faceNodeA || !faceNodeB) {
+  if (
+    !parentRootPath ||
+    !childRootPath ||
+    !bodyNodeA ||
+    !bodyNodeB ||
+    !faceNodeA ||
+    !faceNodeB ||
+    !childRoot
+  ) {
     throw new Error("Official model_combine_setup paths were not fully resolved.");
   }
 
   drainChildrenKeepingLocal(bodyNodeB.node, faceNodeB.node);
 
   const bodyNodeAParent = bodyNodeA.node.parent;
-  if (bodyNodeAParent) {
-    for (const child of [...faceNodeA.node.children]) {
+  const faceNodeAParent = faceNodeA.node.parent;
+  if (bodyNodeAParent && faceNodeAParent) {
+    // Official call order is sourceParent, destinationParent:
+    // MoveSuffixChildren(bodyNeck.parent, faceNeck.parent, "_target").
+    // These body-side helper nodes are moved into the temporary face lower
+    // chain and disappear when that temporary prefab wrapper is destroyed.
+    for (const child of [...bodyNodeAParent.children]) {
       if (child.name.endsWith(childMoveSuffix)) {
-        setParentKeepingLocal(child, bodyNodeAParent);
+        setParentKeepingLocal(child, faceNodeAParent);
       }
     }
-    moveKnownFaceRendererTransforms(
+    const movedRendererPaths = moveFaceRendererTransforms(
       nodeByPath,
-      childRootPath,
+      headRendererPaths,
       nodeByPath.get(parentRootPath) ?? bodyNodeAParent,
-      assembly.faceRendererName ?? "Face"
     );
+    const missingRendererPaths = headRendererPaths.filter(
+      (path) => !movedRendererPaths.includes(path)
+    );
+    if (missingRendererPaths.length > 0) {
+      throw new Error(
+        `Official model_combine_setup head renderers were not moved: ${missingRendererPaths.join(", ")}.`
+      );
+    }
+    const requiredFaceRendererPath =
+      `${childRootPath}/${assembly.faceRendererName ?? "Face"}`;
+    if (!movedRendererPaths.includes(requiredFaceRendererPath)) {
+      throw new Error(
+        `Official model_combine_setup face renderer '${requiredFaceRendererPath}' was not moved.`
+      );
+    }
     setParentKeepingLocal(faceNodeA.node, bodyNodeAParent);
   }
 
@@ -401,6 +390,13 @@ function applyOfficialModelCombineSetup(
   faceNodeB.node.scale.copy(bodyNodeB.node.scale);
   faceNodeB.node.updateMatrix();
 
+  detachRuntimeSubtree(bodyNodeB.node, nodeByPath);
+  detachRuntimeSubtree(bodyNodeA.node, nodeByPath);
+  // The instantiated face prefab is only an assembly input. Its wrapper,
+  // control nodes, and duplicate Position -> Chest_const chain do not survive
+  // ModelCombineSetup; Face/Neck/Head and every renderer were extracted above.
+  detachRuntimeSubtree(childRoot.node, nodeByPath);
+
   nodeByPath.set(bodyNodeA.path, faceNodeA.node);
   nodeByPath.set(bodyNodeB.path, faceNodeB.node);
   if (assembly.parentAttachPath) {
@@ -410,11 +406,34 @@ function applyOfficialModelCombineSetup(
     nodeByPath.set(assembly.parentCombineNodeBPath, faceNodeB.node);
   }
 
-  detachNode(bodyNodeB.node);
-  detachNode(bodyNodeA.node);
   root.updateMatrixWorld(true);
 
-  return { bodyNodeA, faceNodeA };
+  return { bodyNodeA, bodyNodeB, faceNodeA, faceNodeB };
+}
+
+function collectOfficialHeadRendererPaths(
+  extension: unknown,
+  childRootPath: string
+) {
+  return [...new Set(
+    (readRuntimeNativeMeshSet0414(extension)?.meshes ?? [])
+      .map((mesh) => mesh.rendererTransformPath)
+      .filter((path): path is string =>
+        typeof path === "string" && path.startsWith(`${childRootPath}/`)
+      )
+  )];
+}
+
+function resolveOfficialBodyRootBone(
+  extension: unknown,
+  parentRootPath: string
+) {
+  const bodyMesh = (readRuntimeNativeMeshSet0414(extension)?.meshes ?? [])
+    .find((mesh) =>
+      mesh.rendererTransformPath?.startsWith(`${parentRootPath}/`) &&
+      typeof mesh.rootBonePath === "string"
+    );
+  return bodyMesh?.rootBonePath ?? null;
 }
 
 export function buildUnityPrefabSourceGraph(
@@ -473,35 +492,33 @@ export function buildUnityPrefabSourceGraph(
   }
 
   root.updateMatrixWorld(true);
+  const inputTransformCount = countRuntimeTransforms(root);
   const assembly = setup.bodyHeadAssembly;
   if (!isModelCombineSetupAssembly(assembly)) {
     throw new Error("Runtime package must provide the official model_combine_setup body/head assembly.");
   }
   const bodyAttach = resolvePrefabGraphNode(nodeByPath, [assembly.parentAttachPath]);
   const headRoot = resolvePrefabGraphNode(nodeByPath, [assembly.childRootPath]);
-  const headRoots = collectUnityPrefabHeadRoots(root, headRoot?.node ?? null);
   const headOrigin = resolvePrefabGraphNode(nodeByPath, [assembly.childOriginPath]);
   if (!bodyAttach || !headRoot || !headOrigin) {
     throw new Error("Official model_combine_setup body/head roots were not fully resolved.");
   }
-  const modelCombine = applyOfficialModelCombineSetup(root, nodeByPath, assembly);
-  const headRootMounts = headRoots.map((mountedHeadRoot) => {
-    const rootPath = getUnityPrefabTransformPath(mountedHeadRoot);
-    const mountedHeadOrigin = resolveUnityPrefabMountedHeadOrigin(
-      mountedHeadRoot,
-      assembly
-    );
-    const originRestLocalToRoot = mountedHeadOrigin
-      ? computeUnityPrefabRestOffset(mountedHeadRoot, mountedHeadOrigin.node)
-      : null;
-    return {
-      root: mountedHeadRoot,
-      rootPath,
-      origin: mountedHeadOrigin?.node ?? null,
-      originPath: mountedHeadOrigin?.path ?? null,
-      originRestLocalToRoot,
-    };
-  });
+  const headRendererPaths = collectOfficialHeadRendererPaths(
+    extension,
+    headRoot.path
+  );
+  const modelCombine = applyOfficialModelCombineSetup(
+    root,
+    nodeByPath,
+    assembly,
+    headRendererPaths
+  );
+  const bodyRootBonePath = resolveOfficialBodyRootBone(extension, bodyAttach.path.split("/")[0]!);
+  const bodyRootBone = bodyRootBonePath
+    ? nodeByPath.get(bodyRootBonePath) ?? null
+    : null;
+  const retainedTransformCount = countRuntimeTransforms(root);
+  const removedTransformCount = inputTransformCount - retainedTransformCount;
 
   const meshCarrierBindings: UnityPrefabSourceGraph["meshCarrierBindings"] = [];
   if (meshCarrierRoot) {
@@ -521,10 +538,15 @@ export function buildUnityPrefabSourceGraph(
     reason: null,
     setupVersion: String(setup.version ?? ""),
     sourceScaleCorrection,
-    mountedHeadRootCount: headRootMounts.length,
-    mountedHeadOriginPaths: headRootMounts.map((mount) =>
-      mount.originPath ?? mount.rootPath ?? mount.root.name
-    ),
+    mountedHeadRootCount: 1,
+    mountedHeadOriginPaths: [modelCombine.faceNodeA.path],
+    assemblyCounts: {
+      inputTransforms: inputTransformCount,
+      retainedTransforms: retainedTransformCount,
+      removedTransforms: removedTransformCount,
+      capturedCommonRemovedTransforms: 14,
+      removedAtLeastCapturedCommonCount: removedTransformCount >= 14,
+    },
     targetCount: meshCarrierBindings.length,
     targetPaths: meshCarrierBindings.slice(0, 24).map((binding) =>
       String(binding.source.userData.pjskTransformPath ?? binding.source.name)
@@ -540,14 +562,27 @@ export function buildUnityPrefabSourceGraph(
     root,
     nodeByPath,
     meshCarrierBindings,
-    bodyAttach: bodyAttach.node,
+    bodyAttach: modelCombine.faceNodeA.node,
     bodyAttachPath: bodyAttach.path,
-    headRoot: headRoot.node,
-    headRootPath: headRoot.path,
-    headOrigin: headOrigin.node,
-    headOriginPath: headOrigin.path,
+    headRoot: modelCombine.faceNodeA.node,
+    headRootPath: modelCombine.faceNodeA.path,
+    headOrigin: modelCombine.faceNodeA.node,
+    headOriginPath: modelCombine.faceNodeA.path,
+    bodyRootBone,
+    bodyRootBonePath,
+    headRendererPaths,
     debug,
   };
+}
+
+function countRuntimeTransforms(root: THREE.Object3D) {
+  let count = 0;
+  root.traverse((node) => {
+    if (node !== root) {
+      count += 1;
+    }
+  });
+  return count;
 }
 
 function resolveUnityPrefabSourceScaleCorrection(extension: unknown) {
@@ -579,6 +614,7 @@ export function installUnityRuntimeNativeMeshes(
       meshCount: 0,
       boneCount: graph.nodeByPath.size,
       skinnedMeshCount: 0,
+      skinBindings: [],
       error: "Unity runtime nativeMeshes version 0414 is missing or empty.",
       warnings: nativeMeshes?.warnings ?? [],
     };
@@ -586,6 +622,7 @@ export function installUnityRuntimeNativeMeshes(
 
   let meshCount = 0;
   let skinnedMeshCount = 0;
+  const skinBindings: NativeMeshSkinBindingDiagnostics[] = [];
   const warnings = [...(nativeMeshes.warnings ?? [])];
   graph.root.updateMatrixWorld(true);
 
@@ -667,6 +704,34 @@ export function installUnityRuntimeNativeMeshes(
         skeleton.calculateInverses();
       }
       skinnedMeshForBind.bind(skeleton, skinnedMeshForBind.matrixWorld);
+      const restTransform = makeSkinRestTransform(
+        skeletonBones[0]!,
+        skeleton.boneInverses[0]!
+      );
+      const restMatrixSpread = measureSkinRestMatrixSpread(
+        skeletonBones,
+        skeleton.boneInverses
+      );
+      skinBindings.push({
+        meshName,
+        partKind: source.partKind ?? null,
+        rendererTransformPath: targetPath ?? null,
+        rootBonePath: source.rootBonePath ?? null,
+        rootBoneResolved: source.rootBonePath
+          ? graph.nodeByPath.has(source.rootBonePath)
+          : false,
+        effectiveRootBonePath: targetPath && graph.headRendererPaths.includes(targetPath)
+          ? graph.bodyRootBonePath
+          : source.rootBonePath ?? null,
+        effectiveRootBoneResolved: targetPath && graph.headRendererPaths.includes(targetPath)
+          ? Boolean(graph.bodyRootBone)
+          : source.rootBonePath
+            ? graph.nodeByPath.has(source.rootBonePath)
+            : false,
+        boneCount: skeletonBones.length,
+        ...restTransform,
+        ...restMatrixSpread,
+      });
     }
     meshCount += 1;
   }
@@ -676,10 +741,64 @@ export function installUnityRuntimeNativeMeshes(
     meshCount,
     boneCount: graph.nodeByPath.size,
     skinnedMeshCount,
+    skinBindings,
     error: meshCount > 0
       ? null
       : "Unity runtime nativeMeshes did not produce any renderable mesh.",
     warnings,
+  };
+}
+
+function makeSkinRestTransform(
+  bone: THREE.Object3D,
+  inverseBindMatrix: THREE.Matrix4
+) {
+  const matrix = new THREE.Matrix4()
+    .multiplyMatrices(bone.matrixWorld, inverseBindMatrix);
+  const translation = new THREE.Vector3();
+  const rotation = new THREE.Quaternion();
+  const scale = new THREE.Vector3();
+  matrix.decompose(translation, rotation, scale);
+  return {
+    restTranslation: vectorDebugSnapshot(translation),
+    restScale: vectorDebugSnapshot(scale),
+  };
+}
+
+function measureSkinRestMatrixSpread(
+  bones: readonly THREE.Object3D[],
+  inverseBindMatrices: readonly THREE.Matrix4[]
+) {
+  if (bones.length < 2 || inverseBindMatrices.length !== bones.length) {
+    return {
+      restMatrixSpread: 0,
+      restMatrixSpreadBonePath: null,
+    };
+  }
+  const reference = new THREE.Matrix4()
+    .multiplyMatrices(bones[0]!.matrixWorld, inverseBindMatrices[0]!);
+  const candidate = new THREE.Matrix4();
+  let maxDifference = 0;
+  let maxDifferenceBonePath: string | null = null;
+  for (let index = 1; index < bones.length; index += 1) {
+    candidate.multiplyMatrices(bones[index]!.matrixWorld, inverseBindMatrices[index]!);
+    for (let element = 0; element < 16; element += 1) {
+      const difference = Math.abs(
+        candidate.elements[element]! - reference.elements[element]!
+      );
+      if (difference > maxDifference) {
+        maxDifference = difference;
+        maxDifferenceBonePath = String(
+          bones[index]!.userData.pjskTransformPath ?? bones[index]!.name
+        );
+      }
+    }
+  }
+  const restMatrixSpread = Number(maxDifference.toFixed(6));
+  return {
+    restMatrixSpread,
+    restMatrixSpreadBonePath:
+      restMatrixSpread > 0 ? maxDifferenceBonePath : null,
   };
 }
 
@@ -885,8 +1004,11 @@ export function makeUnityPrefabHeadFollowDebugSnapshot(
     ...base,
     positionRoots: collectPrefabPositionRootDebug(root),
     assemblyDistances: {
-      bodyNeckToFaceNeck: debugNodeWorldDistance(bodyNeck, faceNeck),
-      bodyHeadToFaceHead: debugNodeWorldDistance(bodyHead, faceHead),
+      // The official combine replaces the body slots with the face nodes.
+      // Measuring the two public path aliases would compare one object to
+      // itself and falsely report a meaningful zero-distance check.
+      bodyNeckToFaceNeck: null,
+      bodyHeadToFaceHead: null,
     },
     keyNodes: {
       ...(base.keyNodes ?? {}),
@@ -960,19 +1082,6 @@ function quaternionDebugSnapshot(quaternion: THREE.Quaternion) {
   };
 }
 
-function debugNodeWorldDistance(
-  first: PrefabHeadFollowNodeDebug | null,
-  second: PrefabHeadFollowNodeDebug | null
-) {
-  if (!first || !second) {
-    return null;
-  }
-  const dx = first.worldPosition.x - second.worldPosition.x;
-  const dy = first.worldPosition.y - second.worldPosition.y;
-  const dz = first.worldPosition.z - second.worldPosition.z;
-  return Number(Math.hypot(dx, dy, dz).toFixed(5));
-}
-
 function makePrefabNodeDebug(
   node: THREE.Object3D,
   root: THREE.Object3D
@@ -990,6 +1099,7 @@ function makePrefabNodeDebug(
     parentPath: node.parent && node.parent !== root
       ? buildObjectPath(node.parent, root)
       : null,
+    destroyed: node.userData.pjskModelCombineDestroyed === true,
     localPosition: vectorDebugSnapshot(node.position),
     localQuaternion: quaternionDebugSnapshot(node.quaternion),
     worldPosition: vectorDebugSnapshot(worldPosition),

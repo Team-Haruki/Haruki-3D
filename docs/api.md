@@ -169,8 +169,10 @@ registry order.
 - a same-role recipe preserves compatible animation playback and rebuilds the
   complete character/SpringBone graph with the new parts;
 - a cross-role recipe releases the previous role and reconstructs the new one;
-- recipe mutations are serialized, not cancelled. Debounce rapid UI changes
-  if intermediate selections are not useful.
+- recipe mutations are serialized at the character-mutation boundary, while
+  queued intermediate selections are superseded by the newest request;
+- if a newer request arrives while the current one is still downloading, the
+  stale request is aborted before it mutates the character hierarchy.
 
 Callers do not choose between the underlying loader, wardrobe, composer, or
 model-combine paths.

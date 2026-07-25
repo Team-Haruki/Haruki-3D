@@ -19,13 +19,18 @@ test("costume preview uses the official costume-shop directional transform", () 
     z: 0,
   });
   assert.deepEqual(
+    sekaiCostumeShopDirectionalLightDirection,
     {
-      x: previewLightDefaults.x,
-      y: previewLightDefaults.y,
-      z: previewLightDefaults.z,
-    },
-    sekaiCostumeShopDirectionalLightDirection
+      x: -0.7127446532249451,
+      y: 0.258819043636322,
+      z: 0.6519262194633484,
+    }
   );
+  assert.deepEqual({
+    x: previewLightDefaults.x,
+    y: previewLightDefaults.y,
+    z: previewLightDefaults.z,
+  }, sekaiCostumeShopDirectionalLightDirection);
   assert.ok(Math.abs(Math.hypot(
     previewLightDefaults.x,
     previewLightDefaults.y,

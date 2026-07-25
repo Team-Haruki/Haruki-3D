@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 
-import { AnimationPlaybackRuntime } from "../dist/haruki-3d-engine-internal.js";
+import {
+  AnimationPlaybackRuntime,
+  HarukiCaptureAdapter,
+} from "../dist/haruki-3d-engine-internal.js";
 
 const prefabHeadFollow = {
   active: false,
@@ -70,6 +73,49 @@ test("animation playback keeps speed, pause, and seek behavior behind its interf
   runtime.seekPhase(0.75);
   assert.equal(runtime.getSnapshot().currentTime, 0.75);
   assert.equal(runtime.getSnapshot().paused, true);
+});
+
+test("capture warmup lands on the requested loop phase when intro and loop durations differ", async () => {
+  let duration = 3;
+  let currentTime = 0;
+  let paused = false;
+  const snapshot = () => ({ duration, currentTime });
+  const engine = {
+    setPresentationMode() {},
+    setSpringRuntimeMode() {},
+    setUtjSpringBoneTraceFilters() {},
+    setAnimationPaused(next) {
+      paused = next;
+    },
+    getAnimationSnapshot: snapshot,
+    seekAnimationPhase(phase) {
+      currentTime = duration * phase;
+      return snapshot();
+    },
+    seekAnimationLoopPhase(phase) {
+      duration = 5;
+      currentTime = duration * phase;
+      return snapshot();
+    },
+    stepRuntimeFrame(delta, { advanceAnimation }) {
+      if (advanceAnimation && !paused) {
+        currentTime += delta;
+      }
+    },
+    applyCameraPreset() {},
+    renderFrame() {},
+    finishCaptureFrame() {},
+  };
+
+  await new HarukiCaptureAdapter(engine).prepareCaptureFrame({
+    phase: 0.5,
+    clip: "motion_loop",
+    warmupFrames: 60,
+    warmupMode: "animation",
+  });
+
+  assert.equal(duration, 5);
+  assert.ok(Math.abs(currentTime / duration - 0.5) < 1e-6);
 });
 
 test("a stale animation load cannot overwrite the latest playback state", async () => {

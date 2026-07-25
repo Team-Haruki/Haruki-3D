@@ -302,6 +302,9 @@ function cloneFaceShaderMaterial(
     controllerRimEdgeSmoothness:
       source.uniforms.uControllerRimEdgeSmoothness?.value ??
       sekaiCostumeShopControllerDefaults.rimEdgeSmoothness,
+    controllerRimEmission:
+      source.uniforms.uControllerRimEmission?.value ??
+      sekaiCostumeShopControllerDefaults.rimEmission,
     controllerRimLightInfluence:
       source.uniforms.uControllerRimLightInfluence?.value ??
       sekaiCostumeShopControllerDefaults.rimLightInfluence,

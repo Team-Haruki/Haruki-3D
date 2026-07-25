@@ -322,9 +322,11 @@ export function sekaiPluginLightLocationToThreeDirection(location: Vec3): Vec3 {
   };
 }
 
-// CharacterLightConstants.DIRECTIONAL_LIGHT_ROTATION is (-15, 50, 0), but the
-// light is parented below CameraRoot. Use the coherent CostumeShop frame's
-// final world-space forward, converted into the viewer's mirrored-X basis.
+// These are the captured CostumeShop world forwards at CameraRoot yaw zero,
+// converted into the viewer's mirrored-X basis. They deliberately remain the
+// captured values instead of being reconstructed from serialized Euler angles.
+// A host that rotates CameraRoot must rotate the camera and both directions by
+// the same yaw.
 export const sekaiCostumeShopDirectionalLightRotationDegrees: Vec3 = {
   x: -15,
   y: 50,

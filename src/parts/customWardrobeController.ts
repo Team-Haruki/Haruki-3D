@@ -96,15 +96,21 @@ export class CustomWardrobeController {
     return listSelectableParts(this.partSet, characterId, partType, options);
   }
 
-  async setCustomSelection(selection: CustomPartSelection): Promise<RuntimeCombinedCharacterAsset> {
+  async setCustomSelection(
+    selection: CustomPartSelection,
+    isLatest: () => boolean = () => true
+  ): Promise<RuntimeCombinedCharacterAsset> {
     if (!this.partSet) {
       throw new Error("No custom part package set is loaded.");
     }
     const resolvedSelection = this.resolveHeadSource(selection);
     this.assertSameActiveCharacter(resolvedSelection);
-    this.activeRoleId ??= runtimeRoleId(resolvedSelection.characterId, resolvedSelection.unit);
     await this.ensureSelectionPackages(resolvedSelection);
     await this.options.ensureCompatibility?.(resolvedSelection);
+    if (!isLatest()) {
+      throw supersededSelectionError();
+    }
+    this.activeRoleId ??= runtimeRoleId(resolvedSelection.characterId, resolvedSelection.unit);
     const combined = this.compose(resolvedSelection);
     this.selection = { ...resolvedSelection };
     this.combined = combined;
@@ -230,4 +236,10 @@ export class CustomWardrobeController {
       resolveUrl: this.options.resolveUrl,
     });
   }
+}
+
+function supersededSelectionError() {
+  const error = new Error("Custom part selection was superseded by a newer request.");
+  error.name = "AbortError";
+  return error;
 }

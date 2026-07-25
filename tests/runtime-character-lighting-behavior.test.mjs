@@ -98,12 +98,24 @@ test("preview light updates lights, proxy colors, and material controller state 
   });
   const directionalLight = new THREE.DirectionalLight();
   const fillLight = new THREE.AmbientLight();
+  const loadedFace = createSekaiFaceMaterial({
+    baseColor: "#555555",
+    warmColor: "#444444",
+    lightDirection: new THREE.Vector3(0, 0, 1),
+    lightIntensity: 1,
+    ambientIntensity: 1,
+    shadowWeight: 1,
+    useLambert: true,
+  });
+  loadedFace.userData.pjskMaterialKind = "face";
+  const headSlot = new THREE.Group();
+  headSlot.add(new THREE.Mesh(new THREE.BufferGeometry(), loadedFace));
   const runtime = new CharacterLightingRuntime({
     bodyMaterial: body,
     hairMaterial: hair,
     faceMaterial: face,
     bodySlot: new THREE.Group(),
-    headSlot: new THREE.Group(),
+    headSlot,
     directionalLight,
     fillLight,
     debug: { hairShadowMode: "off", body: [], head: [] },
@@ -152,6 +164,10 @@ test("preview light updates lights, proxy colors, and material controller state 
   assert.equal(gammaHex(body.uniforms.uBaseColor.value), "abcdef");
   assert.equal(gammaHex(hair.uniforms.uBaseColor.value), "fedcba");
   assert.equal(gammaHex(face.uniforms.uBaseColor.value), "ffeedd");
+  assert.equal(face.uniforms.uUseLambert.value, 1);
+  assert.equal(face.uniforms.uShadowWeight.value, previewLightDefaults.shadowWeight);
+  assert.equal(loadedFace.uniforms.uUseLambert.value, 1);
+  assert.equal(loadedFace.uniforms.uShadowWeight.value, previewLightDefaults.shadowWeight);
   assert.equal(gammaHex(body.uniforms.uControllerAmbientColor.value), "123456");
   assert.deepEqual(face.uniforms.uHeadDotDirectionalLight.value.toArray(), [0.25, 0.75]);
   assert.deepEqual(face.uniforms.uLightDirection.value.toArray(), [1, 0, 0]);
@@ -261,6 +277,7 @@ test("face shader uses the same captured controller lighting path as body", () =
   assert.equal(face.uniforms.uBrightness, undefined);
   assert.equal(face.uniforms.uHighlightRolloff, undefined);
   assert.doesNotMatch(face.fragmentShader, /sekaiApplyHighlightRolloff/);
-  assert.match(face.fragmentShader, /color \+= rimColor/);
+  assert.match(face.fragmentShader, /color \+= rimAdd/);
+  assert.match(face.fragmentShader, /color \+= rimAdd \* uControllerRimEmission/);
   assert.match(face.fragmentShader, /uControllerSpecularColor/);
 });

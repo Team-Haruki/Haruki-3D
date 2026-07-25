@@ -258,6 +258,10 @@ test("capture waits for a presented browser frame before acknowledging", () => {
     /requestAnimationFrame\(\(\) =>\s*requestAnimationFrame\(\(\) => resolve\(\)\)\)/
   );
   assert.match(requestHandler, /await waitForPresentedFrame\(\)/);
+  assert.match(
+    readSource("src/capture/captureAdapter.ts"),
+    /renderFrame\(\);\s*this\.engine\.finishCaptureFrame\(\);/
+  );
 });
 
 test("unchanged capture presentation rechecks size without rebuilding an unchanged viewport", () => {
@@ -500,7 +504,8 @@ test("same raw head id requires an exact package instead of slot priority", () =
   assert.match(wardrobeSource, /resolveHeadRegistryEntry\(this\.partSet, selection\)/);
   assert.doesNotMatch(wardrobeSource, /findHeadRegistryEntry/);
   assert.match(composerSource, /headPackagePath: selectedHeadEntry\.packagePath/);
-  assert.match(composerSource, /encodeURIComponent\(resolvedSelection\.headPackagePath\)/);
+  assert.match(composerSource, /`head:\$\{selectedHeadEntry\.packagePath\}`/);
+  assert.match(composerSource, /combinedIdentity.*map\(encodeURIComponent\)/s);
   assert.match(engineSource, /headPackagePath: normalized\.headPackagePath/);
 });
 

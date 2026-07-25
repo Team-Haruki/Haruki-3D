@@ -4,15 +4,14 @@ This audit maps the final reverse-engineering evidence package to the browser
 rendering kernel. It is intentionally organized by ownership: facts that belong
 to the updater/exporter or to a host UI are not copied into the renderer.
 
-Evidence package:
+Authoritative evidence:
 
-- archive: `/data/xy/pjsk-662-reverse-evidence-final-20260724.tar.zst`
-- SHA-256:
-  `52788e890fff37ebd72b07a64ed3e92978e6a401da41a65fcbe673df70a011a2`
-- primary ledger: `docs/search.md` inside the archive
-- function ledger: `docs/pjsk_ida_full_verification_20260716.md`
-- model pseudocode: `docs/pjsk_bundle_model_pseudocode.md`
-- driver-final shaders: `0082/0083/0084/0089/0090/0091`
+- directory: `/data/xy/pjsk-research/20260725-final-boundaries`
+- primary ledger: `search.md`
+- model pseudocode: `pjsk_bundle_model_pseudocode.md`
+
+Older archives and experimental notes are historical only when they disagree
+with these final boundaries.
 
 Status vocabulary:
 
@@ -29,7 +28,7 @@ Status vocabulary:
 
 | Evidence domain | Owner | Status |
 | --- | --- | --- |
-| AssetBundle dependency/download state machine | updater/host | host boundary |
+| AssetBundle dependency/download state machine | updater/exporter | producer boundary |
 | 5-of-8-byte bundle transform | updater/exporter | producer boundary |
 | Masterdata preset/custom resolution | registry producer | producer boundary |
 | Runtime package decoding and exact part selection | kernel | implemented |
@@ -45,19 +44,18 @@ Status vocabulary:
 | UTJ/Sekai SpringBone and ExtraBone | exporter + kernel | implemented |
 | Parent/Aim/Rotation constraints | exporter + kernel | implemented |
 | Live timeline and FUnit replacement controls | Live/MV runtime | not applicable |
-| UI, cache policy and request coalescing | web host | host boundary |
+| UI and cache policy | web host | host boundary |
+| Latest-wins part selection | kernel | implemented |
 
 ## Evidence ledger
 
-The archive contains historical sections whose own “blocked” notes predate the
-final 6.6.2 driver capture. They are not independent open tasks. The final
-README and the `Adreno Vulkan Driver Capture` section supersede the older
-shader-formula, `COLOR.g`, second-normal and outline-offset gaps.
+The final boundary documents supersede older archive “blocked” notes and
+experimental renderer branches.
 
 | Archive topic | Applied result |
 | --- | --- |
-| AssetBundle stream/manager/loader and 5-of-8 transform | Exporter/updater boundary; the browser consumes already converted packages. |
-| CostumeShop initialization, download states and latest-wins queue | Host boundary; the kernel serializes model mutations but does not duplicate the game's downloader UI. |
+| AssetBundle stream/manager/loader and 5-of-8 transform | Updater/exporter preserve logical name, physical hash/path, recursive dependency closure and Unity resource identity; the browser consumes converted packages. |
+| CostumeShop initialization, download states and latest-wins queue | The kernel supersedes queued intermediate selections and rejects an in-flight stale selection before model mutation; downloader UI remains a host concern. |
 | Masterdata costume/hair/accessory mapping | Registry-producer boundary; compact runtime entries preserve role, original source and compatibility decisions. |
 | Camera, zoom, vertical move and rotation | The kernel provides the official fixed preview/capture poses and FOV. Pointer/pinch state belongs to the host. |
 | Complete part rebuild and motion restoration | Implemented by resolved-identity comparison, one combined import and same-role animation-position restoration. |
@@ -77,6 +75,8 @@ shader-formula, `COLOR.g`, second-normal and outline-offset gaps.
 | Official invariant | Implementation |
 | --- | --- |
 | A role key includes character and unit. | `runtimeRoleId` and `parseRuntimeRoleId`; Miku variants remain distinct. |
+| Package identity includes region/base URL, master version, requested selection, resolved part package paths and motion source. | `composeRuntimeCombinedCharacterAsset()` builds its identity from all of those values rather than the costume ID alone. |
+| A part source retains logical bundle, physical SHA-256/path, recursive dependency closure, Unity resource name and object type. | The updater writes the dependency index and the exporter writes these fields into each part package; color-variation bundles retain their own identity too. |
 | Presets are authoritative and compatibility blacklists apply only to custom head/hair assembly. | The compact registry is generated upstream; `runtimePackageLoader.ts` and `runtimePartComposer.ts` consume resolved entries without reinterpreting masterdata. |
 | The selected body, head, hair and head_optional are resolved before model construction. | `CustomWardrobeController.ensureSelectionPackages()` loads all selected contributors before `composeRuntimeCombinedCharacterAsset()`. |
 | A complete head and a detachable head_optional are different sources. | `resolveHeadRegistryEntry`, `resolveOptionalHeadRegistryEntry`, `tryRuntimePartSlot` and package-path disambiguation preserve the original source. |
@@ -84,10 +84,10 @@ shader-formula, `COLOR.g`, second-normal and outline-offset gaps.
 | A changed resolved selection rebuilds one complete character graph. | `importCombinedCharacter(..., disposeBeforeLoad: true)` is called once after all parts resolve. |
 | Same-role changes preserve motion time; role changes force the role motion. | Animation selection matching and `restorePosition()` implement this boundary. |
 
-The official download states and reserve/latest-wins click queue are not
-renderer responsibilities. `Haruki3DEngine` serializes mutations so model state
-cannot overlap. A web host may coalesce pending UI recipes without changing
-rendering semantics.
+The official download UI is not a renderer responsibility.
+`Haruki3DEngine` gives each part selection a generation, drops queued stale
+requests and checks an in-flight request again after its package downloads,
+before model mutation.
 
 ## Camera and host boundary
 
@@ -98,23 +98,40 @@ rendering semantics.
 | The full-body captured profile uses the same FOV and official z endpoint `4.5`. | `getCostumeShopCameraPose("full-body")`. |
 | Horizontal drag rotates CameraRoot around world up; vertical input does not pitch the camera. | Documented host input contract; the kernel does not own pointer/pinch handlers. |
 | A part change does not reset camera rotation/zoom. | Host state is outside character import and therefore remains stable. |
+| Directional and rim lights are children of `CameraRoot`. | Stored light vectors are the yaw-zero local directions; a host rotation must rotate camera and lights together. The captured round-9 world vector already included about `-2.447°` of CameraRoot yaw and is not a yaw-zero default. |
+| The game creates a square costume-preview RenderTexture. | Camera positions and FOV remain official for every host viewport, but a non-square direct canvas exposes a different horizontal field than the square in-game preview. Exact UI framing requires the host to render or composite a square preview surface; it must not compensate by moving character bones or changing the vertical camera limits. |
 
 The capture host may use OrbitControls for operator convenience, but that is
 not claimed as official CostumeShop interaction. Exact mutable yaw/zoom/move
 input is intentionally a host API concern rather than hidden engine state.
 
+Local JP runtime validation on 2026-07-25 used all 31 role keys at four motion
+phases. All 124 samples ended at the exact full-body camera state
+`position=(0, 0.85, 4.5)`, `target=(0, 0.85, 0)`, `FOV=25`, `aspect=1`.
+Projected head coordinates stayed inside NDC
+`x=[-0.0918824, 0.0962628]`, `y=[0.3713295, 0.6445972]`.
+
 ## Model assembly
 
 | Official invariant | Implementation |
 | --- | --- |
-| Body is the final host; face is an assembly input. | `unityPrefabRuntime.ts` builds the body-rooted source graph. |
+| Body prefab selection is exactly `gameCharacters.figure + breastSize`; no neighboring body variant is a fallback. | Registry/exporter resolution fails the entry when the selected bundle is absent. Five-region role-8 audits resolve every usable entry to `ladies_s`. |
+| Body is the final host; face is an assembly input. | `unityPrefabRuntime.ts` builds the body-rooted source graph and exposes the surviving face Neck as the live body attach point, never the destroyed body Neck. |
 | Move body Head children into face Head. | `applyUnityBodyHeadAssembly`. |
 | Patch body Neck/Head bone slots to face Neck/Head. | Native skinned-mesh rebinding uses the assembled node map. |
 | Destroy the replaced body Head and Neck nodes. | Assembly replaces those paths in the active graph. |
-| Face renderer root bones use the body renderer root. | Native mesh install and assembly rebinding share the body root. |
+| Face renderer root bones use the body renderer root. | Native mesh diagnostics retain both the authored head root and the effective body root; Three skinning uses the patched live bone map and disables frustum culling. |
+| Every renderer from the temporary face object moves beside the body renderer. | Assembly derives the complete active head renderer inventory from exported native meshes; it does not hard-code only `Face`, `Hair` and `Acc`. |
 | The face renderer predicate is the exact renderer name `Face`; body is the first body renderer. | Exported assembly metadata declares those sources; the runtime does not guess by material color. |
 | head_optional mounts at the exported `part` node (`a01..a05`). | `mountHeadOptionalPrefabGraphs()` attaches the `optional` prefab root to the active named node. |
 | Per-face accessory adjustment is applied after mounting. | `resolveAccessoryTransformAdjustment()` applies the `CharacterAccessoryTransformController` entry selected by face id. |
+
+The final 31-role JP validation checked the assembled graph after animation.
+Every role returned HTTP 200, installed native meshes, resolved all SpringBone
+nodes and retained a live face Neck/Head on the body host. Thirty common face
+graphs removed 14 replaced/temporary transforms. Luka's deeper face blend-shape
+control tree correctly removed 40; the official operation is structural
+destruction of the temporary face wrapper, not a fixed node-count rule.
 
 ## Constraints
 

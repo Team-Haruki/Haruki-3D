@@ -99,6 +99,14 @@ export type PartRuntimePackage = {
     bundlePath?: string | null;
     colorVariationBundlePath?: string | null;
     assetRootRelativeBundlePath?: string | null;
+    logicalBundleName?: string | null;
+    physicalBundleSha256?: string | null;
+    dependencyBundleNames?: string[] | null;
+    colorVariationLogicalBundleName?: string | null;
+    colorVariationPhysicalBundleSha256?: string | null;
+    colorVariationDependencyBundleNames?: string[] | null;
+    unityResourceName?: string | null;
+    unityObjectType?: string | null;
   };
   mount?: Record<string, unknown>;
   manifest: unknown;
@@ -552,9 +560,20 @@ export function composeRuntimeCombinedCharacterAsset(
     headManifest,
     roleRuntime
   );
+  const combinedIdentity = [
+    partSet.baseUrl,
+    partSet.masterVersion ?? "unknown-master",
+    selectionRoleId,
+    `requested:${selection.bodyCostume3dId}:${selection.headCostume3dId}:${selection.hairCostume3dId}:${selection.headOptionalCostume3dId ?? "none"}`,
+    `body:${body.packagePath ?? "unknown"}`,
+    `head:${selectedHeadEntry.packagePath}`,
+    `hair:${hair.packagePath ?? "unknown"}`,
+    `accessory:${optional?.packagePath ?? accessory?.packagePath ?? "none"}`,
+    `motion:${roleRuntime?.motionPackage?.sourcePath ?? "none"}`,
+  ].map(encodeURIComponent).join("-");
 
   return {
-    id: `custom-${selectionRoleId}-${selection.bodyCostume3dId}-${selection.headCostume3dId}-${encodeURIComponent(resolvedSelection.headPackagePath)}-${selection.hairCostume3dId}-${selection.headOptionalCostume3dId ?? "none"}`,
+    id: `custom-${combinedIdentity}`,
     displayName: `Custom ${selectionRoleId}`,
     meshUrl: "",
     unityRuntimeJsonUrl: `haruki-composed://role-${selectionRoleId}/unity-runtime.msgpack.br`,
@@ -1224,7 +1243,7 @@ function composeRuntimeExtension(
       runtimeUnitySetup: runtimeSetup,
     },
     warnings: [
-      ...contributorRuntimes.flatMap((runtime) => runtime.warnings ?? []),
+      ...(runtimeSetup.warnings ?? []),
       ...(roleRuntime?.warnings ?? []),
     ],
   };
@@ -1255,6 +1274,10 @@ function mergeRuntimeSetup(runtimes: PartRuntimePackage[]): RuntimeSetup {
   const colliders = remappedParts.flatMap((part) => part.colliders);
   const constraints = remappedParts.flatMap((part) => part.constraints);
   const colliderBindings = rebuildColliderBindings(remappedParts);
+  const composedWarnings = discardResolvedDeferredColliderWarnings(
+    warnings,
+    colliderBindings
+  );
   const managerColliderCaches = rebuildManagerColliderCaches(remappedParts, colliderBindings);
   const bindingDecisions = rebuildBindingDecisions(bones, colliderBindings);
   const bodyHeadAssembly = resolveComposedBodyHeadAssembly(prefabGraphs);
@@ -1307,7 +1330,7 @@ function mergeRuntimeSetup(runtimes: PartRuntimePackage[]): RuntimeSetup {
       )),
     },
     managerColliderCaches,
-    warnings,
+    warnings: composedWarnings,
   };
   mountHeadOptionalPrefabGraphs(
     remappedParts,
@@ -1315,6 +1338,27 @@ function mergeRuntimeSetup(runtimes: PartRuntimePackage[]): RuntimeSetup {
     resolveHeadOptionalFaceId(runtimes)
   );
   return runtimeSetup;
+}
+
+function discardResolvedDeferredColliderWarnings(
+  warnings: string[],
+  colliderBindings: RuntimeColliderBinding[]
+) {
+  const colliderFlagBindings = colliderBindings.filter(
+    (binding) => binding.sourceKind === "colliderFlag"
+  );
+  const everyColliderFlagResolved =
+    colliderFlagBindings.length > 0 &&
+    colliderFlagBindings.every(
+      (binding) => readNumberArray(binding.colliders).length > 0
+    );
+  if (!everyColliderFlagResolved) {
+    return warnings;
+  }
+  return warnings.filter(
+    (warning) =>
+      !/has colliderFlag .* but no body colliders matched runtime CL_\* prefixes/.test(warning)
+  );
 }
 
 function mountHeadOptionalPrefabGraphs(
@@ -2169,7 +2213,7 @@ function firstPathSegment(value: string | null | undefined): string | null {
 }
 
 function mergeNativeMeshes(runtimes: PartRuntimePackage[], runtimeSetup: RuntimeSetup) {
-  const warnings = runtimes.flatMap((runtime) => runtime.warnings ?? []);
+  const warnings = [...(runtimeSetup.warnings ?? [])];
   const meshes: Record<string, unknown>[] = [];
   for (const [runtimeIndex, runtime] of runtimes.entries()) {
     const partType = runtimePartSlot(runtime.part);

@@ -758,6 +758,12 @@ function parseRuntimeRoleId(roleId: string): { characterId: number; unit: string
   return { characterId, unit };
 }
 
+function supersededSelectionError() {
+  const error = new Error("Custom part selection was superseded by a newer request.");
+  error.name = "AbortError";
+  return error;
+}
+
 export class Haruki3DEngine {
   private readonly container: HTMLElement | null;
   private readonly ownsCanvas: boolean;
@@ -789,6 +795,7 @@ export class Haruki3DEngine {
   private animationFrame = 0;
   private importRevision = 0;
   private customSelectionQueue: Promise<unknown> = Promise.resolve();
+  private customSelectionGeneration = 0;
   private currentBodyAsset: BodyAssetManifest | null = null;
   private currentHeadAsset: HeadAssetManifest | null = null;
   private currentImportSnapshot: PartImportSnapshot | null = null;
@@ -1434,10 +1441,19 @@ export class Haruki3DEngine {
     const utjControlledNodeNames =
       this.currentSpringRuntime?.getControlledTrackNodeNames() ??
       new Set<string>();
-    return this.animationPlayback.getSnapshot({
+    const snapshot = this.animationPlayback.getSnapshot({
       faceMotionEnabled: this.faceMotion.isEnabled(),
       utjControlledNodeNames,
     });
+    return snapshot.bodyRetargetDebug
+      ? {
+          ...snapshot,
+          bodyRetargetDebug: {
+            ...snapshot.bodyRetargetDebug,
+            prefabHeadFollow: this.getPrefabHeadFollowDebugSnapshot(),
+          },
+        }
+      : snapshot;
   }
 
   getFaceMotionSnapshot(): FaceMotionPlaybackSnapshot {
@@ -1663,6 +1679,10 @@ export class Haruki3DEngine {
     this.renderer.render(this.scene, this.camera);
   }
 
+  finishCaptureFrame() {
+    this.renderer.getContext().finish();
+  }
+
   stepRuntimeFrame(
     delta: number,
     options: { advanceAnimation?: boolean; elapsedTime?: number } = {}
@@ -1724,8 +1744,8 @@ export class Haruki3DEngine {
   async setCustomSelection(
     selection: CustomPartSelection
   ): Promise<RuntimeCombinedCharacterAsset> {
-    return this.enqueueCustomSelectionMutation(() =>
-      this.applyCustomSelection(selection)
+    return this.enqueueCustomSelectionMutation((isLatest) =>
+      this.applyCustomSelection(selection, isLatest)
     );
   }
 
@@ -1733,7 +1753,7 @@ export class Haruki3DEngine {
     partType: RuntimePartType,
     costume3dId: number | null
   ): Promise<RuntimeCombinedCharacterAsset> {
-    return this.enqueueCustomSelectionMutation(async () => {
+    return this.enqueueCustomSelectionMutation(async (isLatest) => {
       const wardrobe = this.currentLoadedRuntimePackage?.wardrobe;
       if (!wardrobe) {
         throw new Error("No custom part package is loaded.");
@@ -1759,28 +1779,37 @@ export class Haruki3DEngine {
         headOptionalCostume3dId: partType === "head_optional"
           ? costume3dId
           : selection.headOptionalCostume3dId,
-      });
+      }, isLatest);
     });
   }
 
   async loadRenderRecipe(
     recipe: HarukiRuntimeRenderRecipe
   ): Promise<HarukiRenderResult> {
-    return this.enqueueCustomSelectionMutation(() =>
-      this.loadRenderRecipeInternal(recipe)
+    return this.enqueueCustomSelectionMutation((isLatest) =>
+      this.loadRenderRecipeInternal(recipe, isLatest)
     );
   }
 
   private enqueueCustomSelectionMutation<T>(
-    operation: () => Promise<T>
+    operation: (isLatest: () => boolean) => Promise<T>
   ): Promise<T> {
-    const queued = this.customSelectionQueue.then(operation, operation);
+    const generation = ++this.customSelectionGeneration;
+    const isLatest = () => generation === this.customSelectionGeneration;
+    const run = () => {
+      if (!isLatest()) {
+        throw supersededSelectionError();
+      }
+      return operation(isLatest);
+    };
+    const queued = this.customSelectionQueue.then(run, run);
     this.customSelectionQueue = queued.catch(() => undefined);
     return queued;
   }
 
   private async applyCustomSelection(
-    selection: CustomPartSelection
+    selection: CustomPartSelection,
+    isLatest: () => boolean = () => true
   ): Promise<RuntimeCombinedCharacterAsset> {
     const wardrobe = this.currentLoadedRuntimePackage?.wardrobe;
     if (!wardrobe) {
@@ -1788,7 +1817,10 @@ export class Haruki3DEngine {
     }
     const previousSelection = wardrobe.getCustomSelection();
     const previousCombinedId = wardrobe.getCombinedCharacter()?.id ?? null;
-    const combined = await wardrobe.setCustomSelection(selection);
+    const combined = await wardrobe.setCustomSelection(selection, isLatest);
+    if (!isLatest()) {
+      throw supersededSelectionError();
+    }
     const sameResolvedSelection = previousCombinedId !== null &&
       previousCombinedId === combined.id;
     const nextAnimationUrl = combined.bodyAsset.source.animationUrls?.[0] ?? null;
@@ -1817,7 +1849,8 @@ export class Haruki3DEngine {
   }
 
   private async loadRenderRecipeInternal(
-    recipe: HarukiRuntimeRenderRecipe
+    recipe: HarukiRuntimeRenderRecipe,
+    isLatest: () => boolean
   ): Promise<HarukiRenderResult> {
     const baseUrl = String(recipe.baseUrl ?? "").trim();
     if (!baseUrl) {
@@ -1863,7 +1896,7 @@ export class Haruki3DEngine {
     };
     return {
       selection,
-      combinedCharacter: await this.applyCustomSelection(selection),
+      combinedCharacter: await this.applyCustomSelection(selection, isLatest),
     };
   }
 

@@ -995,8 +995,11 @@ test("custom selection mutations use the official full-character update path", (
   );
 
   assert.match(engineSource, /private customSelectionQueue: Promise<unknown> = Promise\.resolve\(\)/);
+  assert.match(engineSource, /private customSelectionGeneration = 0/);
   assert.match(engineSource, /private enqueueCustomSelectionMutation<T>/);
-  assert.match(engineSource, /this\.customSelectionQueue\.then\(operation, operation\)/);
+  assert.match(engineSource, /generation === this\.customSelectionGeneration/);
+  assert.match(engineSource, /this\.customSelectionQueue\.then\(run, run\)/);
+  assert.match(engineSource, /supersededSelectionError/);
   assert.match(engineSource, /private async applyCustomSelection/);
   assert.match(engineSource, /previousCombinedId === combined\.id/);
   assert.match(engineSource, /!sameResolvedSelection[\s\S]*await this\.importCombinedCharacter\(combined,\s*\{/);
@@ -1120,6 +1123,8 @@ test("custom composer rebinds head colliderFlag springs to active body colliders
   assert.match(composerSource, /matchedPrefixes/);
   assert.match(composerSource, /deferred_body_colliderFlag/);
   assert.match(composerSource, /viewer_composed_head_body_collider_cache/);
+  assert.match(composerSource, /discardResolvedDeferredColliderWarnings/);
+  assert.match(composerSource, /everyColliderFlagResolved/);
 });
 
 test("custom capture exposes SpringBone trace and named offset diagnostics", () => {
@@ -1213,17 +1218,17 @@ test("unity prefab source graph requires the official model-combine setup", () =
   assert.doesNotMatch(prefabSource, /runtimeMountPath/);
 });
 
-test("unity prefab source graph mounts every duplicate composed face root", () => {
+test("unity prefab source graph moves the complete active head renderer inventory", () => {
   const prefabSource = fs.readFileSync(
     path.join(repoRoot, "src/engine/unityPrefabRuntime.ts"),
     "utf8"
   );
 
-  assert.match(prefabSource, /const headRoots = collectUnityPrefabHeadRoots/);
-  assert.match(prefabSource, /const headRootMounts = headRoots\.map/);
-  assert.match(prefabSource, /resolveUnityPrefabMountedHeadOrigin/);
-  assert.match(prefabSource, /originRestLocalToRoot/);
-  assert.doesNotMatch(prefabSource, /findUnityPrefabChildByName\(mountedHeadRoot, "Position"\)/);
+  assert.match(prefabSource, /function collectOfficialHeadRendererPaths/);
+  assert.match(prefabSource, /readRuntimeNativeMeshSet0414\(extension\)/);
+  assert.match(prefabSource, /moveFaceRendererTransforms/);
+  assert.doesNotMatch(prefabSource, /collectUnityPrefabHeadRoots/);
+  assert.doesNotMatch(prefabSource, /originRestLocalToRoot/);
 });
 
 test("unity prefab source graph applies official ModelCombineSetup graft instead of per-frame face head sync", () => {
@@ -1235,13 +1240,17 @@ test("unity prefab source graph applies official ModelCombineSetup graft instead
   assert.match(prefabSource, /function applyOfficialModelCombineSetup/);
   assert.match(prefabSource, /assembly\.faceRendererName \?\? "Face"/);
   assert.match(prefabSource, /Official model_combine_setup paths were not fully resolved/);
-  assert.match(prefabSource, /new Set\(\[faceRendererName, "Face", "Hair", "Acc"\]\)/);
+  assert.match(prefabSource, /const requiredFaceRendererPath/);
+  assert.doesNotMatch(prefabSource, /new Set\(\[faceRendererName, "Face", "Hair", "Acc"\]\)/);
   assert.match(prefabSource, /drainChildrenKeepingLocal\(bodyNodeB\.node, faceNodeB\.node\)/);
+  assert.match(prefabSource, /for \(const child of \[\.\.\.bodyNodeAParent\.children\]\)/);
+  assert.match(prefabSource, /setParentKeepingLocal\(child, faceNodeAParent\)/);
   assert.match(prefabSource, /child\.name\.endsWith\(childMoveSuffix\)/);
   assert.match(prefabSource, /nodeByPath\.set\(bodyNodeA\.path, faceNodeA\.node\)/);
   assert.match(prefabSource, /nodeByPath\.set\(bodyNodeB\.path, faceNodeB\.node\)/);
-  assert.match(prefabSource, /detachNode\(bodyNodeB\.node\)/);
-  assert.match(prefabSource, /detachNode\(bodyNodeA\.node\)/);
+  assert.match(prefabSource, /detachRuntimeSubtree\(bodyNodeB\.node, nodeByPath\)/);
+  assert.match(prefabSource, /detachRuntimeSubtree\(bodyNodeA\.node, nodeByPath\)/);
+  assert.match(prefabSource, /detachRuntimeSubtree\(childRoot\.node, nodeByPath\)/);
   assert.match(prefabSource, /Runtime package must provide the official model_combine_setup body\/head assembly/);
   assert.doesNotMatch(prefabSource, /usesModelCombineSetup/);
 });
