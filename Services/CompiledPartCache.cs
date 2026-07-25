@@ -20,6 +20,7 @@ public sealed class CompiledPartCache
     private readonly string sharedContentRoot;
     private readonly string assetRoot;
     private readonly BundleHashIndex bundleHashes;
+    private readonly BundleDependencyIndex bundleDependencies;
     private readonly bool restoreKtx2;
     private readonly TextureCompactor textureCompactor = new();
     private readonly ConcurrentDictionary<string, CachedFileHash> fileHashes = new(StringComparer.Ordinal);
@@ -32,6 +33,7 @@ public sealed class CompiledPartCache
         string sharedContentRoot,
         string assetRoot,
         string? bundleHashIndex,
+        string? bundleDependencyIndex,
         bool restoreKtx2 = false
     )
     {
@@ -40,6 +42,7 @@ public sealed class CompiledPartCache
         this.assetRoot = Path.GetFullPath(assetRoot);
         this.restoreKtx2 = restoreKtx2;
         bundleHashes = new BundleHashIndex(bundleHashIndex);
+        bundleDependencies = new BundleDependencyIndex(bundleDependencyIndex);
     }
 
     public bool TryRestore(
@@ -82,6 +85,11 @@ public sealed class CompiledPartCache
             entry.PackagePath.Replace('/', Path.DirectorySeparatorChar)
         );
         var delta = RuntimeJsonWriter.ReadJsonObject(deltaObject);
+        var cachedSource = delta["source"] as JsonObject;
+        if (cachedSource?["unityResourceName"] is null)
+        {
+            return false;
+        }
         var restoredKtx2 = restoreKtx2 && textureCompactor.TryRestoreCachedKtx2(
             delta,
             packageDirectory,
@@ -125,10 +133,27 @@ public sealed class CompiledPartCache
         delta["version"] = "0415-part-delta-3";
         delta["corePath"] = coreRelativePath;
         delta["part"] = JsonSerializer.SerializeToNode(BuildIdentity(entry), RuntimeJsonOptions);
+        var logicalBundleName = BundleDependencyIndex.LogicalName(assetRoot, input.ResolvedBundlePath);
         delta["source"] = JsonSerializer.SerializeToNode(new PartRuntimeSource(
             BundlePath: input.ResolvedBundlePath,
             ColorVariationBundlePath: entry.ColorVariationBundlePath,
-            AssetRootRelativeBundlePath: TryRelativePath(assetRoot, input.ResolvedBundlePath)
+            AssetRootRelativeBundlePath: TryRelativePath(assetRoot, input.ResolvedBundlePath),
+            LogicalBundleName: logicalBundleName,
+            PhysicalBundleSha256: bundleHashes.GetHex(assetRoot, input.ResolvedBundlePath),
+            DependencyBundleNames: bundleDependencies.GetClosure(logicalBundleName),
+            ColorVariationLogicalBundleName: entry.ColorVariationBundlePath is null
+                ? null
+                : BundleDependencyIndex.LogicalName(assetRoot, entry.ColorVariationBundlePath),
+            ColorVariationPhysicalBundleSha256: entry.ColorVariationBundlePath is null
+                ? null
+                : bundleHashes.GetHex(assetRoot, entry.ColorVariationBundlePath),
+            ColorVariationDependencyBundleNames: entry.ColorVariationBundlePath is null
+                ? Array.Empty<string>()
+                : bundleDependencies.GetClosure(
+                    BundleDependencyIndex.LogicalName(assetRoot, entry.ColorVariationBundlePath)
+                ),
+            UnityResourceName: cachedSource["unityResourceName"]!.GetValue<string>(),
+            UnityObjectType: cachedSource["unityObjectType"]?.GetValue<string>() ?? "GameObject"
         ), RuntimeJsonOptions);
         PatchMount(delta, entry);
         PatchManifest(delta, entry, input, characterHeightMetersById);

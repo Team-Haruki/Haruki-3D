@@ -181,6 +181,7 @@ if (options.EmitPartPackages)
                 options.SharedContentStore,
                 options.PartPackageWorkList,
                 options.BundleHashIndex,
+                options.BundleDependencyIndex,
                 options.TextureFormat == "ktx2"
             );
             var results = batch.Results;
@@ -291,6 +292,11 @@ static int RunPartPackageWorkers(
             {
                 startInfo.ArgumentList.Add("--bundle-hash-index");
                 startInfo.ArgumentList.Add(options.BundleHashIndex);
+            }
+            if (!string.IsNullOrWhiteSpace(options.BundleDependencyIndex))
+            {
+                startInfo.ArgumentList.Add("--bundle-dependency-index");
+                startInfo.ArgumentList.Add(options.BundleDependencyIndex);
             }
             var process = Process.Start(startInfo)
                 ?? throw new InvalidOperationException($"Failed to start part package worker {index}.");

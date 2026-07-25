@@ -22,14 +22,20 @@ public sealed class BundleInputResolver
         }
 
         var candidates = EnumerateBundleFiles(normalized)
-            .OrderBy(path => ScoreBodyCandidate(Path.GetFileName(path)))
-            .ThenBy(path => path, StringComparer.OrdinalIgnoreCase)
+            .OrderBy(path => path, StringComparer.OrdinalIgnoreCase)
             .ToArray();
 
         if (candidates.Length == 0)
         {
             throw new InvalidOperationException(
                 $"No .bundle files found in body directory: {inputPath}"
+            );
+        }
+        if (candidates.Length != 1)
+        {
+            throw new InvalidOperationException(
+                $"Body directory is ambiguous ({candidates.Length} bundles): {inputPath}. " +
+                "Pass the exact body bundle selected from gameCharacters.figure and breastSize."
             );
         }
 
@@ -97,16 +103,6 @@ public sealed class BundleInputResolver
         var unixPath = path.Replace('\\', '/');
         var match = CharacterIdRegex.Match(unixPath);
         return match.Success ? match.Groups[1].Value : "unknown";
-    }
-
-    private static int ScoreBodyCandidate(string fileName)
-    {
-        return fileName.ToLowerInvariant() switch
-        {
-            "ladies_m.bundle" => 0,
-            "ladies_s.bundle" => 1,
-            _ => 100,
-        };
     }
 
     private static int ScoreHeadCandidate(string fileName)

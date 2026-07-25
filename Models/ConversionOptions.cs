@@ -30,7 +30,8 @@ public sealed record ConversionOptions(
     int TextureCompactWorkers,
     bool ConvertModelTextures,
     string? PartPackageWorkList,
-    string? BundleHashIndex
+    string? BundleHashIndex,
+    string? BundleDependencyIndex
 )
 {
     public bool OwnsOutputFinalization =>

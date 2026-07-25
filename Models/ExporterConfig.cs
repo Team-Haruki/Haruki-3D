@@ -33,5 +33,6 @@ public sealed record ExporterConfig(
     string? AssetStudioRoot,
     bool? ConvertModelTextures,
     string? PartPackageWorkList,
-    string? BundleHashIndex
+    string? BundleHashIndex,
+    string? BundleDependencyIndex
 );

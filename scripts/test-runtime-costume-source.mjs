@@ -35,3 +35,53 @@ test("part exporter preserves official runtime resource names and FaceSDF metada
   assert.match(exporter, /"accessory" => "head_optional"/);
   assert.match(exporter, /"head_optional" => "head_optional"/);
 });
+
+test("body resolution never falls back to a different figure or breast-size bundle", () => {
+  const resolver = source("Services/Character3dCostumeResolver.cs");
+  const inputResolver = source("Services/BundleInputResolver.cs");
+
+  assert.match(resolver, /ResolveBodyBundleFileName\(character\)/);
+  assert.doesNotMatch(
+    resolver,
+    /GetFiles\(directory,\s*"\*\.bundle"[\s\S]*?FirstOrDefault\(\)/
+  );
+  assert.match(
+    inputResolver,
+    /Pass the exact body bundle selected from gameCharacters\.figure and breastSize/
+  );
+  assert.doesNotMatch(inputResolver, /"ladies_m\.bundle"\s*=>\s*0/);
+});
+
+test("head optional export never guesses a mount when masterdata part is absent", () => {
+  const exporter = source("Services/UnityRuntimeNativeMeshExporter.cs");
+
+  assert.match(exporter, /string\.IsNullOrWhiteSpace\(attachNodeName\)/);
+  assert.doesNotMatch(
+    exporter,
+    /foreach\s*\(var fallback in new\[\][\s\S]*?"Head"[\s\S]*?"Neck"[\s\S]*?"face"/
+  );
+  assert.doesNotMatch(
+    exporter,
+    /ResolveAccessoryAttachPath[\s\S]*?return transformPaths\.FirstOrDefault\(\);/
+  );
+});
+
+test("part packages retain bundle and Unity resource identity", () => {
+  const models = source("Models/PartRuntimeModels.cs");
+  const exporter = source("Services/PartPackageExporter.cs");
+
+  for (const field of [
+    "logicalBundleName",
+    "physicalBundleSha256",
+    "dependencyBundleNames",
+    "colorVariationLogicalBundleName",
+    "colorVariationPhysicalBundleSha256",
+    "colorVariationDependencyBundleNames",
+    "unityResourceName",
+    "unityObjectType",
+  ]) {
+    assert.match(models, new RegExp(field));
+  }
+  assert.match(exporter, /BundleDependencyIndex\.LogicalName/);
+  assert.match(exporter, /UnityObjectType: "GameObject"/);
+});

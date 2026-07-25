@@ -17,6 +17,21 @@ public sealed class BundleHashIndex
         return hashes.TryGetValue(key, out hash!);
     }
 
+    public string? GetHex(string assetRoot, string bundlePath)
+    {
+        if (TryGet(assetRoot, bundlePath, out var hash))
+        {
+            return Convert.ToHexString(hash).ToLowerInvariant();
+        }
+        if (!File.Exists(bundlePath))
+        {
+            return null;
+        }
+        using var stream = File.OpenRead(bundlePath);
+        return Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(stream))
+            .ToLowerInvariant();
+    }
+
     private static IReadOnlyDictionary<string, byte[]> Load(string? path)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))

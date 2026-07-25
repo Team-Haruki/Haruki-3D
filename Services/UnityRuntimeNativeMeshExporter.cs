@@ -245,26 +245,18 @@ public sealed class UnityRuntimeNativeMeshExporter
         string? attachNodeName
     )
     {
-        if (!string.IsNullOrWhiteSpace(attachNodeName) &&
-            TryResolveTransformPathByNameOrPath(transformPaths, attachNodeName!, out var explicitPath))
+        if (string.IsNullOrWhiteSpace(attachNodeName))
         {
-            return explicitPath;
+            return null;
         }
 
-        foreach (var fallback in new[]
-        {
-            "Head",
-            "Neck",
-            "face",
-        })
-        {
-            if (TryResolveTransformPathByNameOrPath(transformPaths, fallback, out var path))
-            {
-                return path;
-            }
-        }
-
-        return transformPaths.FirstOrDefault();
+        return TryResolveTransformPathByNameOrPath(
+            transformPaths,
+            attachNodeName,
+            out var explicitPath
+        )
+            ? explicitPath
+            : null;
     }
 
     private static bool TryResolveTransformPathByNameOrPath(

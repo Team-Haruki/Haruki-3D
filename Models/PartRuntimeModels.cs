@@ -56,7 +56,15 @@ public sealed record PartRuntimeIdentity(
 public sealed record PartRuntimeSource(
     [property: JsonPropertyName("bundlePath")] string BundlePath,
     [property: JsonPropertyName("colorVariationBundlePath")] string? ColorVariationBundlePath,
-    [property: JsonPropertyName("assetRootRelativeBundlePath")] string? AssetRootRelativeBundlePath
+    [property: JsonPropertyName("assetRootRelativeBundlePath")] string? AssetRootRelativeBundlePath,
+    [property: JsonPropertyName("logicalBundleName")] string? LogicalBundleName,
+    [property: JsonPropertyName("physicalBundleSha256")] string? PhysicalBundleSha256,
+    [property: JsonPropertyName("dependencyBundleNames")] IReadOnlyList<string> DependencyBundleNames,
+    [property: JsonPropertyName("colorVariationLogicalBundleName")] string? ColorVariationLogicalBundleName,
+    [property: JsonPropertyName("colorVariationPhysicalBundleSha256")] string? ColorVariationPhysicalBundleSha256,
+    [property: JsonPropertyName("colorVariationDependencyBundleNames")] IReadOnlyList<string> ColorVariationDependencyBundleNames,
+    [property: JsonPropertyName("unityResourceName")] string UnityResourceName,
+    [property: JsonPropertyName("unityObjectType")] string UnityObjectType
 );
 
 public sealed record PartRuntimeMount(

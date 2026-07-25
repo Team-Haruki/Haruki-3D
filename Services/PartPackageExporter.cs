@@ -26,6 +26,8 @@ public sealed class PartPackageExporter
     private readonly UnityRuntimeNativeMeshExporter nativeMeshExporter = new();
     private readonly UnityRuntimeTextureExporter textureExporter = new();
     private readonly IReadOnlyDictionary<string, float> characterHeightMetersById;
+    private BundleHashIndex bundleHashes = new(null);
+    private BundleDependencyIndex bundleDependencies = new(null);
 
     public PartPackageExporter(
         IReadOnlyDictionary<string, float>? characterHeightMetersById = null,
@@ -48,10 +50,13 @@ public sealed class PartPackageExporter
         string? sharedContentStore = null,
         string? workListPath = null,
         string? bundleHashIndex = null,
+        string? bundleDependencyIndex = null,
         bool restoreKtx2 = false
     )
     {
         var stopwatch = Stopwatch.StartNew();
+        bundleHashes = new BundleHashIndex(bundleHashIndex);
+        bundleDependencies = new BundleDependencyIndex(bundleDependencyIndex);
         var manifest = PartPackageExportManifest.Load(manifestPath);
         var partEntries = LoadPartEntries(masterDirectory, assetRoot, workListPath)
             .Where(entry => entry.BundlePath is not null && entry.Status != "missing")
@@ -69,6 +74,7 @@ public sealed class PartPackageExporter
                     sharedContentStore,
                     assetRoot,
                     bundleHashIndex,
+                    bundleDependencyIndex,
                     restoreKtx2
                 );
         var built = 0;
@@ -478,11 +484,7 @@ public sealed class PartPackageExporter
                 ModelAssetbundleName: entry.ModelAssetbundleName,
                 HeadCostume3dAssetbundleType: entry.HeadCostume3dAssetbundleType
             ),
-            Source: new PartRuntimeSource(
-                BundlePath: input.ResolvedBundlePath,
-                ColorVariationBundlePath: entry.ColorVariationBundlePath,
-                AssetRootRelativeBundlePath: TryRelativePath(assetRoot, input.ResolvedBundlePath)
-            ),
+            Source: BuildSource(entry, input, assetRoot, normalizedType, core.Inventory),
             Mount: BuildMount(entry, core.Inventory, normalizedType, core.SpringBone),
             Manifest: BuildManifest(entry, input, core.Inventory, normalizedType, characterHeightMetersById),
             MaterialSlots: materialSlots,
@@ -1270,6 +1272,31 @@ public sealed class PartPackageExporter
             {
                 return false;
             }
+            if (!document.RootElement.TryGetProperty("source", out var source) ||
+                !source.TryGetProperty("logicalBundleName", out var logicalBundleName) ||
+                string.IsNullOrWhiteSpace(logicalBundleName.GetString()) ||
+                !source.TryGetProperty("physicalBundleSha256", out var physicalBundleSha256) ||
+                physicalBundleSha256.GetString()?.Length != 64 ||
+                !source.TryGetProperty("dependencyBundleNames", out var dependencies) ||
+                dependencies.ValueKind != JsonValueKind.Array ||
+                !source.TryGetProperty("unityResourceName", out var resourceName) ||
+                string.IsNullOrWhiteSpace(resourceName.GetString()) ||
+                !source.TryGetProperty("unityObjectType", out var objectType) ||
+                objectType.GetString() != "GameObject")
+            {
+                return false;
+            }
+            if (source.TryGetProperty("colorVariationBundlePath", out var colorVariationPath) &&
+                !string.IsNullOrWhiteSpace(colorVariationPath.GetString()) &&
+                (!source.TryGetProperty("colorVariationLogicalBundleName", out var colorLogicalName) ||
+                 string.IsNullOrWhiteSpace(colorLogicalName.GetString()) ||
+                 !source.TryGetProperty("colorVariationPhysicalBundleSha256", out var colorSha256) ||
+                 colorSha256.GetString()?.Length != 64 ||
+                 !source.TryGetProperty("colorVariationDependencyBundleNames", out var colorDependencies) ||
+                 colorDependencies.ValueKind != JsonValueKind.Array))
+            {
+                return false;
+            }
             var partType = partTypeNode.GetString();
             if (partType is not ("head" or "hair"))
             {
@@ -1552,6 +1579,47 @@ public sealed class PartPackageExporter
     {
         return inventory.Roots.FirstOrDefault(root => string.Equals(root.Name, "optional", StringComparison.OrdinalIgnoreCase))?.Name
             ?? inventory.Roots.FirstOrDefault()?.Name;
+    }
+
+    private PartRuntimeSource BuildSource(
+        PartRegistryEntry entry,
+        ResolvedBundleInput input,
+        string assetRoot,
+        string normalizedType,
+        BundleInventory inventory
+    )
+    {
+        var logicalBundleName = BundleDependencyIndex.LogicalName(assetRoot, input.ResolvedBundlePath);
+        var resourceName = normalizedType switch
+        {
+            "body" => "body",
+            "head" or "hair" => SelectHeadRootName(inventory),
+            "head_optional" => SelectAccessoryRootName(inventory),
+            _ => null,
+        } ?? throw new InvalidOperationException(
+            $"No Unity GameObject resource was resolved for {entry.PackagePath}."
+        );
+        return new PartRuntimeSource(
+            BundlePath: input.ResolvedBundlePath,
+            ColorVariationBundlePath: entry.ColorVariationBundlePath,
+            AssetRootRelativeBundlePath: TryRelativePath(assetRoot, input.ResolvedBundlePath),
+            LogicalBundleName: logicalBundleName,
+            PhysicalBundleSha256: bundleHashes.GetHex(assetRoot, input.ResolvedBundlePath),
+            DependencyBundleNames: bundleDependencies.GetClosure(logicalBundleName),
+            ColorVariationLogicalBundleName: entry.ColorVariationBundlePath is null
+                ? null
+                : BundleDependencyIndex.LogicalName(assetRoot, entry.ColorVariationBundlePath),
+            ColorVariationPhysicalBundleSha256: entry.ColorVariationBundlePath is null
+                ? null
+                : bundleHashes.GetHex(assetRoot, entry.ColorVariationBundlePath),
+            ColorVariationDependencyBundleNames: entry.ColorVariationBundlePath is null
+                ? Array.Empty<string>()
+                : bundleDependencies.GetClosure(
+                    BundleDependencyIndex.LogicalName(assetRoot, entry.ColorVariationBundlePath)
+                ),
+            UnityResourceName: resourceName,
+            UnityObjectType: "GameObject"
+        );
     }
 
     private static string? FirstPathSegment(string? path)

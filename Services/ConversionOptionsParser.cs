@@ -28,6 +28,7 @@ public static class ConversionOptionsParser
         "  --compact-textures deduplicates package textures by exact SHA-256 and rewrites runtime package paths\n" +
         "  --shared-content-store hard-links exact texture and part-runtime bytes into a shared cross-region CAS\n" +
         "  --bundle-hash-index reuses updater-provided SHA-256 values when fingerprinting source bundles\n" +
+        "  --bundle-dependency-index preserves updater-provided logical bundle dependency closure\n" +
         "  --png-optimize controls lossless PNG optimization during compaction: oxipng or off\n" +
         "  --texture-format selects final runtime textures: png (default) or ktx2\n" +
         "  --texture-compact-workers limits concurrent PNG optimizers; 0 = min(4, CPU count)\n" +
@@ -68,6 +69,7 @@ public static class ConversionOptionsParser
         var convertModelTextures = false;
         string? partPackageWorkList = null;
         string? bundleHashIndex = null;
+        string? bundleDependencyIndex = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -127,6 +129,7 @@ public static class ConversionOptionsParser
                 convertModelTextures = config.ConvertModelTextures ?? false;
                 partPackageWorkList = config.PartPackageWorkList;
                 bundleHashIndex = config.BundleHashIndex;
+                bundleDependencyIndex = config.BundleDependencyIndex;
             }
             catch (Exception ex)
             {
@@ -338,6 +341,12 @@ public static class ConversionOptionsParser
                 continue;
             }
 
+            if (arg is "--bundle-dependency-index")
+            {
+                bundleDependencyIndex = ReadValue(args, ref i, arg);
+                continue;
+            }
+
             if (arg is "--help" or "-?")
             {
                 return new ParseResult(false, null, "Help requested.");
@@ -469,7 +478,8 @@ public static class ConversionOptionsParser
                 textureCompactWorkers,
                 convertModelTextures,
                 string.IsNullOrWhiteSpace(partPackageWorkList) ? null : partPackageWorkList,
-                string.IsNullOrWhiteSpace(bundleHashIndex) ? null : bundleHashIndex
+                string.IsNullOrWhiteSpace(bundleHashIndex) ? null : bundleHashIndex,
+                string.IsNullOrWhiteSpace(bundleDependencyIndex) ? null : bundleDependencyIndex
             ),
             string.Empty
         );

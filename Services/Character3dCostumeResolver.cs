@@ -179,18 +179,6 @@ public sealed class Character3dCostumeResolver
             return path;
         }
 
-        if (Directory.Exists(directory))
-        {
-            var fallback = Directory
-                .GetFiles(directory, "*.bundle", SearchOption.TopDirectoryOnly)
-                .OrderBy(candidate => candidate, StringComparer.OrdinalIgnoreCase)
-                .FirstOrDefault();
-            if (fallback is not null)
-            {
-                return fallback;
-            }
-        }
-
         throw new FileNotFoundException($"Body bundle was not found: {path}");
     }
 
