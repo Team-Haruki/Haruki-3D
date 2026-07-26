@@ -231,12 +231,9 @@ function cloneFaceShaderMaterial(
     headDotDirectionalLight: source.uniforms.uHeadDotDirectionalLight?.value,
     faceDebugMode: source.uniforms.uFaceDebugMode?.value ?? 0,
     faceSdfEnabled: false,
-    // Face H.b is authored as fully lit so FaceSDF can own the facial side
-    // shadow in-game. SSSekai's parameter-free face material deliberately
-    // leaves H disconnected, preserving the model-normal shadow under the jaw.
-    // Keep H loaded for the remaining masks, but do not let it erase the
-    // geometric face band unless the material explicitly opts in.
-    useValueTex: params.lighting?.useValueTex ?? false,
+    // Exported shader state wins. Some Unity materials omit the serialized
+    // toggle even though the active Toon pass consumes the bound ValueTex.
+    useValueTex: params.lighting?.useValueTex ?? Boolean(params.valueTex),
     shadowThreshold:
       params.lighting?.sekaiShadowThreshold ?? source.uniforms.uShadowThreshold?.value ?? 0.5,
     shadowWeight: source.uniforms.uShadowWeight?.value ?? 1.0,

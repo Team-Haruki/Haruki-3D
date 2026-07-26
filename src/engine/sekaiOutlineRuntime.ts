@@ -257,20 +257,12 @@ function createSekaiToonOutlineMaterial(
       "uniform vec3 uSekaiCharacterOutlineColor;",
       "uniform float uSekaiCharacterOutlineBlending;",
       "",
-      "vec3 sekaiOutlineSrgbToLinear(vec3 color) {",
-      "  vec3 low = color / 12.92;",
-      "  vec3 high = pow((color + vec3(0.055)) / 1.055, vec3(2.4));",
-      "  return mix(low, high, step(vec3(0.04045), color));",
-      "}",
-      "",
       "vec3 outputColor(vec3 color) {",
-      "  vec3 linearColor = sekaiOutlineSrgbToLinear(clamp(color, 0.0, 1.0));",
-      "  vec3 linearOutline = mix(",
-      "    linearColor,",
+      "  return mix(",
+      "    color,",
       "    uSekaiCharacterOutlineColor,",
       "    clamp(uSekaiCharacterOutlineBlending, 0.0, 1.0)",
       "  );",
-      "  return sekaiGammaTexture(linearOutline);",
       "}",
     ].join("\n")
   );
@@ -459,6 +451,7 @@ export function createSekaiOutlineMaterial(
         "  #ifdef DECODE_VIDEO_TEXTURE",
         "    sampledDiffuseColor = sRGBTransferEOTF(sampledDiffuseColor);",
         "  #endif",
+        "  sampledDiffuseColor = sRGBTransferOETF(sampledDiffuseColor);",
         "  diffuseColor *= sampledDiffuseColor;",
         "#endif",
       ].join("\n")
@@ -473,6 +466,10 @@ export function createSekaiOutlineMaterial(
         "  clamp(uSekaiCharacterOutlineBlending, 0.0, 1.0)",
         ");",
       ].join("\n")
+    );
+    shader.fragmentShader = shader.fragmentShader.replace(
+      "#include <colorspace_fragment>",
+      ""
     );
   };
   material.customProgramCacheKey = () =>

@@ -136,9 +136,9 @@ test("official outline consumes material tint, main texture transform, and alpha
   );
   assert.match(shader.vertexShader, /vSekaiMainTexUv = uv \* uSekaiMainTexST\.xy/);
   assert.match(shader.fragmentShader, /texture2D\(map, vSekaiMainTexUv\)/);
-  assert.doesNotMatch(shader.fragmentShader, /sRGBTransferOETF\(sampledDiffuseColor\)/);
+  assert.match(shader.fragmentShader, /sRGBTransferOETF\(sampledDiffuseColor\)/);
   assert.match(shader.fragmentShader, /diffuseColor\.rgb = mix\(/);
-  assert.match(shader.fragmentShader, /#include <colorspace_fragment>/);
+  assert.doesNotMatch(shader.fragmentShader, /#include <colorspace_fragment>/);
   assert.doesNotMatch(shader.vertexShader, /uOutlineClipOffset/);
 
   material.dispose();
@@ -161,7 +161,7 @@ test("non-Toon outline fallback keeps the bounded material/global blend", () => 
   );
 });
 
-test("character outline preserves Toon shading and blends it with the global outline in linear light", () => {
+test("character outline preserves Toon shading and blends it in the captured Gamma project space", () => {
   const source = new THREE.ShaderMaterial({
     uniforms: {
       uMainTex: { value: new THREE.Texture() },
@@ -202,9 +202,9 @@ test("character outline preserves Toon shading and blends it with the global out
   assert.match(material.vertexShader, /uSekaiOutlineOffset/);
   assert.match(material.fragmentShader, /uSekaiCharacterOutlineColor/);
   assert.match(material.fragmentShader, /uSekaiCharacterOutlineBlending/);
-  assert.match(material.fragmentShader, /sekaiOutlineSrgbToLinear/);
-  assert.match(material.fragmentShader, /return sekaiGammaTexture\(linearOutline\)/);
-  assert.doesNotMatch(
+  assert.doesNotMatch(material.fragmentShader, /sekaiOutlineSrgbToLinear/);
+  assert.doesNotMatch(material.fragmentShader, /sekaiGammaTexture\(linearOutline\)/);
+  assert.match(
     material.fragmentShader,
     /return mix\(\s*color,\s*uSekaiCharacterOutlineColor/
   );
