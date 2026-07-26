@@ -161,7 +161,7 @@ test("non-Toon outline fallback keeps the bounded material/global blend", () => 
   );
 });
 
-test("character outline blends the captured Toon result in linear light", () => {
+test("character outline blends the captured Toon result in gamma space like the official 0090 pass", () => {
   const source = new THREE.ShaderMaterial({
     uniforms: {
       uMainTex: { value: new THREE.Texture() },
@@ -211,8 +211,17 @@ test("character outline blends the captured Toon result in linear light", () => 
   assert.match(material.vertexShader, /uSekaiOutlineOffset/);
   assert.match(material.fragmentShader, /uSekaiCharacterOutlineColor/);
   assert.match(material.fragmentShader, /uSekaiCharacterOutlineBlending/);
-  assert.match(material.fragmentShader, /sekaiOutlineSrgbToLinear/);
-  assert.match(material.fragmentShader, /return sekaiGammaTexture\(linearOutline\)/);
+  // The captured 0090 outline fragment computes
+  //   mix(outlineColorArray[i].rgb * a, shadedColor, blendingArray[i])
+  // directly on the Gamma-space values of the game's Gamma pipeline. The
+  // gamma-form Toon color must therefore be blended as-is; decoding to
+  // linear first lifts the outline a full tier brighter than the official
+  // preview (measured (94,45,33) vs official (65,32,24) on hair shadow2).
+  assert.match(
+    material.fragmentShader,
+    /return mix\(\s*uSekaiCharacterOutlineColor,\s*clamp\(color, 0\.0, 1\.0\),/
+  );
+  assert.doesNotMatch(material.fragmentShader, /sekaiOutlineSrgbToLinear/);
   assert.doesNotMatch(
     material.fragmentShader,
     /return mix\(\s*color,\s*uSekaiCharacterOutlineColor/
@@ -223,5 +232,135 @@ test("character outline blends the captured Toon result in linear light", () => 
 
   material.dispose();
   source.uniforms.uMainTex.value.dispose();
+  source.dispose();
+});
+
+test("outline offset pushback reaches face-style gl_Position statements", () => {
+  // The face vertex shader ends with
+  //   gl_Position = projectionMatrix * viewMatrix * worldPosition;
+  // while the body shader uses a precomputed viewPosition. The clip-space
+  // _OutlineOffset pushback must attach to both forms, or face/eyelash
+  // shells (offsets 10 / 2.5) silently lose their official depth push.
+  const faceStyleSource = new THREE.ShaderMaterial({
+    uniforms: {},
+    vertexShader: `
+      #include <common>
+      void main() {
+        #include <beginnormal_vertex>
+        #include <defaultnormal_vertex>
+        #include <begin_vertex>
+        vec4 worldPosition = modelMatrix * vec4(transformed, 1.0);
+        gl_Position = projectionMatrix * viewMatrix * worldPosition;
+      }
+    `,
+    fragmentShader: `
+      vec3 outputColor(vec3 color) {
+        return color;
+      }
+      void main() {
+        gl_FragColor = vec4(outputColor(vec3(1.0)), 1.0);
+      }
+    `,
+  });
+  const material = createSekaiOutlineMaterial(
+    true,
+    rawMaterial({
+      floatProperties: [{ name: "_OutlineOffset", value: 10 }],
+    }),
+    false,
+    null,
+    faceStyleSource
+  );
+
+  assert.ok(material instanceof THREE.ShaderMaterial);
+  assert.match(
+    material.vertexShader,
+    /gl_Position \+= projectedCameraOrigin \* \(-0\.01 \* uSekaiOutlineOffset\) \* outlineOffsetScale;/
+  );
+
+  material.dispose();
+  faceStyleSource.dispose();
+});
+
+test("second-normal outline direction uses the official single-normalize form", () => {
+  const source = new THREE.ShaderMaterial({
+    uniforms: {},
+    vertexShader: `
+      #include <common>
+      void main() {
+        #include <beginnormal_vertex>
+        #include <defaultnormal_vertex>
+        #include <begin_vertex>
+        vec4 viewPosition = viewMatrix * modelMatrix * vec4(transformed, 1.0);
+        gl_Position = projectionMatrix * viewPosition;
+      }
+    `,
+    fragmentShader: `
+      vec3 outputColor(vec3 color) {
+        return color;
+      }
+      void main() {
+        gl_FragColor = vec4(outputColor(vec3(1.0)), 1.0);
+      }
+    `,
+  });
+  const material = createSekaiOutlineMaterial(true, rawMaterial({}), true, null, source);
+
+  assert.ok(material instanceof THREE.ShaderMaterial);
+  // Official 0091 builds the direction from RAW attributes with one final
+  // normalize: normalize(T*uv1.x + cross(N,T)*T.w*uv1.y + N*uv2.x).
+  // Per-term normalizes turn degenerate tangents into NaN vertices where
+  // the official shader still produces a finite direction.
+  assert.match(
+    material.vertexShader,
+    /vec3 outlineSecondBitangent = cross\(normal, tangent\.xyz\) \* tangent\.w;/
+  );
+  assert.match(
+    material.vertexShader,
+    /vec3 outlineDirection = normalize\(tangent\.xyz \* uv1\.x \+ outlineSecondBitangent \* uv1\.y \+ normal \* uv2\.x\);/
+  );
+  assert.doesNotMatch(material.vertexShader, /normalize\(vec3\(uv1\.xy/);
+  assert.doesNotMatch(material.vertexShader, /baseBitangent/);
+
+  material.dispose();
+  source.dispose();
+});
+
+test("character outline ramp normal cancels three's FLIP_SIDED negation", () => {
+  const source = new THREE.ShaderMaterial({
+    uniforms: {},
+    vertexShader: `
+      #include <common>
+      void main() {
+        #include <beginnormal_vertex>
+        #include <defaultnormal_vertex>
+        #include <begin_vertex>
+        vec4 viewPosition = viewMatrix * modelMatrix * vec4(transformed, 1.0);
+        gl_Position = projectionMatrix * viewPosition;
+      }
+    `,
+    fragmentShader: `
+      vec3 outputColor(vec3 color) {
+        return color;
+      }
+      void main() {
+        gl_FragColor = vec4(outputColor(vec3(1.0)), 1.0);
+      }
+    `,
+  });
+  const material = createSekaiOutlineMaterial(true, rawMaterial({}), false, null, source);
+
+  assert.ok(material instanceof THREE.ShaderMaterial);
+  // The BackSide shell gets FLIP_SIDED from three, which negates
+  // transformedNormal inside defaultnormal_vertex. The captured official
+  // outline vertex (0089/0091) feeds the raw mesh normal to the Toon ramp,
+  // so the shell must undo that negation or the ramp inverts at silhouettes.
+  assert.match(
+    material.vertexShader,
+    /#include <defaultnormal_vertex>\s*\n\s*#ifdef FLIP_SIDED\s*\n\s*transformedNormal = -transformedNormal;\s*\n\s*#endif/
+  );
+  assert.doesNotMatch(source.vertexShader, /FLIP_SIDED/);
+
+  material.dispose();
   source.dispose();
 });

@@ -307,8 +307,8 @@ test("engine outline shell follows the captured Sekai outline pass", () => {
   assert.ok(outlineSource.includes("outlineDistanceFactor = min(outlineDistanceFactor * uSekaiOutlineFactor.z, 1.0);"));
   assert.ok(outlineSource.includes("float outlineWidth = mix(uSekaiOutlineWidth.x, uSekaiOutlineWidth.y, outlineDistanceFactor);"));
   assert.ok(outlineSource.includes("vec3 outlineDirection = normalize(normal);"));
-  assert.ok(outlineSource.includes("vec3 secondNormalTS = normalize(vec3(uv1.xy, uv2.x));"));
-  assert.ok(outlineSource.includes("cross(baseNormal, baseTangent) * tangent.w"));
+  assert.ok(outlineSource.includes("vec3 outlineSecondBitangent = cross(normal, tangent.xyz) * tangent.w;"));
+  assert.ok(outlineSource.includes("vec3 outlineDirection = normalize(tangent.xyz * uv1.x + outlineSecondBitangent * uv1.y + normal * uv2.x);"));
   assert.ok(prefabRuntimeSource.includes('geometry.setAttribute("tangent"'));
   assert.ok(prefabRuntimeSource.includes('geometry.setAttribute("uv2"'));
   assert.ok(!prefabRuntimeSource.includes('geometry.setAttribute("uv2", new THREE.Float32BufferAttribute(source.uv1!'));

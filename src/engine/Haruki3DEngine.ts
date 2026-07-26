@@ -261,6 +261,11 @@ export type RuntimeOutlineShellDebug = {
   vertexColorRedMax: number | null;
   renderOrder: number;
   sourceRenderOrder: number;
+  hasTangent: boolean;
+  hasUv1: boolean;
+  hasUv2: boolean;
+  useSecondNormal: boolean[];
+  wantsSecondNormal: boolean[];
 };
 
 export type RuntimeFaceLightDebug = {
@@ -2352,6 +2357,9 @@ export class Haruki3DEngine {
           extractSekaiOutlineMainTexture(sourceMaterial),
           dedicatedOutlineSource ?? sourceMaterial
         );
+        outlineMaterial.userData.pjskOutlineUseSecondNormal = useSecondNormal;
+        outlineMaterial.userData.pjskOutlineWantsSecondNormal =
+          (lighting?.useOutlineSecondNormal ?? 0) > 0.5;
         dedicatedOutlineSource?.dispose();
         this.characterLighting.applyOutlineMaterial(outlineMaterial);
         return outlineMaterial;
@@ -2390,6 +2398,15 @@ export class Haruki3DEngine {
         vertexColorRedMax,
         renderOrder: outline.renderOrder,
         sourceRenderOrder: mesh.renderOrder,
+        hasTangent: Boolean(mesh.geometry.getAttribute("tangent")),
+        hasUv1: Boolean(mesh.geometry.getAttribute("uv1")),
+        hasUv2: Boolean(mesh.geometry.getAttribute("uv2")),
+        useSecondNormal: outlineMaterials.map(
+          (material) => material.userData.pjskOutlineUseSecondNormal === true
+        ),
+        wantsSecondNormal: outlineMaterials.map(
+          (material) => material.userData.pjskOutlineWantsSecondNormal === true
+        ),
       });
       mesh.parent?.add(outline);
     }

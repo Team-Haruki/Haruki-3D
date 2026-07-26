@@ -231,6 +231,20 @@ function createSekaiToonOutlineMaterial(
     ].join("\n")
   );
   material.vertexShader = material.vertexShader.replace(
+    "#include <defaultnormal_vertex>",
+    [
+      "#include <defaultnormal_vertex>",
+      // The captured outline vertex shaders (0089/0091) pass the raw mesh
+      // normal to the Toon ramp. Three defines FLIP_SIDED for this BackSide
+      // shell and negates transformedNormal inside defaultnormal_vertex,
+      // which inverts the ramp at silhouettes; undo it so the shell shades
+      // with the same normal as the front pass.
+      "#ifdef FLIP_SIDED",
+      "transformedNormal = -transformedNormal;",
+      "#endif",
+    ].join("\n")
+  );
+  material.vertexShader = material.vertexShader.replace(
     "#include <begin_vertex>",
     [
       "#include <begin_vertex>",
@@ -241,11 +255,12 @@ function createSekaiToonOutlineMaterial(
       "float outlineWidth = mix(uSekaiOutlineWidth.x, uSekaiOutlineWidth.y, outlineDistanceFactor);",
       useSecondNormal
         ? [
-            "vec3 secondNormalTS = normalize(vec3(uv1.xy, uv2.x));",
-            "vec3 baseNormal = normalize(normal);",
-            "vec3 baseTangent = normalize(tangent.xyz);",
-            "vec3 baseBitangent = normalize(cross(baseNormal, baseTangent) * tangent.w);",
-            "vec3 outlineDirection = normalize(baseTangent * secondNormalTS.x + baseBitangent * secondNormalTS.y + baseNormal * secondNormalTS.z);",
+            // Official 0091 builds the direction from the raw attributes
+            // with a single final normalize; per-term normalizes turn
+            // degenerate tangents into NaN vertices where the official
+            // shader still produces a finite direction.
+            "vec3 outlineSecondBitangent = cross(normal, tangent.xyz) * tangent.w;",
+            "vec3 outlineDirection = normalize(tangent.xyz * uv1.x + outlineSecondBitangent * uv1.y + normal * uv2.x);",
           ].join("\n")
         : "vec3 outlineDirection = normalize(normal);",
       useVertexColor
@@ -257,10 +272,15 @@ function createSekaiToonOutlineMaterial(
       "transformed += outlineDirection * outlineWidth * outlineScale;",
     ].join("\n")
   );
+  // The body shader ends with "gl_Position = projectionMatrix * viewPosition;"
+  // while the face shader ends with
+  // "gl_Position = projectionMatrix * viewMatrix * worldPosition;" — the
+  // offset pushback must attach to whichever form the source uses, or the
+  // face/eyelash shells silently lose their official _OutlineOffset push.
   material.vertexShader = material.vertexShader.replace(
-    "gl_Position = projectionMatrix * viewPosition;",
-    [
-      "gl_Position = projectionMatrix * viewPosition;",
+    /gl_Position\s*=\s*projectionMatrix\s*\*[^;]*;/,
+    (glPositionStatement) => [
+      glPositionStatement,
       "vec4 projectedCameraOrigin = projectionMatrix * viewMatrix * vec4(cameraPosition, 1.0);",
       "gl_Position += projectedCameraOrigin * (-0.01 * uSekaiOutlineOffset) * outlineOffsetScale;",
     ].join("\n")
@@ -271,20 +291,18 @@ function createSekaiToonOutlineMaterial(
       "uniform vec3 uSekaiCharacterOutlineColor;",
       "uniform float uSekaiCharacterOutlineBlending;",
       "",
-      "vec3 sekaiOutlineSrgbToLinear(vec3 color) {",
-      "  vec3 low = color / 12.92;",
-      "  vec3 high = pow((color + vec3(0.055)) / 1.055, vec3(2.4));",
-      "  return mix(low, high, step(vec3(0.04045), color));",
-      "}",
-      "",
+      // The captured 0090 outline fragment runs in the game's Gamma
+      // pipeline and computes
+      //   mix(outlineColorArray[i].rgb * a, shadedColor, blendingArray[i])
+      // directly on gamma-form values. The Toon color reaching outputColor
+      // is already gamma-form, so blend it as-is; a linear-space blend
+      // lifts the outline a full tier brighter than the official preview.
       "vec3 outputColor(vec3 color) {",
-      "  vec3 linearColor = sekaiOutlineSrgbToLinear(clamp(color, 0.0, 1.0));",
-      "  vec3 linearOutline = mix(",
-      "    linearColor,",
+      "  return mix(",
       "    uSekaiCharacterOutlineColor,",
+      "    clamp(color, 0.0, 1.0),",
       "    clamp(uSekaiCharacterOutlineBlending, 0.0, 1.0)",
       "  );",
-      "  return sekaiGammaTexture(linearOutline);",
       "}",
     ].join("\n")
   );
@@ -421,11 +439,10 @@ export function createSekaiOutlineMaterial(
         "float outlineWidth = mix(uSekaiOutlineWidth.x, uSekaiOutlineWidth.y, outlineDistanceFactor);",
         useSecondNormal
           ? [
-              "vec3 secondNormalTS = normalize(vec3(uv1.xy, uv2.x));",
-              "vec3 baseNormal = normalize(normal);",
-              "vec3 baseTangent = normalize(tangent.xyz);",
-              "vec3 baseBitangent = normalize(cross(baseNormal, baseTangent) * tangent.w);",
-              "vec3 outlineDirection = normalize(baseTangent * secondNormalTS.x + baseBitangent * secondNormalTS.y + baseNormal * secondNormalTS.z);",
+              // Match 0091: raw attributes, one final normalize (see the
+              // Toon path above).
+              "vec3 outlineSecondBitangent = cross(normal, tangent.xyz) * tangent.w;",
+              "vec3 outlineDirection = normalize(tangent.xyz * uv1.x + outlineSecondBitangent * uv1.y + normal * uv2.x);",
             ].join("\n")
           : "vec3 outlineDirection = normalize(normal);",
         useVertexColor

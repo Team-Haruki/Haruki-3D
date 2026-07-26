@@ -110,16 +110,23 @@ formation's global outline color/blending. The Engine therefore reuses the
 source Toon fragment/uniforms for body, face, hair and accessory outline
 passes; a solid purple-gray `MeshBasicMaterial` would be the wrong path.
 
-The final global-outline blend is a linear-light operation. The browser Toon
-kernel intentionally keeps its intermediate character colors in an
-sRGB-shaped domain, so the outline hook must decode that shaded result before
-mixing it with the linear controller color, then encode the result again.
-Mixing the browser intermediate directly with black at `0.5` makes the shell
-substantially darker and produces the dirty blue-gray outline regression seen
-on hair and skin. Clausekai also contains a simpler `MainTex *
-_OutlineColor` outline fragment; that is evidence for its captured scene/path,
-not a replacement for the CostumeShop Toon outline variant identified by
-`0089/0090/0091`.
+The final global-outline blend is a Gamma-space operation. The game runs a
+Unity Gamma pipeline (the CostumeShop preview renders into a 1024x1024
+Gamma-space target), and the driver-final `0090` fragment computes
+`mix(outlineColorArray[i].rgb * a, shadedColor, blendingArray[i])` directly on
+the gamma-form values with no EOTF anywhere in the pass. The browser Toon
+kernel keeps its intermediate character colors in the same sRGB-shaped domain,
+so the outline hook blends that shaded result as-is with the controller color.
+Pixel evidence (2026-07-27): official reference hair/skin boundary lines
+measure ~(84,54,46) ≈ gamma `mix(black, shadow1(176,102,83), 0.5)` = (88,51,41),
+while a linear-light mix predicts (128,73,59) — a full tier brighter than the
+official preview. An earlier "dirty blue-gray" appearance once attributed to
+Gamma-space mixing was actually the FLIP_SIDED ramp inversion (shell ramp
+normals negated), fixed separately; with the ramp fixed, Gamma-space mixing
+reproduces the official line colors to within ±1/255. Clausekai also contains
+a simpler `MainTex * _OutlineColor` outline fragment; that is evidence for its
+captured scene/path, not a replacement for the CostumeShop Toon outline
+variant identified by `0089/0090/0091`.
 
 The captured variants are:
 
