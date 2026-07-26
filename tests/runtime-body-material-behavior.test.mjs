@@ -178,7 +178,7 @@ test("raw Unity material colors and alpha feature state override proxy defaults"
   assert.equal(material.uniforms.uPartsAmbientAlpha.value, 0.75);
   assert.equal(material.uniforms.uAlphaCutoff.value, 0.375);
   assert.equal(material.uniforms.uHeadNormalBlend.value, 0.35);
-  assert.match(
+  assert.doesNotMatch(
     material.vertexShader,
     /worldNormal \+\s*uHeadNormalBlend \* \(radialNormal - worldNormal\)/
   );

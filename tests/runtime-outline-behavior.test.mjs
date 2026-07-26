@@ -161,11 +161,14 @@ test("non-Toon outline fallback keeps the bounded material/global blend", () => 
   );
 });
 
-test("character outline preserves Toon shading and blends it in the captured Gamma project space", () => {
+test("character outline preserves the captured outline-only Toon path", () => {
   const source = new THREE.ShaderMaterial({
     uniforms: {
       uMainTex: { value: new THREE.Texture() },
       uSharedValue: { value: 0.25 },
+      uFaceSdfEnabled: { value: 1 },
+      uRimColorAlpha: { value: 1 },
+      uControllerSpecularIntensity: { value: 1 },
     },
     vertexShader: `
       #include <common>
@@ -198,6 +201,12 @@ test("character outline preserves Toon shading and blends it in the captured Gam
 
   assert.ok(material instanceof THREE.ShaderMaterial);
   assert.equal(material.uniforms.uSharedValue, source.uniforms.uSharedValue);
+  assert.equal(material.uniforms.uFaceSdfEnabled.value, 0);
+  assert.equal(material.uniforms.uRimColorAlpha.value, 0);
+  assert.equal(material.uniforms.uControllerSpecularIntensity.value, 0);
+  assert.equal(source.uniforms.uFaceSdfEnabled.value, 1);
+  assert.equal(source.uniforms.uRimColorAlpha.value, 1);
+  assert.equal(source.uniforms.uControllerSpecularIntensity.value, 1);
   assert.match(material.vertexShader, /outlineWidth \* outlineScale/);
   assert.match(material.vertexShader, /uSekaiOutlineOffset/);
   assert.match(material.fragmentShader, /uSekaiCharacterOutlineColor/);

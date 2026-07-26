@@ -187,8 +187,22 @@ function createSekaiToonOutlineMaterial(
     pjskOutlineController: controllerState,
   };
 
+  // The captured CostumeShop outline fragment keeps the base Toon/skin/ambient
+  // path, but it has no FaceSDF, rim-light, or specular branch. Keep separate
+  // uniform objects so the outline pass cannot mutate the visible front pass.
+  const outlineOnlyUniforms: Record<string, THREE.IUniform> = {};
+  for (const name of [
+    "uFaceSdfEnabled",
+    "uRimColorAlpha",
+    "uControllerSpecularIntensity",
+  ]) {
+    if (name in source.uniforms) {
+      outlineOnlyUniforms[name] = { value: 0 };
+    }
+  }
   material.uniforms = {
     ...source.uniforms,
+    ...outlineOnlyUniforms,
     uSekaiOutlineWidth: {
       value: new THREE.Vector2(
         sekaiCostumeShopOutlineSettings.widthMin,

@@ -699,7 +699,13 @@ test("body and face share the captured skin ramp while keeping face shadow contr
   assert.match(characterLightingSource, /vec3 upperBand = mix\(mid, defaultSkin, clamp\(skinValue \* 2\.0 - 1\.0, 0\.0, 1\.0\)\)/);
   assert.match(characterLightingSource, /return mix\(dark, upperBand, clamp\(skinValue \* 2\.0, 0\.0, 1\.0\)\)/);
   assert.match(shaderSource, /float skinValue = mix\(/);
-  assert.doesNotMatch(shaderSource, /uFaceSkinShadowStrength/);
+  assert.match(shaderSource, /uniform float uFaceSkinShadowStrength;/);
+  assert.match(
+    shaderSource,
+    /float faceSkinShadow = uFaceSdfEnabled > 0\.5\s+\? clamp\(shadowBand, 0\.0, 1\.0\) \* clamp\(uFaceSkinShadowStrength, 0\.0, 0\.1\)/
+  );
+  assert.match(shaderSource, /float skinMask = uUseSkinColor > 0\.5\s+\? \(uSkinMaskMode > 0\.5 \? valueSkinMask : 1\.0\)\s+: 0\.0;/s);
+  assert.match(shaderSource, /mainColor \* sekaiSkinRamp\(\s*1\.0 - faceSkinShadow,/s);
   assert.doesNotMatch(shaderSource, /faceSkinMask|faceSkinRamp|skinWarmBias/);
   assert.match(headMaterialSource, /shaderSkinColorDefault/);
   assert.match(headMaterialSource, /shaderSkinColor1/);

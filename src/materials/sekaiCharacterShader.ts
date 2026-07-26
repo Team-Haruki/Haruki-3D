@@ -269,18 +269,6 @@ export function createSekaiBodyMaterial(initial: BodyMaterialUniforms) {
           transformedNormal,
           viewMatrix
         );
-        if (uHairShadowEnabled > 0.5) {
-          vec3 headToVertex = worldPosition.xyz - uHeadPosition;
-          float headToVertexLengthSquared = dot(headToVertex, headToVertex);
-          if (headToVertexLengthSquared > 1e-12) {
-            vec3 radialNormal =
-              headToVertex * inversesqrt(headToVertexLengthSquared);
-            worldNormal = normalize(
-              worldNormal +
-              uHeadNormalBlend * (radialNormal - worldNormal)
-            );
-          }
-        }
         vWorldNormal = worldNormal;
         vViewPosition = viewPosition.xyz;
         vModelPosition = transformed;
@@ -801,6 +789,10 @@ export type FaceMaterialUniforms = {
   faceShadowLimitRange?: number;
   faceDebugMode?: number;
   faceSdfEnabled?: boolean;
+  faceSkinShadowStrength?: number;
+  useSkinColor?: boolean;
+  skinMaskMode?: number;
+  skinAmbient?: THREE.ColorRepresentation;
   useValueTex?: boolean;
   shadowThreshold?: number;
   shadowWeight?: number;
@@ -872,6 +864,10 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
       uAmbientIntensity: { value: initial.ambientIntensity },
       uFaceDebugMode: { value: initial.faceDebugMode ?? 0 },
       uFaceSdfEnabled: { value: initial.faceSdfEnabled && initial.faceShadowTex ? 1.0 : 0.0 },
+      uFaceSkinShadowStrength: { value: initial.faceSkinShadowStrength ?? 0.1 },
+      uUseSkinColor: { value: initial.useSkinColor === false ? 0.0 : 1.0 },
+      uSkinMaskMode: { value: initial.skinMaskMode ?? 0.0 },
+      uSkinAmbient: { value: sekaiGammaColor(initial.skinAmbient ?? "#ffffff") },
       uShadowThreshold: { value: initial.shadowThreshold ?? 0.5 },
       uShadowWeight: { value: initial.shadowWeight ?? 1.0 },
       uShadowWidth: { value: initial.shadowWidth ?? 0.0 },
@@ -1033,6 +1029,10 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
       uniform float uAmbientIntensity;
       uniform float uFaceDebugMode;
       uniform float uFaceSdfEnabled;
+      uniform float uFaceSkinShadowStrength;
+      uniform float uUseSkinColor;
+      uniform float uSkinMaskMode;
+      uniform vec3 uSkinAmbient;
       uniform float uShadowThreshold;
       uniform float uShadowWeight;
       uniform float uShadowWidth;
@@ -1101,8 +1101,11 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
         if (uHasValueTex > 0.5) {
           valueSample = texture2D(uValueTex, mainUv);
         }
-        float skinMask = uHasValueTex > 0.5
+        float valueSkinMask = uHasValueTex > 0.5
           ? step(0.5, valueSample.r)
+          : 0.0;
+        float skinMask = uUseSkinColor > 0.5
+          ? (uSkinMaskMode > 0.5 ? valueSkinMask : 1.0)
           : 0.0;
         float shadowBand = sekaiBaseShadow(
           dot(normalize(vWorldNormal), normalize(uLightDirection)),
@@ -1178,15 +1181,13 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
           shadowColor * globalShadow,
           clamp(shadowBand, 0.0, 1.0)
         );
-        float skinValue = mix(
-          mainColor.r,
-          mix(mainColor.r, sampledShadow.r, clamp(uShadowTexWeight, 0.0, 1.0)),
-          clamp(shadowBand, 0.0, 1.0)
-        );
+        float faceSkinShadow = uFaceSdfEnabled > 0.5
+          ? clamp(shadowBand, 0.0, 1.0) * clamp(uFaceSkinShadowStrength, 0.0, 0.1)
+          : clamp(shadowBand, 0.0, 1.0);
         vec3 skinColor = sekaiApplyHsvc(
-          sekaiSkinRamp(
-            skinValue,
-            globalShadow,
+          mainColor * sekaiSkinRamp(
+            1.0 - faceSkinShadow,
+            uSkinAmbient,
             uSkinColorDefault,
             uSkinColor1,
             uSkinColor2
@@ -1322,6 +1323,17 @@ export function updateSekaiFaceMaterial(
   );
   material.uniforms.uLightIntensity.value = next.lightIntensity;
   material.uniforms.uAmbientIntensity.value = next.ambientIntensity;
+  material.uniforms.uFaceSkinShadowStrength.value =
+    next.faceSkinShadowStrength ??
+    material.uniforms.uFaceSkinShadowStrength.value;
+  material.uniforms.uUseSkinColor.value =
+    next.useSkinColor === false ? 0.0 : 1.0;
+  material.uniforms.uSkinMaskMode.value =
+    next.skinMaskMode ?? material.uniforms.uSkinMaskMode.value;
+  setSekaiGammaColor(
+    material.uniforms.uSkinAmbient.value,
+    next.skinAmbient ?? "#ffffff"
+  );
   material.uniforms.uShadowThreshold.value = next.shadowThreshold ?? material.uniforms.uShadowThreshold.value;
   material.uniforms.uShadowWeight.value = next.shadowWeight ?? material.uniforms.uShadowWeight.value;
   material.uniforms.uShadowWidth.value = next.shadowWidth ?? material.uniforms.uShadowWidth.value;
