@@ -24,6 +24,10 @@ import * as THREE from "three";
  *    with a Three matrix/quaternion.
  * 4. Never paste raw Unity basis literals like (-1, 0, 0) into runtime code
  *    unless the code is still explicitly operating in unconverted Unity space.
+ * 5. AssetStudio ImportedModel geometry, bind matrices, morph deltas, and
+ *    ImportedFrame rest transforms are already mirrored before export. Motion
+ *    tracks are likewise normalized by Haruki-3D-Exporter. Do not pass either
+ *    class of data through these helpers.
  *
  * The trap: Unity "Left" is local -X, but in this engine local -X is mirrored,
  * so Unity Left becomes engine +X. Hardcoding Three (-1, 0, 0) for an F5

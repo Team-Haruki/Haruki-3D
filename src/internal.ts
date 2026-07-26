@@ -32,6 +32,7 @@ export {
   type RuntimeCameraDebug,
   type RuntimeDebugSnapshot,
   type SpringBoneRuntimeSnapshot,
+  readCharacterHairMaterialController,
   defaultProjectedShadowSettings,
 } from "./engine/Haruki3DEngine";
 export {

@@ -47,6 +47,41 @@ test("0414 motion decoding preserves track kinds and duration", () => {
   );
 });
 
+test("0414 motion decoding preserves exporter-normalized Three-space tracks", () => {
+  const [clip] = decodeUnityMotionClips({
+    version: "0414",
+    coordinateSpace: {
+      source: "unity-left-handed",
+      viewer: "three-js-right-handed",
+      positionConversion: "exporter_mirror_x",
+      rotationConversion: "exporter_negate_quaternion_yz",
+      scaleConversion: "identity",
+    },
+    clips: [{
+      name: "coordinate_probe",
+      tracks: [
+        {
+          nodeKey: "Hip",
+          property: "translation",
+          componentCount: 3,
+          times: [0],
+          values: [-1, 2, 3],
+        },
+        {
+          nodeKey: "Head",
+          property: "rotation",
+          componentCount: 4,
+          times: [0],
+          values: [0.5, -0.5, -0.5, 0.5],
+        },
+      ],
+    }],
+  });
+
+  assert.deepEqual(Array.from(clip.tracks[0].values), [-1, 2, 3]);
+  assert.deepEqual(Array.from(clip.tracks[1].values), [0.5, -0.5, -0.5, 0.5]);
+});
+
 test("runtime clip preparation and diagnostics preserve the body-head policy", () => {
   const clip = new THREE.AnimationClip("motion", 1, [
     vectorTrack("Hip.position", [0, 0, 0], [1, 0, 0]),

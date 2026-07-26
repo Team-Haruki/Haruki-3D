@@ -161,7 +161,7 @@ test("non-Toon outline fallback keeps the bounded material/global blend", () => 
   );
 });
 
-test("character outline preserves Toon shading and blends it with the global outline in linear space", () => {
+test("character outline preserves Toon shading and blends it with the global outline in linear light", () => {
   const source = new THREE.ShaderMaterial({
     uniforms: {
       uMainTex: { value: new THREE.Texture() },

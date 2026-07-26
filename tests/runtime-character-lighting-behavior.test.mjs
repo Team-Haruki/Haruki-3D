@@ -74,6 +74,26 @@ test("character lighting owns material view state across templates and loaded sl
   });
 });
 
+test("face SDF follows the official costume-shop scene direction by default", () => {
+  const runtime = new CharacterLightingRuntime({
+    bodyMaterial: shaderMaterial("body", {}),
+    hairMaterial: shaderMaterial("hair", {}),
+    faceMaterial: shaderMaterial("face_sdf", {}),
+    bodySlot: new THREE.Group(),
+    headSlot: new THREE.Group(),
+    directionalLight: new THREE.DirectionalLight(),
+    fillLight: new THREE.AmbientLight(),
+    debug: { hairShadowMode: "off", body: [], head: [] },
+  });
+  const sceneDirection = new THREE.Vector3(-0.7, 0.25, 0.65).normalize();
+
+  assert.ok(runtime.resolveFaceShadowLightDirection(
+    sceneDirection,
+    new THREE.Vector3(1, 0, 0),
+    new THREE.Vector3(0, 0, 1)
+  ).distanceTo(sceneDirection) < 1e-8);
+});
+
 function bodyTemplate(baseColor) {
   return createSekaiBodyMaterial({
     baseColor,

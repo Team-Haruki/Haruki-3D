@@ -624,7 +624,8 @@ test("face sdf uses official face-only head light parameters", () => {
   assert.doesNotMatch(shaderSource, /uFaceSdfUseLightDirection|uFaceSoftness|uFaceRight|uFaceUp|uFaceForward|uFaceDebugLightMode/);
   assert.doesNotMatch(engineSource, /Math\.acos\(|updateSekaiFaceBasis|faceSdfDebugLightModeToUniform/);
   assert.match(lightingSource, /export type FaceSdfDebugMode = "off" \| "sdf" \| "mask" \| "limit" \| "basis" \| "range";/);
-  assert.match(engineSource, /-this\.faceUpWorld\.x,\s+-this\.faceUpWorld\.z/s);
+  assert.match(engineSource, /-this\.headTransformUpWorld\.x,\s+-this\.headTransformUpWorld\.z/s);
+  assert.doesNotMatch(engineSource, /-this\.faceUpWorld\.x,\s+-this\.faceUpWorld\.z/s);
   assert.match(lightingSource, /updateSekaiFaceShadowParameters\(material, faceShadowLightDirection, headDot,/);
   assert.doesNotMatch(shaderSource, /rangeLimit \* uShadowWeight/);
   assert.match(

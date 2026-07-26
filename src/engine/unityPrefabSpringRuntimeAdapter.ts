@@ -22,6 +22,8 @@ import type {
 } from "./springRuntimeTypes";
 import {
   convertUnityAxisToThree,
+  convertUnityDirectionToThree,
+  readUnityVector3,
   type UnityVectorLike,
 } from "./unityCoordinateConversion";
 
@@ -388,6 +390,7 @@ type RuntimeBoneAxisSource =
   | "fallback-local-tip";
 
 const UNITY_MATHF_EPSILON = 1.401298464324817e-45;
+const UNITY_RIGHT_LOCAL = convertUnityAxisToThree("right");
 const UTJ_PIVOT_FORWARD_LOCAL = convertUnityAxisToThree("left");
 const UTJ_PIVOT_BACK_LOCAL = convertUnityAxisToThree("back");
 const UTJ_PIVOT_DOWN_LOCAL = convertUnityAxisToThree("down");
@@ -658,9 +661,10 @@ export class UnityPrefabSpringRuntime {
     bone.node.getWorldPosition(this.localBonePosition).applyMatrix4(
       this.providerWorldToLocal.copy(provider.node.matrixWorld).invert()
     );
+    const unityLocalBoneX = -this.localBonePosition.x;
     const wave = Math.sin(
       provider.timeFactor +
-      Math.sin(this.localBonePosition.x * provider.positionalMultiplier) +
+      Math.sin(unityLocalBoneX * provider.positionalMultiplier) +
       Math.cos(this.localBonePosition.z * provider.positionalMultiplier)
     );
     return this.providerForce
@@ -687,7 +691,7 @@ export class UnityPrefabSpringRuntime {
     if (Math.abs(provider.spinPeriod) > 0.001) {
       provider.spinTime = addPeriodically(provider.spinTime, deltaTime, provider.spinPeriod);
       const spinPhase = provider.spinTime * Math.PI * 2 / provider.spinPeriod;
-      this.providerRight.set(1, 0, 0).transformDirection(provider.node.matrixWorld);
+      this.providerRight.copy(UNITY_RIGHT_LOCAL).transformDirection(provider.node.matrixWorld);
       this.providerUp.set(0, 1, 0).transformDirection(provider.node.matrixWorld);
       this.waveAxis.copy(this.providerRight).multiplyScalar(Math.cos(spinPhase)).addScaledVector(
         this.providerUp,
@@ -699,9 +703,10 @@ export class UnityPrefabSpringRuntime {
       this.providerWorldToLocal.copy(provider.node.matrixWorld).invert()
     );
     const waveScale = Math.PI * 2 / peakDistance;
+    const unityLocalBoneX = -this.localBonePosition.x;
     const wave = Math.sin(
       phase +
-      Math.sin(waveScale * this.localBonePosition.x) +
+      Math.sin(waveScale * unityLocalBoneX) +
       Math.cos(waveScale * this.localBonePosition.z)
     );
     this.mainWindDirection.set(0, 0, 1)
@@ -1308,7 +1313,7 @@ export class UnityPrefabSpringRuntime {
         debugName: collider.source.nodeName ?? collider.source.scriptName ?? collider.node.name,
         debugPath: collider.source.nodePath ?? getObjectPath(collider.node),
         debugSourcePathId: collider.source.pathId,
-        localOffset: vectorFromArray(shape.sphere.offset),
+        localOffset: vectorFromUnity(shape.sphere.offset),
         radius: Math.max(0, shape.sphere.radius ?? 0.01),
         localToWorldMatrix: this.colliderLocalToWorld.clone(),
         worldToLocalMatrix: this.colliderWorldToLocal.clone(),
@@ -1328,8 +1333,8 @@ export class UnityPrefabSpringRuntime {
         debugName: collider.source.nodeName ?? collider.source.scriptName ?? collider.node.name,
         debugPath: collider.source.nodePath ?? getObjectPath(collider.node),
         debugSourcePathId: collider.source.pathId,
-        localStart: vectorFromArray(shape.capsule.offset),
-        localEnd: vectorFromArray(shape.capsule.tail),
+        localStart: vectorFromUnity(shape.capsule.offset),
+        localEnd: vectorFromUnity(shape.capsule.tail),
         radius: Math.max(0, shape.capsule.radius ?? 0.01),
         localToWorldMatrix: this.colliderLocalToWorld.clone(),
         worldToLocalMatrix: this.colliderWorldToLocal.clone(),
@@ -1468,7 +1473,7 @@ function createRuntimeBone(
     groundHeight: manager.groundHeight ?? 0,
     isSumOfForcesOnBone: manager.isSumOfForcesOnBone !== false,
     isPaused,
-    gravity: vectorFromRaw(manager.rawGravity),
+    gravity: vectorFromUnity(manager.rawGravity),
     forceProviders,
     node,
     state: createUtjSpringBoneState(headPosition, tailPosition),
@@ -1493,7 +1498,7 @@ function createRuntimeBone(
     originalStiffnessForce: stiffnessForce,
     originalDragForce: dragForce,
     originalWindInfluence: windInfluence,
-    springForce: vectorFromRaw(sourceBone.rawSpringForce),
+    springForce: vectorFromUnity(sourceBone.rawSpringForce),
     springConstant: sourceBone.rawSpringConstant ?? 0.5,
     lengthLimitTargets: initializedLengthLimitTargets,
     angularStiffness: Math.max(0, sourceBone.rawAngularStiffness ?? 100),
@@ -1581,7 +1586,7 @@ function createForceProvider(
       period: readRawNumber(raw, "period", 0),
       positionalMultiplier: readRawNumber(raw, "positionalMultiplier", 0),
       timeFactor: readRawNumber(raw, "timeFactor", 0),
-      offsetVector: readRawVector(raw, "offsetVector"),
+      offsetVector: readUnityRawVector(raw, "offsetVector"),
     };
   }
   return {
@@ -2494,14 +2499,16 @@ function normalizeRootName(root?: string | null): string | null {
   return root.endsWith("/") ? root.slice(0, -1) : root;
 }
 
-function vectorFromRaw(value?: VectorLike | number[] | null, fallback = new THREE.Vector3(0, 0, 0)): THREE.Vector3 {
+function vectorFromUnity(value?: VectorLike | number[] | null): THREE.Vector3 {
   if (Array.isArray(value)) {
-    return new THREE.Vector3(value[0] ?? fallback.x, value[1] ?? fallback.y, value[2] ?? fallback.z);
+    return convertUnityDirectionToThree(new THREE.Vector3(
+      value[0] ?? 0,
+      value[1] ?? 0,
+      value[2] ?? 0
+    ));
   }
-  return new THREE.Vector3(
-    value?.X ?? value?.x ?? fallback.x,
-    value?.Y ?? value?.y ?? fallback.y,
-    value?.Z ?? value?.z ?? fallback.z
+  return convertUnityDirectionToThree(
+    readUnityVector3(value, new THREE.Vector3())
   );
 }
 
@@ -2522,18 +2529,14 @@ function normalizeRuntimeAxis(axis: THREE.Vector3): THREE.Vector3 | null {
   return axis.lengthSq() <= 0.00001 * 0.00001 ? null : axis.clone().normalize();
 }
 
-function vectorFromArray(values?: number[]): THREE.Vector3 {
-  return new THREE.Vector3(values?.[0] ?? 0, values?.[1] ?? 0, values?.[2] ?? 0);
-}
-
 function readRawNumber(raw: UnknownRecord, key: string, fallback: number): number {
   return readFiniteNumber(raw[key] ?? raw[capitalize(key)]) ?? fallback;
 }
 
-function readRawVector(raw: UnknownRecord, key: string): THREE.Vector3 {
+function readUnityRawVector(raw: UnknownRecord, key: string): THREE.Vector3 {
   const value = raw[key] ?? raw[capitalize(key)];
   return Array.isArray(value) || (value !== null && typeof value === "object")
-    ? vectorFromRaw(value as VectorLike | number[])
+    ? vectorFromUnity(value as VectorLike | number[])
     : new THREE.Vector3();
 }
 

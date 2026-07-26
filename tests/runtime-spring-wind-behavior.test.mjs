@@ -105,6 +105,75 @@ test("official includeInactive spring discovery retains serialized inactive chil
   assert.equal(runtime.getSnapshot().boneCount, 2);
 });
 
+test("serialized Unity spring force crosses into Three space exactly once", () => {
+  const root = new THREE.Group();
+  addNode(root, "wind");
+  addNode(root, "boneA");
+  addNode(root, "boneB");
+  const extension = makeWindRuntimeExtension();
+  extension.pjskSpringBone.runtimeUnitySetup.bones[0].rawSpringForce = {
+    x: 2,
+    y: 3,
+    z: 4,
+  };
+
+  const runtime = UnityPrefabSpringRuntime.fromPjskRuntimeExtension(
+    extension,
+    root
+  );
+
+  assert.ok(runtime);
+  const boneA = runtime.getSnapshot().topOffsets.find(
+    (entry) => entry.name === "boneA"
+  );
+  assert.ok(boneA);
+  assert.equal(boneA.springForce.x, -2);
+  assert.equal(boneA.springForce.y, 3);
+  assert.equal(boneA.springForce.z, 4);
+});
+
+test("spinning Unity wind uses the mirrored local right axis", () => {
+  const root = new THREE.Group();
+  addNode(root, "wind");
+  addNode(root, "boneA");
+  addNode(root, "boneB");
+  const extension = makeWindRuntimeExtension();
+  extension.pjskSpringBone.runtimeUnitySetup.managers[0].forceProviders[0].raw.spinPeriod = 1;
+
+  const runtime = UnityPrefabSpringRuntime.fromPjskRuntimeExtension(
+    extension,
+    root
+  );
+
+  assert.ok(runtime);
+  runtime.setTraceBoneFilters(["boneA"]);
+  runtime.update(0);
+  const trace = runtime.getTraceSnapshot().events[0];
+  assert.ok(trace);
+  assert.ok(trace.externalForce.x < 0);
+});
+
+test("wind phase evaluates the original Unity local X coordinate", () => {
+  const root = new THREE.Group();
+  addNode(root, "wind");
+  const boneA = addNode(root, "boneA");
+  addNode(root, "boneB");
+  // Viewer -X is Unity +X after the import mirror.
+  boneA.position.x = -0.25;
+
+  const runtime = UnityPrefabSpringRuntime.fromPjskRuntimeExtension(
+    makeWindRuntimeExtension(),
+    root
+  );
+
+  assert.ok(runtime);
+  runtime.setTraceBoneFilters(["boneA"]);
+  runtime.update(0);
+  const trace = runtime.getTraceSnapshot().events[0];
+  assert.ok(trace);
+  assert.ok(trace.externalForce.y > 0.3);
+});
+
 function makeWindRuntimeExtension() {
   return {
     pjskSpringBone: {

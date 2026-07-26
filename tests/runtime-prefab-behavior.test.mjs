@@ -55,6 +55,22 @@ test("character height never applies a one-off body bundle scale override", () =
   });
 });
 
+test("raw Unity prefab rotations cross the coordinate boundary once", () => {
+  const extension = makeRuntimeExtension();
+  extension.runtimeUnitySetup.prefabGraphs[0].transforms[0].localRotation = {
+    x: 0.5,
+    y: 0.5,
+    z: 0.5,
+    w: 0.5,
+  };
+
+  const graph = buildUnityPrefabSourceGraph(extension);
+  const body = graph.nodeByPath.get("body");
+
+  assert.ok(body);
+  assert.deepEqual(body.quaternion.toArray(), [0.5, -0.5, -0.5, 0.5]);
+});
+
 test("0414 prefab runtime applies official model combine and installs native meshes", () => {
   const extension = makeRuntimeExtension();
   const graph = buildUnityPrefabSourceGraph(extension);
@@ -98,6 +114,7 @@ test("0414 prefab runtime applies official model combine and installs native mes
   assert.ok(mesh);
   assert.equal(mesh.name, "FaceMesh");
   assert.equal(mesh.geometry.getAttribute("position").count, 3);
+  assert.equal(mesh.geometry.getAttribute("position").getX(1), 1);
   const material = Array.isArray(mesh.material) ? mesh.material[0] : mesh.material;
   assert.equal(material.userData.pjskMaterialKey, "face:0");
   assert.equal(graph.debug.active, true);

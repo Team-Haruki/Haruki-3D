@@ -38,6 +38,8 @@ import {
   type RuntimeConstraintDebug,
 } from "./unityConstraintRuntime";
 import {
+  convertUnityAxisToThree,
+  convertUnityPositionToThree,
   readUnityVector3,
   type UnityVectorLike,
 } from "./unityCoordinateConversion";
@@ -167,6 +169,7 @@ const COSTUME_SHOP_FACE_SHADOW_LIGHT_DIRECTION = new THREE.Vector3(
 const COSTUME_SHOP_USE_FACE_SHADOW_LIMITER = true;
 const COSTUME_SHOP_FACE_SHADOW_LIMIT_RANGE = 0;
 const FACE_SHADOW_HORIZONTAL_EPSILON = 0.00001;
+const UNITY_TRANSFORM_UP_LOCAL = convertUnityAxisToThree("up");
 
 type SpringRuntimeController = UnityPrefabSpringRuntime;
 export type SpringTimelineControlState = SpringTimelineControl;
@@ -697,7 +700,7 @@ function readRuntimeFUnitDebug(extension: unknown): RuntimeFUnitDebug {
   };
 }
 
-function readCharacterHairMaterialController(
+export function readCharacterHairMaterialController(
   runtimeExtension: unknown
 ): CharacterHairMaterialController | null {
   const extension = asRuntimeRecord(runtimeExtension);
@@ -710,9 +713,11 @@ function readCharacterHairMaterialController(
   }
   const headTransform = asRuntimeRecord(hair.headTransform ?? hair.HeadTransform);
   return {
-    offset: readUnityVector3(
-      (hair.offset ?? hair.Offset) as UnityVectorLike | undefined,
-      new THREE.Vector3()
+    offset: convertUnityPositionToThree(
+      readUnityVector3(
+        (hair.offset ?? hair.Offset) as UnityVectorLike | undefined,
+        new THREE.Vector3()
+      )
     ),
     headTransformName: typeof (headTransform.name ?? headTransform.Name) === "string"
       ? String(headTransform.name ?? headTransform.Name)
@@ -830,6 +835,7 @@ export class Haruki3DEngine {
   private readonly faceRightWorld = new THREE.Vector3();
   private readonly faceUpWorld = new THREE.Vector3();
   private readonly faceForwardWorld = new THREE.Vector3();
+  private readonly headTransformUpWorld = new THREE.Vector3();
   private readonly faceHeadWorldPosition = new THREE.Vector3();
   private readonly faceShadowHeadHorizontal = new THREE.Vector2();
   private readonly faceShadowLightHorizontal = new THREE.Vector2();
@@ -1269,8 +1275,8 @@ export class Haruki3DEngine {
     const lightHorizontal = new THREE.Vector2();
     normalizeFaceShadowHorizontal(
       headHorizontalFromUp,
-      -this.faceUpWorld.x,
-      -this.faceUpWorld.z
+      -this.headTransformUpWorld.x,
+      -this.headTransformUpWorld.z
     );
     normalizeFaceShadowHorizontal(
       headHorizontalFromRight,
@@ -2494,6 +2500,13 @@ export class Haruki3DEngine {
       this.characterRoot;
     headNode.getWorldQuaternion(this.tempQuaternion);
     headNode.getWorldPosition(this.faceHeadWorldPosition);
+    // Unity's face-shadow action reads headTransform.up. The imported
+    // Object3D already has a mirrored Three quaternion, so transform the
+    // converted Unity local +Y axis instead of the model's physical-up axis.
+    this.headTransformUpWorld
+      .copy(UNITY_TRANSFORM_UP_LOCAL)
+      .applyQuaternion(this.tempQuaternion)
+      .normalize();
     // PJSK imported head bones use local X as face up and local Z as face forward.
     this.faceUpWorld.set(1, 0, 0).applyQuaternion(this.tempQuaternion).normalize();
     this.faceForwardWorld.set(0, 0, 1).applyQuaternion(this.tempQuaternion).normalize();
@@ -2506,8 +2519,8 @@ export class Haruki3DEngine {
     );
     normalizeFaceShadowHorizontal(
       this.faceShadowHeadHorizontal,
-      -this.faceUpWorld.x,
-      -this.faceUpWorld.z
+      -this.headTransformUpWorld.x,
+      -this.headTransformUpWorld.z
     );
     normalizeFaceShadowHorizontal(
       this.faceShadowLightHorizontal,
