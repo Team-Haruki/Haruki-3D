@@ -293,7 +293,11 @@ public sealed class PartPackageExporter
     )
     {
         var input = ResolveInput(entry);
-        using var loadedBundle = AssetStudioLoadedBundle.Load(input);
+        var dependencyPaths = ResolveDependencyBundlePaths(assetRoot, input);
+        using var loadedBundle = AssetStudioLoadedBundle.Load(
+            input,
+            dependencyBundlePaths: dependencyPaths
+        );
         PartBuildCore? core = null;
         try
         {
@@ -301,7 +305,11 @@ public sealed class PartPackageExporter
         }
         catch (MissingMaterialReferenceException ex)
         {
-            using var fallbackBundle = AssetStudioLoadedBundle.Load(input, BundleLoadDependencyMode.FullDirectory);
+            using var fallbackBundle = AssetStudioLoadedBundle.Load(
+                input,
+                BundleLoadDependencyMode.FullDirectory,
+                dependencyPaths
+            );
             core = null;
             var result = Export(entry, assetRoot, outputDirectory, characterHeightMetersById, fallbackBundle, ref core);
             return AddWarning(result, BuildMaterialDependencyFallbackWarning(ex));
@@ -318,10 +326,14 @@ public sealed class PartPackageExporter
     )
     {
         var input = ResolveInput(entry);
+        var dependencyPaths = ResolveDependencyBundlePaths(assetRoot, input);
         if (cachedBundle is null || !cachedBundle.TrySelectInput(input))
         {
             cachedBundle?.Dispose();
-            cachedBundle = AssetStudioLoadedBundle.Load(input);
+            cachedBundle = AssetStudioLoadedBundle.Load(
+                input,
+                dependencyBundlePaths: dependencyPaths
+            );
             cachedCore = null;
         }
 
@@ -332,7 +344,11 @@ public sealed class PartPackageExporter
         catch (MissingMaterialReferenceException ex) when (cachedBundle.DependencyMode != BundleLoadDependencyMode.FullDirectory)
         {
             cachedBundle.Dispose();
-            cachedBundle = AssetStudioLoadedBundle.Load(input, BundleLoadDependencyMode.FullDirectory);
+            cachedBundle = AssetStudioLoadedBundle.Load(
+                input,
+                BundleLoadDependencyMode.FullDirectory,
+                dependencyPaths
+            );
             cachedCore = null;
             PartPackageExportResult result;
             try
@@ -531,6 +547,18 @@ public sealed class PartPackageExporter
             ? resolver.ResolveBody(entry.BundlePath)
             : resolver.ResolveHead(entry.BundlePath);
         return input with { CharacterId = entry.CharacterId.ToString("00") };
+    }
+
+    private IReadOnlyList<string> ResolveDependencyBundlePaths(
+        string assetRoot,
+        ResolvedBundleInput input
+    )
+    {
+        var logicalBundleName = BundleDependencyIndex.LogicalName(
+            assetRoot,
+            input.ResolvedBundlePath
+        );
+        return bundleDependencies.ResolveExistingBundlePaths(assetRoot, logicalBundleName);
     }
 
     private static PartPackageExportResult AddWarning(PartPackageExportResult result, string warning)
@@ -930,6 +958,22 @@ public sealed class PartPackageExporter
         var distinctSlots = slots
             .DistinctBy(slot => $"{slot.MeshName}::{slot.SlotIndex}::{slot.MaterialKey}", StringComparer.Ordinal)
             .ToList();
+        foreach (var slot in distinctSlots.Where(slot =>
+            slot.MaterialKind is "eye" or "eyelash" or "eyebrow"
+        ))
+        {
+            var mask = slot.RawMaterial?.TextureProperties.FirstOrDefault(texture =>
+                texture.Name.Equals("_EyelashMaskTex", StringComparison.OrdinalIgnoreCase)
+            );
+            if (mask is not { TexturePathId: not 0 } || string.IsNullOrWhiteSpace(mask.Uri))
+            {
+                warnings.Add(
+                    $"Unresolved _EyelashMaskTex dependency for {slot.MeshName}[{slot.SlotIndex}] " +
+                    $"{slot.MaterialName ?? slot.MaterialKey} " +
+                    $"({mask?.TextureFileId ?? 0}:{mask?.TexturePathId ?? 0})."
+                );
+            }
+        }
         AddNativeMaterialSlotAliases(distinctSlots, nativeMeshes, warnings);
         return new BuiltMaterialSlots(
             Slots: distinctSlots
@@ -1302,6 +1346,10 @@ public sealed class PartPackageExporter
             {
                 return true;
             }
+            if (!HasResolvedEyelashMasks(document.RootElement))
+            {
+                return false;
+            }
             using var coreDocument = RuntimeJsonWriter.ReadJsonDocument(corePath);
             return coreDocument.RootElement.TryGetProperty("version", out var coreVersion) &&
                 coreVersion.GetString() == "0415-part-core-3";
@@ -1310,6 +1358,55 @@ public sealed class PartPackageExporter
         {
             return false;
         }
+    }
+
+    private static bool HasResolvedEyelashMasks(JsonElement runtime)
+    {
+        if (!runtime.TryGetProperty("materialSlots", out var slots) ||
+            slots.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+        foreach (var slot in slots.EnumerateArray())
+        {
+            if (!slot.TryGetProperty("materialKind", out var kindNode) ||
+                kindNode.GetString() is not ("eye" or "eyelash" or "eyebrow"))
+            {
+                continue;
+            }
+            if (!slot.TryGetProperty("rawMaterial", out var rawMaterial) ||
+                !rawMaterial.TryGetProperty("textureProperties", out var textures) ||
+                textures.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+            var resolvedMask = false;
+            foreach (var texture in textures.EnumerateArray())
+            {
+                if (!texture.TryGetProperty("name", out var name) ||
+                    !string.Equals(
+                        name.GetString(),
+                        "_EyelashMaskTex",
+                        StringComparison.OrdinalIgnoreCase
+                    ) ||
+                    !texture.TryGetProperty("texturePathId", out var pathId) ||
+                    pathId.GetInt64() == 0)
+                {
+                    continue;
+                }
+                resolvedMask = true;
+                if (!texture.TryGetProperty("uri", out var uri) ||
+                    string.IsNullOrWhiteSpace(uri.GetString()))
+                {
+                    return false;
+                }
+            }
+            if (!resolvedMask)
+            {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static PartRuntimeMount BuildMount(

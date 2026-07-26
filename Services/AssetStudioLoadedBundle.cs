@@ -54,12 +54,17 @@ public sealed class AssetStudioLoadedBundle : IDisposable
 
     public static AssetStudioLoadedBundle Load(
         ResolvedBundleInput input,
-        BundleLoadDependencyMode dependencyMode = BundleLoadDependencyMode.Default
+        BundleLoadDependencyMode dependencyMode = BundleLoadDependencyMode.Default,
+        IReadOnlyList<string>? dependencyBundlePaths = null
     )
     {
+        var loadPaths = BundleDependencyResolver
+            .ResolveLoadBundlePaths(input, dependencyMode)
+            .Concat(dependencyBundlePaths ?? Array.Empty<string>())
+            .Distinct(StringComparer.Ordinal);
         var readableBundles = new SekaiBundleDecryptor().PrepareReadableWorkspace(
             input.ResolvedBundlePath,
-            BundleDependencyResolver.ResolveLoadBundlePaths(input, dependencyMode)
+            loadPaths
         );
         var manager = new AssetsManager
         {

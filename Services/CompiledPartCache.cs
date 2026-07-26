@@ -227,10 +227,17 @@ public sealed class CompiledPartCache
     {
         using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
         Append(hash, Schema);
-        Append(hash, ResolvePartType(entry));
+        var partType = ResolvePartType(entry);
+        Append(hash, partType);
+        if (partType is "head" or "hair")
+        {
+            Append(hash, "resolved-eyelash-mask-v1");
+        }
         Append(hash, Path.GetFileName(input.ResolvedBundlePath));
         Append(hash, dependencyMode.ToString());
+        var logicalBundleName = BundleDependencyIndex.LogicalName(assetRoot, input.ResolvedBundlePath);
         foreach (var path in BundleDependencyResolver.ResolveLoadBundlePaths(input, dependencyMode)
+            .Concat(bundleDependencies.ResolveExistingBundlePaths(assetRoot, logicalBundleName))
             .Append(entry.ColorVariationBundlePath)
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Cast<string>()

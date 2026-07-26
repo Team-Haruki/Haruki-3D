@@ -30,6 +30,42 @@ if (args is ["--compiled-cache-copy-race-worker", var sourcePath, var targetPath
 
 var tempDir = Path.Combine(Path.GetTempPath(), $"haruki-exporter-config-test-{Guid.NewGuid():N}");
 Directory.CreateDirectory(tempDir);
+var dependencyAssetRoot = Path.Combine(tempDir, "dependency-assets");
+var commonDependencyPath = Path.Combine(
+    dependencyAssetRoot,
+    "live_pv",
+    "model",
+    "characterv2",
+    "face",
+    "common.bundle"
+);
+var shaderDependencyPath = Path.Combine(dependencyAssetRoot, "shader", "live.bundle");
+Directory.CreateDirectory(Path.GetDirectoryName(commonDependencyPath)!);
+Directory.CreateDirectory(Path.GetDirectoryName(shaderDependencyPath)!);
+File.WriteAllText(commonDependencyPath, "common");
+File.WriteAllText(shaderDependencyPath, "shader");
+var dependencyIndexPath = Path.Combine(tempDir, "bundle-dependencies.json");
+File.WriteAllText(dependencyIndexPath, JsonSerializer.Serialize(new Dictionary<string, string[]>
+{
+    ["live_pv/model/characterv2/face/01/0001"] =
+    [
+        "live_pv/model/characterv2/face/common",
+        "shader/live",
+        "missing/dependency",
+    ],
+}));
+var dependencyIndex = new BundleDependencyIndex(dependencyIndexPath);
+var resolvedDependencyPaths = dependencyIndex.ResolveExistingBundlePaths(
+    dependencyAssetRoot,
+    "live_pv/model/characterv2/face/01/0001"
+);
+Expect(
+    resolvedDependencyPaths.SequenceEqual(
+        new[] { commonDependencyPath, shaderDependencyPath },
+        StringComparer.Ordinal
+    ),
+    "bundle dependency index resolves existing dependency bundles under asset root"
+);
 var configPath = Path.Combine(tempDir, "exporter.config.json");
 File.WriteAllText(configPath, JsonSerializer.Serialize(new
 {
@@ -1695,9 +1731,9 @@ Expect(
 );
 Expect(partPackageExporterSource.Contains("partType is not (\"head\" or \"hair\")"), "incremental export invalidates only head and hair packages for controller metadata");
 Expect(partPackageExporterSource.Contains("coreVersion.GetString() == \"0415-part-core-3\""), "incremental export requires the camelCase material metadata core schema");
-Expect(partPackageExporterSource.Contains("version.GetString() != \"0415-part-delta-3\""), "incremental export rejects runtimes without complete raw material properties");
+Expect(partPackageExporterSource.Contains("version.GetString() != \"0415-part-delta-3\""), "incremental export keeps the stable part delta schema");
+Expect(partPackageExporterSource.Contains("HasResolvedEyelashMasks(document.RootElement)"), "incremental export rejects head runtimes with unresolved through-hair masks");
 Expect(compiledPartCacheSource.Contains("part-runtime-core.msgpack.br"), "compiled part cache restores the final MessagePack Brotli corePath");
-Expect(compiledPartCacheSource.Contains("0415-compiled-part-8"), "compiled part cache invalidates entries without complete raw material properties");
 Expect(nativeMeshExporterSource.Contains("AddTangent(tangents") && nativeMeshExporterSource.Contains("vertex.Tangent"), "native mesh export preserves the tangent basis for second normals");
 Expect(nativeMeshExporterSource.Contains("values.Add(-tangent.W)"), "native mesh export flips tangent handedness with AssetStudio's mirrored X axis");
 Expect(nativeMeshExporterSource.Contains("AddUv(uv2, vertex, 2)"), "native mesh export preserves packed second-normal UV2 data");
@@ -1707,7 +1743,10 @@ Expect(runtimeModelsSource.Contains("JsonPropertyName(\"tangents\")"), "runtime 
 Expect(runtimeModelsSource.Contains("JsonPropertyName(\"uv2\")"), "runtime native mesh schema publishes UV2");
 Expect(runtimeWriterSource.Contains("\"nativeMeshes.meshes.tangents\""), "runtime binary codec stores tangents as float32");
 Expect(runtimeWriterSource.Contains("\"nativeMeshes.meshes.uv2\""), "runtime binary codec stores UV2 as float32");
-Expect(compiledPartCacheSource.Contains("delta[\"version\"] = \"0415-part-delta-3\""), "compiled part cache restores the complete raw material delta schema version");
+Expect(compiledPartCacheSource.Contains("delta[\"version\"] = \"0415-part-delta-3\""), "compiled part cache keeps the stable part delta schema version");
+Expect(compiledPartCacheSource.Contains("0415-compiled-part-8"), "compiled part cache keeps the stable cache schema");
+Expect(compiledPartCacheSource.Contains("resolved-eyelash-mask-v1"), "compiled part cache invalidates only head and hair entries without dependency masks");
+Expect(compiledPartCacheSource.Contains("ResolveExistingBundlePaths"), "compiled part fingerprints include dependency bundles");
 Expect(compiledPartCacheSource.Contains("PropertyNamingPolicy = JsonNamingPolicy.CamelCase"), "compiled part cache patches runtime metadata with camelCase keys");
 Expect(compiledPartCacheSource.Contains("DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull"), "compiled part cache does not restore unknown optional shader fields");
 Expect(compiledPartCacheSource.Contains("JsonSerializer.SerializeToNode(BuildIdentity(entry), RuntimeJsonOptions)"), "compiled part cache keeps patched part identity keys camelCase");
@@ -1902,7 +1941,12 @@ Expect(partPackageExporterSource.Contains("IsInShard"), "part package exporter c
 Expect(partPackageExporterSource.Contains("public static void Rebuild"), "part package exporter rebuilds one canonical worker manifest");
 Expect(!partPackageExporterSource.Contains("bundle-open-summary.json"), "part package exporter omits per-package debug summaries from production output");
 Expect(partPackageExporterSource.Contains("missing_after_fallback"), "part package exporter marks material failures after full-directory fallback");
-Expect(assetStudioLoadedBundleSource.Contains("BundleDependencyResolver.ResolveLoadBundlePaths"), "loaded bundle uses shared dependency resolver");
+Expect(assetStudioLoadedBundleSource.Contains("ResolveLoadBundlePaths"), "loaded bundle uses shared dependency resolver");
+Expect(assetStudioLoadedBundleSource.Contains("dependencyBundlePaths"), "loaded bundle includes dependency-index paths");
+Expect(partPackageExporterSource.Contains("ResolveDependencyBundlePaths"), "part package exporter loads dependency-index bundles");
+Expect(partPackageExporterSource.Contains("Unresolved _EyelashMaskTex dependency"), "part package exporter reports unresolved through-hair masks");
+Expect(partPackageExporterSource.Contains("\"eye\" or \"eyelash\" or \"eyebrow\""), "part package exporter requires the real through-hair mask for every stencil overlay source");
+Expect(partPackageExporterSource.Contains("if (!resolvedMask)"), "incremental export rejects overlay materials with no real eyelash mask reference");
 Expect(bundleDependencyResolverSource.Contains("BundleLoadDependencyMode.FullDirectory"), "bundle dependency resolver supports full-directory fallback");
 var nonexistentCompressedBundlePattern = "\"*.bundle" + ".gz\"";
 Expect(!bundleDependencyResolverSource.Contains(nonexistentCompressedBundlePattern), "bundle dependency resolver only scans plain bundles");

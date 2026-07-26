@@ -19,6 +19,28 @@ public sealed class BundleDependencyIndex
                 : Array.Empty<string>();
     }
 
+    public IReadOnlyList<string> ResolveExistingBundlePaths(
+        string assetRoot,
+        string? logicalBundleName
+    )
+    {
+        var root = Path.GetFullPath(assetRoot);
+        var rootPrefix = root.EndsWith(Path.DirectorySeparatorChar)
+            ? root
+            : root + Path.DirectorySeparatorChar;
+        return GetClosure(logicalBundleName)
+            .Select(value => Path.GetFullPath(Path.Combine(
+                root,
+                value.Replace('/', Path.DirectorySeparatorChar) + ".bundle"
+            )))
+            .Where(path =>
+                path.StartsWith(rootPrefix, StringComparison.Ordinal) &&
+                File.Exists(path)
+            )
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+    }
+
     private static IReadOnlyDictionary<string, IReadOnlyList<string>> Load(string? path)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
