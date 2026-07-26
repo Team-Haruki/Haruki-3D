@@ -444,6 +444,7 @@ public sealed class PjskSekaiRuntimeExtensionBuilder
                 {
                     "Prefab graph transforms and runtime SpringBone metadata are stored in Unity source space.",
                     "Three.js viewers must convert source transforms before rendering or simulation in viewer space.",
+                    "Native mesh geometry, bind matrices, morph deltas, and ImportedFrame rest transforms are already converted by AssetStudio and must not be mirrored again.",
                 }
             ),
             PrefabGraphs: prefabGraphs,

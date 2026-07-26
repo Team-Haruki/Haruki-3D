@@ -642,13 +642,13 @@ public sealed class MotionPackageExporter
             CoordinateSpace: new PjskUnityRuntimeCoordinateSpace(
                 Source: "unity-left-handed",
                 Viewer: "three-js-right-handed",
-                PositionConversion: "viewer_mirror_x",
-                RotationConversion: "viewer_negate_quaternion_yz",
+                PositionConversion: "exporter_mirror_x",
+                RotationConversion: "exporter_negate_quaternion_yz",
                 ScaleConversion: "identity",
                 Notes: new[]
                 {
-                    "Animation curve values are stored in Unity source space.",
-                    "The viewer must convert transform animation values when applying them to Three.js nodes."
+                    "Animation curve values are stored in Three.js viewer space after exporter conversion.",
+                    "The viewer must not convert transform animation values again."
                 }
             ),
             SampleRate: BakeSampleRate,
@@ -1099,18 +1099,6 @@ public sealed class MotionPackageExporter
         var copy = new float[values.Length];
         Array.Copy(values, copy, values.Length);
         return copy;
-    }
-
-    private static float[] ConvertBodyCurveValue(uint attribute, float[] values)
-    {
-        return attribute switch
-        {
-            1 => new[] { -values[0], values[1], values[2] },
-            2 => NormalizeQuaternion(new[] { values[0], -values[1], -values[2], values[3] }),
-            3 => new[] { values[0], values[1], values[2] },
-            4 => ConvertUnityEulerDegreesToExportQuaternion(values[0], values[1], values[2]),
-            _ => values,
-        };
     }
 
     private static float[] ConvertUnityPrefabCurveValue(uint attribute, float[] values)

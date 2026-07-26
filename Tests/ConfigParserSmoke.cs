@@ -1808,10 +1808,15 @@ var costumeRegistryModelsSource = File.ReadAllText(Path.Combine(repoRoot, "Model
 var costumeRegistryExporterSource = File.ReadAllText(Path.Combine(repoRoot, "Services", "CostumeRegistryExporter.cs"));
 var pjskRuntimeModelsSource = File.ReadAllText(Path.Combine(repoRoot, "Models", "PjskSekaiRuntimeModels.cs"));
 var pjskRuntimeBuilderSource = File.ReadAllText(Path.Combine(repoRoot, "Services", "PjskSekaiRuntimeExtensionBuilder.cs"));
+var motionPackageExporterSource = File.ReadAllText(Path.Combine(repoRoot, "Services", "MotionPackageExporter.cs"));
 Expect(partRuntimeModelsSource.Contains("accessoryTransformAdjustments"), "part runtime mount exposes accessory transform adjustment map");
 Expect(pjskRuntimeModelsSource.Contains("JsonPropertyName(\"isAccessory\")"), "runtime material slots expose official IS_ACCESSORY_ID metadata");
 Expect(pjskRuntimeBuilderSource.Contains("IsAccessory: true"), "runtime builder marks accessory material slots with IS_ACCESSORY_ID metadata");
 Expect(pjskRuntimeBuilderSource.Contains("IsAccessory: false"), "runtime builder keeps body/head material slots non-accessory");
+Expect(pjskRuntimeBuilderSource.Contains("Native mesh geometry, bind matrices, morph deltas, and ImportedFrame rest transforms are already converted by AssetStudio"), "runtime coordinate metadata distinguishes imported viewer-space data from raw Unity prefab data");
+Expect(motionPackageExporterSource.Contains("PositionConversion: \"exporter_mirror_x\""), "motion coordinate metadata declares exporter-normalized translations");
+Expect(motionPackageExporterSource.Contains("RotationConversion: \"exporter_negate_quaternion_yz\""), "motion coordinate metadata declares exporter-normalized rotations");
+Expect(!motionPackageExporterSource.Contains("The viewer must convert transform animation values"), "motion metadata does not request a second viewer conversion");
 Expect(partPackageExporterSource.Contains("IsAccessory: partType == \"head_optional\""), "part package exporter marks head_optional materials as accessories");
 Expect(springBoneExporterSource.Contains("CharacterAccessoryTransformController"), "spring bone exporter keeps accessory transform controller mono behaviours");
 Expect(springBoneExporterSource.Contains("CharacterAccessoryTransformData"), "spring bone exporter keeps accessory transform data mono behaviours");
