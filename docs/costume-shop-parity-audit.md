@@ -201,7 +201,7 @@ would create a second, conflicting spring implementation.
 | second normal is reconstructed from `(UV1.x, UV1.y, UV2.x)` in the tangent basis. | `_OUTLINE_SECOND_NORMAL` runtime branch. |
 | `_OutlineOffset` applies a projected-camera-origin clip term scaled by COLOR.b. | Outline vertex shader implements the driver-final term. |
 | The outline fragment is not a flat-color `MeshBasicMaterial` path. It samples and shades the same character data before outline color blending. | Character outline materials clone/share the source Toon uniforms and fragment path, replacing only the final output-color blend. |
-| The active controller color/blending is applied after Toon shading in the captured Gamma project space. | The browser hook keeps the Toon intermediate and controller mix in Gamma space, matching the `1024x1024, Gamma` CostumeShop capture and ClauseKAI's direct fragment mix. |
+| The active controller color/blending is applied after Toon shading in linear light. | The browser hook decodes its sRGB-shaped Toon intermediate, mixes the linear controller color, then encodes the result again; direct Gamma-space mixing is the known dirty-outline regression. |
 | Global outline defaults are black with blending `0.5`. | CostumeShop outline controller defaults. |
 | Eye and eyelight have no Outline pass; face skin, eyebrow and eyelash do. | Outline group filtering excludes only `eye` and `eyelight`. Eyebrow and eyelash receive a Toon-v3 outline source with their own textures/raw material values, while `COLOR.r` remains the continuous per-vertex width scale. |
 

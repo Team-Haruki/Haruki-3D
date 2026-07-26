@@ -220,9 +220,9 @@ test("face material cloning preserves Unity Gamma controller values", async () =
   assert.equal(mesh.material.uniforms.uUseValueTex.value, 1);
   assert.equal(mesh.material.uniforms.uUseLambert.value, 1);
   assert.equal(mesh.material.uniforms.uShadowWeight.value, 1);
-  assert.equal(mesh.material.uniforms.uUseSkinColor.value, 1);
-  assert.equal(mesh.material.uniforms.uSkinMaskMode.value, 0);
-  assert.equal(mesh.material.uniforms.uFaceSkinShadowStrength.value, 0.1);
+  assert.equal(mesh.material.uniforms.uUseSkinColor, undefined);
+  assert.equal(mesh.material.uniforms.uSkinMaskMode, undefined);
+  assert.equal(mesh.material.uniforms.uFaceSkinShadowStrength, undefined);
   assert.equal(mesh.material.uniforms.uControllerRimEmission.value, 0);
   assert.match(
     mesh.material.vertexShader,

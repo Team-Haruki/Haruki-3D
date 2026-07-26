@@ -161,7 +161,7 @@ test("non-Toon outline fallback keeps the bounded material/global blend", () => 
   );
 });
 
-test("character outline preserves the captured outline-only Toon path", () => {
+test("character outline blends the captured Toon result in linear light", () => {
   const source = new THREE.ShaderMaterial({
     uniforms: {
       uMainTex: { value: new THREE.Texture() },
@@ -211,9 +211,9 @@ test("character outline preserves the captured outline-only Toon path", () => {
   assert.match(material.vertexShader, /uSekaiOutlineOffset/);
   assert.match(material.fragmentShader, /uSekaiCharacterOutlineColor/);
   assert.match(material.fragmentShader, /uSekaiCharacterOutlineBlending/);
-  assert.doesNotMatch(material.fragmentShader, /sekaiOutlineSrgbToLinear/);
-  assert.doesNotMatch(material.fragmentShader, /sekaiGammaTexture\(linearOutline\)/);
-  assert.match(
+  assert.match(material.fragmentShader, /sekaiOutlineSrgbToLinear/);
+  assert.match(material.fragmentShader, /return sekaiGammaTexture\(linearOutline\)/);
+  assert.doesNotMatch(
     material.fragmentShader,
     /return mix\(\s*color,\s*uSekaiCharacterOutlineColor/
   );

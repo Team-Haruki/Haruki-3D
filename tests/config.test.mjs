@@ -626,7 +626,10 @@ test("face sdf uses official face-only head light parameters", () => {
   assert.match(lightingSource, /export type FaceSdfDebugMode = "off" \| "sdf" \| "mask" \| "limit" \| "basis" \| "range";/);
   assert.match(engineSource, /-this\.headTransformUpWorld\.x,\s+-this\.headTransformUpWorld\.z/s);
   assert.doesNotMatch(engineSource, /-this\.faceUpWorld\.x,\s+-this\.faceUpWorld\.z/s);
-  assert.match(lightingSource, /updateSekaiFaceShadowParameters\(material, faceShadowLightDirection, headDot,/);
+  assert.match(
+    lightingSource,
+    /updateSekaiFaceShadowParameters\(\s*material,\s*faceShadowLightDirection,\s*headDot,/
+  );
   assert.doesNotMatch(shaderSource, /rangeLimit \* uShadowWeight/);
   assert.match(
     shaderSource,
@@ -698,14 +701,20 @@ test("body and face share the captured skin ramp while keeping face shadow contr
   assert.match(characterLightingSource, /vec3 sekaiSkinRamp\(/);
   assert.match(characterLightingSource, /vec3 upperBand = mix\(mid, defaultSkin, clamp\(skinValue \* 2\.0 - 1\.0, 0\.0, 1\.0\)\)/);
   assert.match(characterLightingSource, /return mix\(dark, upperBand, clamp\(skinValue \* 2\.0, 0\.0, 1\.0\)\)/);
-  assert.match(shaderSource, /float skinValue = mix\(/);
-  assert.match(shaderSource, /uniform float uFaceSkinShadowStrength;/);
   assert.match(
     shaderSource,
-    /float faceSkinShadow = uFaceSdfEnabled > 0\.5\s+\? clamp\(shadowBand, 0\.0, 1\.0\) \* clamp\(uFaceSkinShadowStrength, 0\.0, 0\.1\)/
+    /float skinMask = uHasValueTex > 0\.5\s+\? step\(0\.5, valueSample\.r\)\s+: 0\.0;/s
   );
-  assert.match(shaderSource, /float skinMask = uUseSkinColor > 0\.5\s+\? \(uSkinMaskMode > 0\.5 \? valueSkinMask : 1\.0\)\s+: 0\.0;/s);
-  assert.match(shaderSource, /mainColor \* sekaiSkinRamp\(\s*1\.0 - faceSkinShadow,/s);
+  assert.match(
+    shaderSource,
+    /float skinValue = mix\(\s*mainColor\.r,\s*mix\(mainColor\.r, sampledShadow\.r, clamp\(uShadowTexWeight, 0\.0, 1\.0\)\),\s*clamp\(shadowBand, 0\.0, 1\.0\)\s*\);/s
+  );
+  assert.match(
+    shaderSource,
+    /vec3 skinColor = sekaiApplyHsvc\(\s*sekaiSkinRamp\(\s*skinValue,/s
+  );
+  assert.doesNotMatch(shaderSource, /uFaceSkinShadowStrength|uUseSkinColor|uSkinMaskMode|uSkinAmbient/);
+  assert.doesNotMatch(shaderSource, /mainColor \* sekaiSkinRamp/);
   assert.doesNotMatch(shaderSource, /faceSkinMask|faceSkinRamp|skinWarmBias/);
   assert.match(headMaterialSource, /shaderSkinColorDefault/);
   assert.match(headMaterialSource, /shaderSkinColor1/);
@@ -962,7 +971,7 @@ test("runtime shadow debug exposes projected and hair-shadow layers", () => {
   assert.match(shadowSource, /CharacterCrossShadow/);
 });
 
-test("face shadow updates preserve exported limiter parameters", () => {
+test("face shadow updates restore the dynamic CostumeShop limiter state", () => {
   const lightingSource = fs.readFileSync(
     path.join(repoRoot, "src/engine/characterLightingRuntime.ts"),
     "utf8"
@@ -970,11 +979,7 @@ test("face shadow updates preserve exported limiter parameters", () => {
 
   assert.match(
     lightingSource,
-    /material\.uniforms\.uUseFaceShadowLimiter\?\.value \?\? 1/
-  );
-  assert.match(
-    lightingSource,
-    /material\.uniforms\.uFaceShadowLimitRange\?\.value \?\? 0/
+    /updateSekaiFaceShadowParameters\(\s*material,\s*faceShadowLightDirection,\s*headDot,\s*true,\s*0\s*\)/
   );
 });
 

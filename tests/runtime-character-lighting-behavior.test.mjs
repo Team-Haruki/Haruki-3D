@@ -94,6 +94,43 @@ test("face SDF follows the official costume-shop scene direction by default", ()
   ).distanceTo(sceneDirection) < 1e-8);
 });
 
+test("face basis reapplies the dynamic CostumeShop shadow limiter to loaded face materials", () => {
+  const face = createSekaiFaceMaterial({
+    baseColor: "#ffffff",
+    warmColor: "#808080",
+    lightDirection: new THREE.Vector3(0, 0, 1),
+    lightIntensity: 1,
+    ambientIntensity: 1,
+    useFaceShadowLimiter: false,
+    faceShadowLimitRange: 0.5,
+  });
+  const loadedFace = face.clone();
+  loadedFace.userData.pjskMaterialKind = "face_sdf";
+  const headSlot = new THREE.Group();
+  headSlot.add(new THREE.Mesh(new THREE.BufferGeometry(), loadedFace));
+  const runtime = new CharacterLightingRuntime({
+    bodyMaterial: shaderMaterial("body", {}),
+    hairMaterial: shaderMaterial("hair", {}),
+    faceMaterial: face,
+    bodySlot: new THREE.Group(),
+    headSlot,
+    directionalLight: new THREE.DirectionalLight(),
+    fillLight: new THREE.AmbientLight(),
+    debug: { hairShadowMode: "off", body: [], head: [] },
+  });
+
+  runtime.updateFaceBasis(
+    new THREE.Vector3(-0.7, 0.25, 0.65).normalize(),
+    new THREE.Vector2(-0.7, 0.25),
+    new THREE.Vector3()
+  );
+
+  for (const material of [face, loadedFace]) {
+    assert.equal(material.uniforms.uUseFaceShadowLimiter.value, 1);
+    assert.equal(material.uniforms.uFaceShadowLimitRange.value, 0);
+  }
+});
+
 function bodyTemplate(baseColor) {
   return createSekaiBodyMaterial({
     baseColor,

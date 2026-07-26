@@ -447,12 +447,8 @@ export function applyRawMaterialShaderUniforms(
   setColor("uSkinColorDefault", "_DefaultSkinColor");
   setColor("uSkinColor1", "_Shadow1SkinColor");
   setColor("uSkinColor2", "_Shadow2SkinColor");
-  setColor("uSkinAmbient", "_SkinAmbient");
   setFloat("uUseLambert", "_UseLambert");
   setFloat("uUseValueTex", "_UseValueTex");
-  setFloat("uFaceSkinShadowStrength", "_FaceSkinShadowStrength");
-  setFloat("uUseSkinColor", "_UseSkinColor");
-  setFloat("uSkinMaskMode", "_SkinMaskMode");
   setFloat("uHeadNormalBlend", "_HeadNormalBlend");
   const useAlphaClip = readRawMaterialBoolean(
     rawMaterial,

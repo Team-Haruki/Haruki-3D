@@ -499,9 +499,13 @@ export class CharacterLightingRuntime {
     updateSekaiFaceShadowParameters(this.options.faceMaterial, faceShadowLightDirection, headDot, true, 0);
     this.forEachShaderMaterial((material) => {
       if (material.uniforms.uHeadDotDirectionalLight) {
-        updateSekaiFaceShadowParameters(material, faceShadowLightDirection, headDot,
-          (material.uniforms.uUseFaceShadowLimiter?.value ?? 1) > 0.5,
-          material.uniforms.uFaceShadowLimitRange?.value ?? 0);
+        updateSekaiFaceShadowParameters(
+          material,
+          faceShadowLightDirection,
+          headDot,
+          true,
+          0
+        );
       }
       if (material.uniforms.uHeadPosition) material.uniforms.uHeadPosition.value.copy(hairHeadPosition);
     });
