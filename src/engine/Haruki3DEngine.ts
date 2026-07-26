@@ -546,10 +546,8 @@ function getVertexColorRedMax(geometry: THREE.BufferGeometry) {
   return max;
 }
 
-function isFaceLayerMaterialKind(kind: unknown) {
-  return kind === "eyelash" ||
-    kind === "eyebrow" ||
-    kind === "eye" ||
+function isOutlineExcludedMaterialKind(kind: unknown) {
+  return kind === "eye" ||
     kind === "eyelight";
 }
 
@@ -577,11 +575,11 @@ function getOutlineSourceMaterialKinds(mesh: THREE.Mesh) {
 }
 
 function chooseOutlineSourceMaterialKind(kinds: string[]) {
-  return kinds.find((kind) => !isFaceLayerMaterialKind(kind)) ?? kinds[0] ?? null;
+  return kinds.find((kind) => !isOutlineExcludedMaterialKind(kind)) ?? kinds[0] ?? null;
 }
 
 function shouldSkipOutlineMaterialKinds(kinds: unknown[]) {
-  return kinds.length > 0 && kinds.every(isFaceLayerMaterialKind);
+  return kinds.length > 0 && kinds.every(isOutlineExcludedMaterialKind);
 }
 
 function extractSekaiOutlineMainTexture(material: THREE.Material): THREE.Texture | null {
@@ -2311,7 +2309,13 @@ export class Haruki3DEngine {
       const meshMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
       const sourceMaterialNames = meshMaterials.map((material) => material.name);
       const outlineMaterials = meshMaterials.map((sourceMaterial) => {
-        if (isFaceLayerMaterialKind(sourceMaterial.userData.pjskMaterialKind)) {
+        const dedicatedOutlineSource =
+          sourceMaterial.userData.pjskOutlineSourceMaterial instanceof THREE.ShaderMaterial
+            ? sourceMaterial.userData.pjskOutlineSourceMaterial
+            : null;
+        delete sourceMaterial.userData.pjskOutlineSourceMaterial;
+        if (isOutlineExcludedMaterialKind(sourceMaterial.userData.pjskMaterialKind)) {
+          dedicatedOutlineSource?.dispose();
           const skipped = new THREE.MeshBasicMaterial();
           skipped.name = "pjsk_shell_outline_skipped";
           skipped.visible = false;
@@ -2321,6 +2325,7 @@ export class Haruki3DEngine {
           | RawMaterialProperties
           | undefined;
         if (!isSekaiOutlinePassEnabled(rawMaterial)) {
+          dedicatedOutlineSource?.dispose();
           const skipped = new THREE.MeshBasicMaterial();
           skipped.name = "pjsk_shell_outline_disabled";
           skipped.visible = false;
@@ -2339,8 +2344,9 @@ export class Haruki3DEngine {
           rawMaterial,
           useSecondNormal,
           extractSekaiOutlineMainTexture(sourceMaterial),
-          sourceMaterial
+          dedicatedOutlineSource ?? sourceMaterial
         );
+        dedicatedOutlineSource?.dispose();
         this.characterLighting.applyOutlineMaterial(outlineMaterial);
         return outlineMaterial;
       });

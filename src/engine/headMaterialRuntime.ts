@@ -441,6 +441,7 @@ export async function bindHeadRuntimeMaterials({
     const lighting = tuneLightingForPreview(kind, slot.lighting, slot.rawMaterial);
     let material: THREE.Material;
     let topLayerMaterial: THREE.Material | null = null;
+    let outlineSourceMaterial: THREE.ShaderMaterial | null = null;
 
     if (kind === "eye") {
       const layerOptions = createEyeLayerOptions(eyeController, lighting);
@@ -505,6 +506,18 @@ export async function bindHeadRuntimeMaterials({
     } else if (kind === "eyelash" || kind === "eyebrow") {
       material = createSekaiLayerMaterial(mainTex, "alpha", null, {
         vertexBViewOffset: 0.015,
+      });
+      outlineSourceMaterial = cloneFaceShaderMaterial(templates.face, {
+        mainTex,
+        shadowTex,
+        valueTex,
+        faceShadowTex,
+        baseColor: headAsset.proxy.faceColor,
+        warmColor: headAsset.proxy.faceShadeColor,
+        skinColorDefault: headAsset.proxy.skinColorDefault ?? headAsset.proxy.faceColor,
+        skinColor1: headAsset.proxy.skinColor1 ?? headAsset.proxy.faceShadeColor,
+        skinColor2: headAsset.proxy.skinColor2 ?? headAsset.proxy.faceShadeColor,
+        lighting,
       });
       material.side = THREE.FrontSide;
       const stencilPrepassMaterial = createSekaiLayerMaterial(mainTex, "alpha", null, {
@@ -585,6 +598,10 @@ export async function bindHeadRuntimeMaterials({
     }
 
     applyRawMaterialShaderUniforms(material, slot.rawMaterial);
+    if (outlineSourceMaterial) {
+      applyRawMaterialShaderUniforms(outlineSourceMaterial, slot.rawMaterial);
+      material.userData.pjskOutlineSourceMaterial = outlineSourceMaterial;
+    }
     material.userData.pjskLighting = lighting;
     material.userData.pjskRawMaterial = slot.rawMaterial;
     material.userData.pjskMaterialKind = kind;

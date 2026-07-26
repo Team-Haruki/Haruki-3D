@@ -182,6 +182,53 @@ test("prefab runtime binds skinned morph meshes and applies exported constraints
   assert.deepEqual(renderer.position.toArray(), [-2, 0, 0]);
 });
 
+test("Unity bind poses do not apply a non-identity renderer transform twice", () => {
+  const extension = makeRuntimeExtension();
+  const faceRenderer = extension.runtimeUnitySetup.prefabGraphs[0].transforms
+    .find((entry) => entry.transformPath === "face/Face");
+  faceRenderer.localPosition = { x: 2, y: 3, z: 4 };
+
+  const sourceMesh = extension.nativeMeshes.meshes[0];
+  sourceMesh.bonePaths = ["face/Neck/Head"];
+  sourceMesh.boneInverseBindMatrices = identityMatrix();
+  sourceMesh.skinIndices = [
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+  ];
+  sourceMesh.skinWeights = [
+    1, 0, 0, 0,
+    1, 0, 0, 0,
+    1, 0, 0, 0,
+  ];
+
+  const graph = buildUnityPrefabSourceGraph(extension);
+  const nativeMeshes = installUnityRuntimeNativeMeshes(graph, extension);
+  const renderer = graph.nodeByPath.get("face/Face");
+  const mesh = renderer.children.find((node) => node instanceof THREE.SkinnedMesh);
+  const bone = graph.nodeByPath.get("face/Neck/Head");
+
+  assert.equal(nativeMeshes.error, null);
+  assert.ok(mesh);
+  assert.ok(bone);
+
+  const skinnedVertexWorld = new THREE.Vector3()
+    .fromBufferAttribute(mesh.geometry.getAttribute("position"), 0);
+  mesh.applyBoneTransform(0, skinnedVertexWorld);
+  mesh.localToWorld(skinnedVertexWorld);
+  const unityExpectedWorld = bone.localToWorld(new THREE.Vector3());
+
+  assert.ok(skinnedVertexWorld.distanceTo(unityExpectedWorld) < 1e-6);
+  assert.deepEqual(
+    mesh.skeleton.boneInverses[0].toArray().map((value) => Number(value.toFixed(6))),
+    new THREE.Matrix4()
+      .copy(mesh.bindMatrix)
+      .invert()
+      .toArray()
+      .map((value) => Number(value.toFixed(6)))
+  );
+});
+
 test("prefab debug snapshot preserves fallback state until a graph is loaded", () => {
   const fallback = {
     active: false,

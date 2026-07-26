@@ -262,10 +262,24 @@ test("engine outline shell follows the captured Sekai outline pass", () => {
   assert.ok(engineSource.includes("function shouldSkipOutlineMaterialKinds"));
   assert.ok(engineSource.includes("function getOutlineSourceMaterialKinds"));
   assert.ok(engineSource.includes("function chooseOutlineSourceMaterialKind"));
+  assert.match(
+    engineSource,
+    /function isOutlineExcludedMaterialKind\(kind: unknown\) \{\s+return kind === "eye" \|\|\s+kind === "eyelight";\s+\}/
+  );
+  assert.doesNotMatch(
+    engineSource,
+    /isOutlineExcludedMaterialKind[\s\S]{0,160}kind === "eyelash"/
+  );
+  assert.doesNotMatch(
+    engineSource,
+    /isOutlineExcludedMaterialKind[\s\S]{0,160}kind === "eyebrow"/
+  );
   assert.ok(!engineSource.includes('return kind === "accessory" || isFaceLayerMaterialKind(kind);'));
   assert.ok(!engineSource.includes("function getSekaiOutlineProfile"));
-  assert.match(engineSource, /return kinds\.length > 0 && kinds\.every\(isFaceLayerMaterialKind\);/);
-  assert.match(engineSource, /return kinds\.find\(\(kind\) => !isFaceLayerMaterialKind\(kind\)\) \?\? kinds\[0\] \?\? null;/);
+  assert.match(engineSource, /return kinds\.length > 0 && kinds\.every\(isOutlineExcludedMaterialKind\);/);
+  assert.match(engineSource, /return kinds\.find\(\(kind\) => !isOutlineExcludedMaterialKind\(kind\)\) \?\? kinds\[0\] \?\? null;/);
+  assert.ok(engineSource.includes("sourceMaterial.userData.pjskOutlineSourceMaterial"));
+  assert.ok(engineSource.includes("dedicatedOutlineSource ?? sourceMaterial"));
   assert.ok(outlineSource.includes('material.name = "pjsk_shell_outline";'));
   assert.ok(engineSource.includes("function extractSekaiOutlineMainTexture"));
   assert.ok(outlineSource.includes("map: sourceMainTex"));

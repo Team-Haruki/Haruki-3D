@@ -110,6 +110,17 @@ formation's global outline color/blending. The Engine therefore reuses the
 source Toon fragment/uniforms for body, face, hair and accessory outline
 passes; a solid purple-gray `MeshBasicMaterial` would be the wrong path.
 
+The final global-outline blend is a linear-light operation. The browser Toon
+kernel intentionally keeps its intermediate character colors in an
+sRGB-shaped domain, so the outline hook must decode that shaded result before
+mixing it with the linear controller color, then encode the result again.
+Mixing the browser intermediate directly with black at `0.5` makes the shell
+substantially darker and produces the dirty blue-gray outline regression seen
+on hair and skin. Clausekai also contains a simpler `MainTex *
+_OutlineColor` outline fragment; that is evidence for its captured scene/path,
+not a replacement for the CostumeShop Toon outline variant identified by
+`0089/0090/0091`.
+
 The captured variants are:
 
 ```text
@@ -125,6 +136,13 @@ is a separate clip-space displacement scaled by `COLOR.b`:
 ```text
 clipPosition += projectedCameraOrigin * (-0.01 * _OutlineOffset) * COLOR.b
 ```
+
+`COLOR.g` is independent of the shell: it masks the fully evaluated Rim RGB
+contribution in the Toon base/outline fragment. The captured renderer/material
+inventory enables Outline for face skin, eyebrow and eyelash, but not for eye
+or eye highlight. Browser eyebrow/eyelash shells therefore use their own
+textures and raw values with the Toon-v3 outline fragment instead of reusing
+their transparent base-layer shader.
 
 The effective fixed state is front-face culling, depth write on, blending off,
 and ShaderLab `Less` (Vulkan reversed-Z `Greater`). The browser shell uses the

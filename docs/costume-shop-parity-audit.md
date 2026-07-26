@@ -117,12 +117,13 @@ Projected head coordinates stayed inside NDC
 | --- | --- |
 | Body prefab selection is exactly `gameCharacters.figure + breastSize`; no neighboring body variant is a fallback. | Registry/exporter resolution fails the entry when the selected bundle is absent. Five-region role-8 audits resolve every usable entry to `ladies_s`. |
 | Body is the final host; face is an assembly input. | `unityPrefabRuntime.ts` builds the body-rooted source graph and exposes the surviving face Neck as the live body attach point, never the destroyed body Neck. |
-| Move body Head children into face Head. | `applyUnityBodyHeadAssembly`. |
+| Move body Head children into face Head. | `applyOfficialModelCombineSetup()` drains the body Head children into the surviving face Head while preserving their authored local TRS. |
 | Patch body Neck/Head bone slots to face Neck/Head. | Native skinned-mesh rebinding uses the assembled node map. |
 | Destroy the replaced body Head and Neck nodes. | Assembly replaces those paths in the active graph. |
 | Face renderer root bones use the body renderer root. | Native mesh diagnostics retain both the authored head root and the effective body root; Three skinning uses the patched live bone map and disables frustum culling. |
 | Every renderer from the temporary face object moves beside the body renderer. | Assembly derives the complete active head renderer inventory from exported native meshes; it does not hard-code only `Face`, `Hair` and `Acc`. |
 | The face renderer predicate is the exact renderer name `Face`; body is the first body renderer. | Exported assembly metadata declares those sources; the runtime does not guess by material color. |
+| Unity bind poses remain mesh-local after renderer reparenting. | Native installation converts each exported Unity bind pose to Three.js bone-inverse space with `unityBindPose * inverse(rendererBindMatrix)`. This prevents a non-identity face renderer transform from being applied twice; role 8 is the regression fixture because its face renderers carry an authored local offset. |
 | head_optional mounts at the exported `part` node (`a01..a05`). | `mountHeadOptionalPrefabGraphs()` attaches the `optional` prefab root to the active named node. |
 | Per-face accessory adjustment is applied after mounting. | `resolveAccessoryTransformAdjustment()` applies the `CharacterAccessoryTransformController` entry selected by face id. |
 
@@ -200,8 +201,9 @@ would create a second, conflicting spring implementation.
 | second normal is reconstructed from `(UV1.x, UV1.y, UV2.x)` in the tangent basis. | `_OUTLINE_SECOND_NORMAL` runtime branch. |
 | `_OutlineOffset` applies a projected-camera-origin clip term scaled by COLOR.b. | Outline vertex shader implements the driver-final term. |
 | The outline fragment is not a flat-color `MeshBasicMaterial` path. It samples and shades the same character data before outline color blending. | Character outline materials clone/share the source Toon uniforms and fragment path, replacing only the final output-color blend. |
+| The active controller color/blending is applied in linear light after Toon shading. | The browser hook decodes its sRGB-shaped Toon intermediate, performs the bounded controller mix, then re-encodes it; this avoids the formerly over-dark gray/blue shell. |
 | Global outline defaults are black with blending `0.5`. | CostumeShop outline controller defaults. |
-| Eye, eyebrow, eyelash and eyelight submeshes with zero COLOR.r do not get shell outlines. | Mesh/material filtering and continuous zero-width behavior preserve this. |
+| Eye and eyelight have no Outline pass; face skin, eyebrow and eyelash do. | Outline group filtering excludes only `eye` and `eyelight`. Eyebrow and eyelash receive a Toon-v3 outline source with their own textures/raw material values, while `COLOR.r` remains the continuous per-vertex width scale. |
 
 A `MeshBasicMaterial` fallback remains only for non-character materials that do
 not expose the kernel's Toon output hook. Exported CostumeShop body/face/hair

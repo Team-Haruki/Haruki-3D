@@ -696,6 +696,19 @@ export function installUnityRuntimeNativeMeshes(
         skeletonBones.length,
         warnings
       );
+      const rendererBindMatrix = skinnedMeshForBind.matrixWorld.clone();
+      if (inverseBindMatrices.length > 0) {
+        // Unity stores bind poses in mesh-local space:
+        //   world = boneWorld * unityBindPose * vertex.
+        // Three.js also applies the SkinnedMesh bind matrix around skinning, so
+        // using the Unity matrix directly would apply a non-identity renderer
+        // transform twice. Convert it to Three's bone-inverse space:
+        //   threeBoneInverse = unityBindPose * inverse(rendererBindMatrix).
+        const rendererBindMatrixInverse = rendererBindMatrix.clone().invert();
+        for (const inverseBindMatrix of inverseBindMatrices) {
+          inverseBindMatrix.multiply(rendererBindMatrixInverse);
+        }
+      }
       const skeleton = new THREE.Skeleton(
         skeletonBones as unknown as THREE.Bone[],
         inverseBindMatrices.length > 0 ? inverseBindMatrices : undefined
@@ -703,7 +716,7 @@ export function installUnityRuntimeNativeMeshes(
       if (inverseBindMatrices.length === 0) {
         skeleton.calculateInverses();
       }
-      skinnedMeshForBind.bind(skeleton, skinnedMeshForBind.matrixWorld);
+      skinnedMeshForBind.bind(skeleton, rendererBindMatrix);
       const restTransform = makeSkinRestTransform(
         skeletonBones[0]!,
         skeleton.boneInverses[0]!

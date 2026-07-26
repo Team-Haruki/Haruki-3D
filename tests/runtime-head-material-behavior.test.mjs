@@ -44,6 +44,13 @@ test("head material binding installs the official through-hair layers for the ex
     shadowThreshold: 0.5,
     shadowWeight: 1,
   });
+  const faceTemplate = createSekaiFaceMaterial({
+    baseColor: "#ffffff",
+    warmColor: "#808080",
+    lightDirection: new THREE.Vector3(0, 1, 0),
+    lightIntensity: 1,
+    ambientIntensity: 1,
+  });
   const debug = [];
   const result = await bindHeadRuntimeMaterials({
     root,
@@ -82,7 +89,7 @@ test("head material binding installs the official through-hair layers for the ex
     templates: {
       body: bodyTemplate,
       hair: bodyTemplate,
-      face: new THREE.ShaderMaterial(),
+      face: faceTemplate,
     },
     view: {
       bodyDebugMode: 0,
@@ -102,6 +109,10 @@ test("head material binding installs the official through-hair layers for the ex
   assert.ok(mesh.material instanceof THREE.ShaderMaterial);
   assert.equal(mesh.material.userData.pjskMaterialKey, "face:0");
   assert.equal(mesh.material.userData.pjskMaterialKind, "eyelash");
+  const outlineSource = mesh.material.userData.pjskOutlineSourceMaterial;
+  assert.ok(outlineSource instanceof THREE.ShaderMaterial);
+  assert.match(outlineSource.fragmentShader, /vec3 outputColor\s*\(\s*vec3 color\s*\)/);
+  assert.equal(outlineSource.uniforms.uMainTex.value.name, "/eyelash.png");
   assert.equal(mesh.castShadow, false);
   assert.equal(mesh.receiveShadow, false);
 
