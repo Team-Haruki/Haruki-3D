@@ -1993,12 +1993,70 @@ function remapColliderRoots(value: Record<string, unknown>, partIndex: number): 
   );
 }
 
+const OFFICIAL_COLLIDER_FLAG_PREFIXES: ReadonlyArray<readonly [number, string]> = [
+  [1, "CL_Hip"],
+  [2, "CL_Chest"],
+  [4, "CL_Left_Arm"],
+  [8, "CL_Right_Arm"],
+  [16, "CL_Left_Elbow"],
+  [32, "CL_Right_Elbow"],
+];
+
+export function officialColliderFlagPrefixes(flag: number): string[] {
+  // Official SpringBoneSetup tests each bit with (flags & bit) != 0, so a
+  // serialized -1 selects every CL_ group.
+  return OFFICIAL_COLLIDER_FLAG_PREFIXES
+    .filter(([bit]) => (flag & bit) !== 0)
+    .map(([, prefix]) => prefix);
+}
+
+function synthesizeMissingColliderFlagBindings(
+  parts: RemappedRuntimePart[]
+): RuntimeColliderBinding[] {
+  // The exporter's binding pass used `colliderFlag > 0`, silently dropping
+  // bones serialized with flag -1 (= all groups, e.g. Shizuku hair 208).
+  // Rebuild the deferred binding from the bone record so those chains get
+  // their official colliders back.
+  return parts.flatMap((part) => {
+    if (part.partType === "body") {
+      return [];
+    }
+    return part.bones
+      .filter((bone) => {
+        const flag = bone.colliderFlag ?? 0;
+        if (flag === 0 || typeof bone.pathId !== "number") {
+          return false;
+        }
+        return !part.colliderBindings.some((binding) =>
+          binding.sourceSpringBonePathId === bone.pathId &&
+          (binding.sourceKind === "deferred_body_colliderFlag" ||
+            binding.sourceKind === "colliderFlag")
+        );
+      })
+      .map((bone): RuntimeColliderBinding => ({
+        sourceKind: "deferred_body_colliderFlag",
+        partKind: bone.partKind ?? part.partType,
+        sourceSpringBonePathId: bone.pathId,
+        colliderFlag: bone.colliderFlag,
+        matchedPrefixes: officialColliderFlagPrefixes(bone.colliderFlag ?? 0),
+        collidersByRoot: {},
+        defaultRoot: "body",
+        sourceColliderPathIds: [],
+        colliders: [],
+        rebindReason: "viewer_synthesized_missing_colliderFlag_binding",
+      }));
+  });
+}
+
 function rebuildColliderBindings(parts: RemappedRuntimePart[]): RuntimeColliderBinding[] {
   const bodyColliders = parts
     .filter((part) => part.partType === "body")
     .flatMap((part) => part.colliders);
   const currentBodyRoots = collidersByRoot(bodyColliders);
-  return parts.flatMap((part) =>
+  const synthesized = synthesizeMissingColliderFlagBindings(parts).map((binding) =>
+    rebuildDeferredColliderFlagBinding(binding, bodyColliders)
+  );
+  return synthesized.concat(parts.flatMap((part) =>
     part.colliderBindings.map((binding) => {
       if (binding.sourceKind === "deferred_body_colliderFlag" && part.partType !== "body") {
         return rebuildDeferredColliderFlagBinding(binding, bodyColliders);
@@ -2018,7 +2076,7 @@ function rebuildColliderBindings(parts: RemappedRuntimePart[]): RuntimeColliderB
         rebindReason: "viewer_composed_current_body_colliders",
       };
     })
-  );
+  ));
 }
 
 function rebuildDeferredColliderFlagBinding(

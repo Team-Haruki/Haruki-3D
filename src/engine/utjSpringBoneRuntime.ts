@@ -332,12 +332,14 @@ export function checkUtjCollisions(
   }
 
   if (finalHitNormal) {
+    // Official SatisfyConstraints decomposes the response velocity from the
+    // POST-collision tip (currTipPos after all collider pushes), not the
+    // pre-collision tip.
     applyUtjCollisionVelocityResponse(
       state,
       finalHitNormal,
       input.bounce,
-      input.friction,
-      preCollisionTip
+      input.friction
     );
   }
 
@@ -357,9 +359,9 @@ function buildColliderTraceDetails(
       localHeadPosition: headPosition.clone().applyMatrix4(collider.worldToLocalMatrix),
       localTailPositionBefore: beforeTailPosition.clone().applyMatrix4(collider.worldToLocalMatrix),
       localTailPositionAfter: afterTailPosition.clone().applyMatrix4(collider.worldToLocalMatrix),
-      localTailRadius: tailRadius,
+      localTailRadius: tailRadius * collider.worldToLocalRadiusScale,
       localSphereOrigin: collider.localOffset.clone(),
-      localSphereRadius: collider.lossyScaleX * collider.radius,
+      localSphereRadius: collider.radius,
     };
   }
 
@@ -369,7 +371,7 @@ function buildColliderTraceDetails(
       localHeadPosition: headPosition.clone().applyMatrix4(collider.worldToLocalMatrix),
       localTailPositionBefore: beforeTailPosition.clone().applyMatrix4(collider.worldToLocalMatrix),
       localTailPositionAfter: afterTailPosition.clone().applyMatrix4(collider.worldToLocalMatrix),
-      localTailRadius: tailRadius,
+      localTailRadius: tailRadius * collider.worldToLocalRadiusScale,
       localCapsuleStart: collider.localStart.clone(),
       localCapsuleEnd: collider.localEnd.clone(),
       capsuleRadius: collider.radius,
@@ -673,8 +675,12 @@ export function checkLocalSphereCollisionAndReact(
 ): UtjCollisionResult {
   const localHead = headPosition.clone().applyMatrix4(collider.worldToLocalMatrix);
   const localTail = tailPosition.clone().applyMatrix4(collider.worldToLocalMatrix);
-  const localTailRadius = tailRadius;
-  const localSphereRadius = collider.lossyScaleX * collider.radius;
+  // Official SpringSphereCollider converts the WORLD tail radius into local
+  // units (InverseTransformDirection) and compares against the RAW serialized
+  // radius; positions above are already local, so scaling the sphere radius
+  // by lossyScale here would double-count the rig's character-height scale.
+  const localTailRadius = tailRadius * collider.worldToLocalRadiusScale;
+  const localSphereRadius = collider.radius;
   const localResult = checkSphereCollisionAndReact(
     localHead,
     localTail,
@@ -778,7 +784,9 @@ export function checkLocalCapsuleCollisionAndReact(
 ): UtjCollisionResult {
   const localHead = headPosition.clone().applyMatrix4(collider.worldToLocalMatrix);
   const localTail = tailPosition.clone().applyMatrix4(collider.worldToLocalMatrix);
-  const localTailRadius = tailRadius;
+  // Same convention as the sphere path: world tail radius into local units,
+  // raw serialized capsule radius (lossyScale would double-count the scale).
+  const localTailRadius = tailRadius * collider.worldToLocalRadiusScale;
   const localResult = checkLocalYAxisCapsuleCollisionAndReact(
     localHead,
     localTail,
@@ -786,7 +794,7 @@ export function checkLocalCapsuleCollisionAndReact(
     collider.localStart,
     collider.localEnd,
     collider.radius,
-    collider.lossyScaleX
+    1.0
   );
 
   if (localResult.status === UtjColliderStatus.NoCollision) {
@@ -982,7 +990,7 @@ export function constrainUtjAngleLimit(input: UtjConstrainVectorInput): boolean 
   const rawSideDot = input.basisSide.dot(sideForwardDirection);
   const sideDotMax = Number.isNaN(rawSideDot) ? 1.0 : Math.min(rawSideDot, 1.0);
   const sideDot = rawSideDot < -1.0 ? -1.0 : sideDotMax;
-  const angle = Math.asin(sideDot) * 57.296;
+  const angle = Math.asin(sideDot) * (180 / Math.PI);
   const easedAngle = angle - angle * input.springStrength * input.deltaTime * input.deltaTime;
   const easedAtMostMax = easedAngle <= input.limit.max ? easedAngle : input.limit.max;
   const clampedAngle = easedAngle < input.limit.min ? input.limit.min : easedAtMostMax;
@@ -995,7 +1003,7 @@ export function constrainUtjAngleLimit(input: UtjConstrainVectorInput): boolean 
     }
   }
   const limitedAngle = bound * ratio;
-  const radians = limitedAngle * 0.017453;
+  const radians = limitedAngle * (Math.PI / 180);
   const limitedSideForward = input.basisSide
     .clone()
     .multiplyScalar(Math.sin(radians))

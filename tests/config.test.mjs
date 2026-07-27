@@ -394,7 +394,7 @@ test("docker runtime image includes capture server support modules", () => {
   assert.match(dockerfile, /HARUKI_CAPTURE_WIDTH=1400/);
   assert.match(dockerfile, /HARUKI_CAPTURE_HEIGHT=1000/);
   assert.match(dockerfile, /HARUKI_CAPTURE_SCALE=2/);
-  assert.match(dockerfile, /HARUKI_CAPTURE_WARMUP_FRAMES=60/);
+  assert.match(dockerfile, /HARUKI_CAPTURE_WARMUP_FRAMES=180/);
   assert.match(dockerfile, /HARUKI_CAPTURE_SPRING_RUNTIME_MODE=unity-prefab/);
   assert.match(dockerfile, /HARUKI_CAPTURE_CAMERA_PRESET=capture/);
 });

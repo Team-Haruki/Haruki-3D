@@ -972,7 +972,11 @@ export class UnityPrefabSpringRuntime {
       traceEvent.stateAfterLengthLimits = stateSnapshot(bone.state);
     }
 
-    const tailRadius = Math.abs(bone.radius);
+    // Official SpringBone passes TransformDirection(radius,0,0).magnitude —
+    // the WORLD tail radius. The rig carries the character-height scale, so
+    // the serialized radius must be scaled here (each collider converts it
+    // back into its own local units).
+    const tailRadius = Math.abs(bone.radius) * matrixWorldXScale(bone.node);
     if (traceEvent) {
       traceEvent.tailRadius = tailRadius;
     }
@@ -1162,10 +1166,11 @@ export class UnityPrefabSpringRuntime {
   }
 
   private resetInvalidTipPosition(bone: RuntimeBone): void {
+    // Official SatisfyConstraints checks IsFinite (rejects Infinity too).
     if (
-      !Number.isNaN(bone.state.currTipPos.x) &&
-      !Number.isNaN(bone.state.currTipPos.y) &&
-      !Number.isNaN(bone.state.currTipPos.z)
+      Number.isFinite(bone.state.currTipPos.x) &&
+      Number.isFinite(bone.state.currTipPos.y) &&
+      Number.isFinite(bone.state.currTipPos.z)
     ) {
       return;
     }
@@ -2520,7 +2525,9 @@ function resolveRuntimeBoneAxis(
   const localTipPosition = node.worldToLocal(tailPosition.clone());
   const axis = normalizeRuntimeAxis(localTipPosition);
   if (!axis) {
-    return { axis: new THREE.Vector3(0, 0, 0), source: "fallback-local-tip" };
+    // Official Initialize falls back to Vector3.right for a degenerate tip; a
+    // zero axis would collapse the stiffness target onto the bone head.
+    return { axis: UNITY_RIGHT_LOCAL.clone(), source: "fallback-local-tip" };
   }
   return { axis, source: "computed-local-tip" };
 }
@@ -2616,6 +2623,15 @@ function sourceColliderOrder(collider: RuntimeColliderSource): number {
 function worldScaleX(node: THREE.Object3D): number {
   const scale = node.getWorldScale(new THREE.Vector3());
   return scale.x;
+}
+
+function matrixWorldXScale(node: THREE.Object3D): number {
+  const elements = node.matrixWorld.elements;
+  return Math.sqrt(
+    elements[0] * elements[0] +
+    elements[1] * elements[1] +
+    elements[2] * elements[2]
+  );
 }
 
 function matrixXDirectionLength(matrix: THREE.Matrix4): number {

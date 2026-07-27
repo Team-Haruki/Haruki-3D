@@ -69,7 +69,10 @@ export class HarukiCaptureAdapter {
 
   async prepareCaptureFrame(request: HarukiPrepareCaptureFrameRequest = {}) {
     this.engine.setPresentationMode("capture");
-    this.engine.setSpringRuntimeMode("unity-prefab");
+    // Default to the production spring runtime, but let diagnostic requests
+    // disable it — "spring off" captures are the bind/animation-pose baseline
+    // for every springbone A/B.
+    this.engine.setSpringRuntimeMode(request.springRuntimeMode ?? "unity-prefab");
     if (request.bodyDebugMode !== undefined) {
       this.engine.setBodyDebugMode(request.bodyDebugMode);
     }
@@ -116,18 +119,10 @@ export class HarukiCaptureAdapter {
       seekTargetPhase(startPhase);
     }
 
-    if (warmupFrames > 0) {
-      this.engine.setAnimationPaused(!advanceWarmupAnimation);
-      for (let index = 0; index < warmupFrames; index += 1) {
-        this.engine.stepRuntimeFrame(1 / 60, { advanceAnimation: advanceWarmupAnimation });
-      }
-      this.engine.setAnimationPaused(true);
-    } else if (warmupMs > 0) {
-      this.engine.setAnimationPaused(warmupMode === "runtime");
-      await new Promise<void>((resolve) => window.setTimeout(resolve, warmupMs));
-      this.engine.setAnimationPaused(true);
-    }
-
+    // Apply the camera and character yaw BEFORE the warmup so the spring
+    // simulation absorbs the pose change. The previous order rotated the
+    // character after warmup and then ran one extra full 1/60 spring step,
+    // injecting yaw-induced velocity into every capture.
     this.engine.applyCameraPreset(request.cameraPreset ?? "capture", request.cameraProfile);
     switch (request.characterYawMode) {
       case "45":
@@ -144,7 +139,24 @@ export class HarukiCaptureAdapter {
       default:
         break;
     }
-    this.engine.stepRuntimeFrame(0, { advanceAnimation: false });
+
+    if (warmupFrames > 0) {
+      this.engine.setAnimationPaused(!advanceWarmupAnimation);
+      for (let index = 0; index < warmupFrames; index += 1) {
+        this.engine.stepRuntimeFrame(1 / 60, { advanceAnimation: advanceWarmupAnimation });
+      }
+      this.engine.setAnimationPaused(true);
+    } else if (warmupMs > 0) {
+      this.engine.setAnimationPaused(warmupMode === "runtime");
+      await new Promise<void>((resolve) => window.setTimeout(resolve, warmupMs));
+      this.engine.setAnimationPaused(true);
+    } else {
+      // No warmup requested: still refresh the derived shader/shadow state
+      // once for the new camera/yaw (single fixed step, matching the old
+      // behavior only in this warmup-less path).
+      this.engine.stepRuntimeFrame(0, { advanceAnimation: false });
+    }
+
     this.engine.renderFrame();
     this.engine.finishCaptureFrame();
   }

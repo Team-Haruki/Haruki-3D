@@ -60,6 +60,7 @@ export {
   type CustomWardrobeControllerOptions,
 } from "./parts/customWardrobeController";
 export {
+  officialColliderFlagPrefixes,
   type CustomPartSelection,
   type HeadHairCompatibility,
   type PartPackageSet,
@@ -161,6 +162,11 @@ export {
   UnityPrefabSpringRuntime,
   type SpringTimelineControl,
 } from "./engine/unityPrefabSpringRuntimeAdapter";
+export {
+  UtjColliderStatus,
+  checkLocalCapsuleCollisionAndReact,
+  checkLocalSphereCollisionAndReact,
+} from "./engine/utjSpringBoneRuntime";
 export {
   applyRawMaterialShaderUniforms,
   bindBodyRuntimeMaterials,
