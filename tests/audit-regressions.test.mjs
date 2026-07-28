@@ -354,7 +354,7 @@ test("capture request bounds renderer work supplied by callers", () => {
   assert.ok(request.traceUtjMaxEvents <= 10000);
 });
 
-test("capture request preserves the established 1400x1000 aspect ratio and scale", () => {
+test("capture request preserves an explicitly requested aspect ratio and scale", () => {
   const validateCaptureRequest = loadCaptureRequestValidator();
   const request = validateCaptureRequest(validCaptureRequest({
     width: 1400,

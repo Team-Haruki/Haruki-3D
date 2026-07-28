@@ -12,6 +12,7 @@ import {
   readRawMaterialFloat,
   sekaiCostumeShopOutlineControllerDefaults,
   sekaiCostumeShopOutlineSettings,
+  sekaiPreviewOutlineCalibration,
 } from "../dist/haruki-3d-engine-internal.js";
 
 function rawMaterial(overrides = {}) {
@@ -46,6 +47,13 @@ test("costume shop outline globals match the captured 6.6.2 runtime", () => {
   assert.ok(
     Math.abs(evaluateSekaiOutlineFovFactor(25) - 1.027823567390442) < 1e-7
   );
+});
+
+test("high-resolution preview keeps the official shell thin and dark", () => {
+  assert.deepEqual(sekaiPreviewOutlineCalibration, {
+    widthScale: 0.82,
+    shadedColorBlend: 0.3,
+  });
 });
 
 test("raw material lookup preserves unknown exported color properties", () => {
@@ -124,11 +132,13 @@ test("official outline consumes material tint, main texture transform, and alpha
   material.onBeforeCompile(shader, {});
   assert.equal(
     shader.uniforms.uSekaiOutlineWidth.value.x,
-    sekaiCostumeShopOutlineSettings.widthMin
+    sekaiCostumeShopOutlineSettings.widthMin *
+      sekaiPreviewOutlineCalibration.widthScale
   );
   assert.equal(
     shader.uniforms.uSekaiOutlineWidth.value.y,
-    sekaiCostumeShopOutlineSettings.widthMax
+    sekaiCostumeShopOutlineSettings.widthMax *
+      sekaiPreviewOutlineCalibration.widthScale
   );
   assert.deepEqual(
     shader.uniforms.uSekaiMainTexST.value.toArray(),
@@ -211,6 +221,10 @@ test("character outline blends the captured Toon result in gamma space like the 
   assert.match(material.vertexShader, /uSekaiOutlineOffset/);
   assert.match(material.fragmentShader, /uSekaiCharacterOutlineColor/);
   assert.match(material.fragmentShader, /uSekaiCharacterOutlineBlending/);
+  assert.equal(
+    material.uniforms.uSekaiCharacterOutlineBlending.value,
+    sekaiPreviewOutlineCalibration.shadedColorBlend
+  );
   // The captured 0090 outline fragment computes
   //   mix(outlineColorArray[i].rgb * a, shadedColor, blendingArray[i])
   // directly on the Gamma-space values of the game's Gamma pipeline. The

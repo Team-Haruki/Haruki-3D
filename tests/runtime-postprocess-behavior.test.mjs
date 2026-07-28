@@ -10,14 +10,14 @@ import {
   sekaiPreviewPostProcessDefaults,
 } from "../dist/haruki-3d-engine-internal.js";
 
-test("Sekai preview preserves the established 1400x1000 scale-2 capture without post-processing", () => {
+test("Sekai preview caps direct output at 2048 without post-processing", () => {
   assert.deepEqual(sekaiPreviewPostProcessDefaults, {
-    maxOutputSize: 2800,
+    maxOutputSize: 2048,
     enabled: false,
   });
   assert.equal(resolveSekaiPreviewPixelRatio(1024, 1024, 2), 2);
-  assert.equal(resolveSekaiPreviewPixelRatio(1400, 1000, 2), 2);
-  assert.equal(resolveSekaiPreviewPixelRatio(1600, 1600, 2), 1.75);
+  assert.equal(resolveSekaiPreviewPixelRatio(1400, 1000, 2), 2048 / 1400);
+  assert.equal(resolveSekaiPreviewPixelRatio(1600, 1600, 2), 1.28);
 });
 
 test("character shaders preserve the captured CostumeShop Gamma workflow", () => {

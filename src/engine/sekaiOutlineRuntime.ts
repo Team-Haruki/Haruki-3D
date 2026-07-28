@@ -67,6 +67,29 @@ export const sekaiCostumeShopOutlineControllerDefaults = {
   blending: 0.5,
 } as const;
 
+/**
+ * Presentation calibration for direct high-resolution browser output.
+ *
+ * CostumeShop renders its preview into a smaller intermediate texture before
+ * the UI scales it up. The browser kernel renders directly at the final device
+ * resolution, so applying the captured world-space shell unchanged makes it
+ * visibly thicker and lets too much shaded material color into the outline.
+ * Keep the captured globals above intact and correct only the presentation.
+ */
+export const sekaiPreviewOutlineCalibration = {
+  widthScale: 0.82,
+  shadedColorBlend: 0.3,
+} as const;
+
+function createSekaiPreviewOutlineWidth() {
+  return new THREE.Vector2(
+    sekaiCostumeShopOutlineSettings.widthMin *
+      sekaiPreviewOutlineCalibration.widthScale,
+    sekaiCostumeShopOutlineSettings.widthMax *
+      sekaiPreviewOutlineCalibration.widthScale
+  );
+}
+
 export function isSekaiOutlinePassEnabled(
   rawMaterial: RawMaterialProperties | null | undefined
 ) {
@@ -169,7 +192,7 @@ function createSekaiToonOutlineMaterial(
       sekaiCostumeShopOutlineControllerDefaults.color.g,
       sekaiCostumeShopOutlineControllerDefaults.color.b
     ),
-    blending: sekaiCostumeShopOutlineControllerDefaults.blending,
+    blending: sekaiPreviewOutlineCalibration.shadedColorBlend,
   };
   const outlineOffset = readRawMaterialFloat(rawMaterial, "_OutlineOffset") ?? 0;
   const material = source.clone();
@@ -203,12 +226,7 @@ function createSekaiToonOutlineMaterial(
   material.uniforms = {
     ...source.uniforms,
     ...outlineOnlyUniforms,
-    uSekaiOutlineWidth: {
-      value: new THREE.Vector2(
-        sekaiCostumeShopOutlineSettings.widthMin,
-        sekaiCostumeShopOutlineSettings.widthMax
-      ),
-    },
+    uSekaiOutlineWidth: { value: createSekaiPreviewOutlineWidth() },
     uSekaiOutlineFactor: { value: outlineFactor },
     uSekaiOutlineOffset: { value: outlineOffset },
     uSekaiCharacterOutlineColor: { value: controllerState.color },
@@ -363,7 +381,7 @@ export function createSekaiOutlineMaterial(
       sekaiCostumeShopOutlineControllerDefaults.color.g,
       sekaiCostumeShopOutlineControllerDefaults.color.b
     ),
-    blending: sekaiCostumeShopOutlineControllerDefaults.blending,
+    blending: sekaiPreviewOutlineCalibration.shadedColorBlend,
   };
   const material = new THREE.MeshBasicMaterial({
     color: materialOutlineColor,
@@ -391,10 +409,7 @@ export function createSekaiOutlineMaterial(
   material.userData.pjskOutlineController = controllerState;
   material.onBeforeCompile = (shader) => {
     shader.uniforms.uSekaiOutlineWidth = {
-      value: new THREE.Vector2(
-        sekaiCostumeShopOutlineSettings.widthMin,
-        sekaiCostumeShopOutlineSettings.widthMax
-      ),
+      value: createSekaiPreviewOutlineWidth(),
     };
     shader.uniforms.uSekaiOutlineFactor = {
       value: outlineFactor,

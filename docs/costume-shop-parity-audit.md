@@ -95,7 +95,7 @@ before model mutation.
 | --- | --- |
 | Perspective camera, FOV 25. | `cameraRuntime.ts` CostumeShop profile. |
 | Startup target `(0, 1.25, 0)` and camera `(0, 1.25, 2.3)`. | `getCostumeShopCameraPose("official-default")`. |
-| The full-body captured profile uses the same FOV and official z endpoint `4.5`. | `getCostumeShopCameraPose("full-body")`. |
+| The full-body captured profile uses the same FOV and official z endpoint `4.5`. | `getCostumeShopCameraPose("full-body")` uses a fixed presentation center Y of `0.765`; it does not move character bones or follow per-frame bounds. |
 | Horizontal drag rotates CameraRoot around world up; vertical input does not pitch the camera. | Documented host input contract; the kernel does not own pointer/pinch handlers. |
 | A part change does not reset camera rotation/zoom. | Host state is outside character import and therefore remains stable. |
 | Directional and rim lights are children of `CameraRoot`. | Stored light vectors are the yaw-zero local directions; a host rotation must rotate camera and lights together. The captured round-9 world vector already included about `-2.447°` of CameraRoot yaw and is not a yaw-zero default. |
@@ -106,8 +106,10 @@ not claimed as official CostumeShop interaction. Exact mutable yaw/zoom/move
 input is intentionally a host API concern rather than hidden engine state.
 
 Local JP runtime validation on 2026-07-25 used all 31 role keys at four motion
-phases. All 124 samples ended at the exact full-body camera state
-`position=(0, 0.85, 4.5)`, `target=(0, 0.85, 0)`, `FOV=25`, `aspect=1`.
+phases and established that the full-body framing has no role-specific camera
+drift. The final direct-output presentation keeps that fixed-camera rule but
+centers its visible character bounds at
+`position=(0, 0.765, 4.5)`, `target=(0, 0.765, 0)`, `FOV=25`, `aspect=1`.
 Projected head coordinates stayed inside NDC
 `x=[-0.0918824, 0.0962628]`, `y=[0.3713295, 0.6445972]`.
 
@@ -196,18 +198,27 @@ would create a second, conflicting spring implementation.
 | Official invariant | Implementation |
 | --- | --- |
 | Inverted hull: front-face culling, depth write, no blending, ShaderLab Less (reversed Vulkan Greater). | Outline materials use `BackSide`, depth write, no blending and `LessDepth`. |
-| Distance/FOV width uses captured min/max/near/far and Hermite FOV curve. | `sekaiOutlineRuntime.ts`. |
+| Distance/FOV width uses captured min/max/near/far and Hermite FOV curve. | `sekaiOutlineRuntime.ts` retains the captured values and applies the direct-resolution presentation scale documented below. |
 | COLOR.r is a continuous width multiplier. | Vertex expansion multiplies by the unmodified red channel. |
 | second normal is reconstructed from `(UV1.x, UV1.y, UV2.x)` in the tangent basis. | `_OUTLINE_SECOND_NORMAL` runtime branch. |
 | `_OutlineOffset` applies a projected-camera-origin clip term scaled by COLOR.b. | Outline vertex shader implements the driver-final term. |
 | The outline fragment is not a flat-color `MeshBasicMaterial` path. It samples and shades the same character data before outline color blending. | Character outline materials clone/share the source Toon uniforms and fragment path, replacing only the final output-color blend. |
 | The active controller color/blending is applied after Toon shading in the game's Gamma working space (`0090`: `mix(outlineColor.rgb * a, shadedColor, blending)` on gamma-form values). | The browser hook mixes the sRGB-shaped Toon intermediate directly with the controller color — no linear decode/encode. Official reference lines measure ≈ gamma `mix(black, tier, 0.5)`; a linear-light mix renders a full tier brighter (the 2026-07-27 "not black enough" defect). |
-| Global outline defaults are black with blending `0.5`. | CostumeShop outline controller defaults. |
+| Global outline defaults are black with blending `0.5`. | The captured default remains explicit. Direct high-resolution Web/capture presentation uses black with shaded-color blend `0.3` so the final contour stays dark after bypassing CostumeShop's 1024px intermediate. |
 | Eye and eyelight have no Outline pass; face skin, eyebrow and eyelash do. | Outline group filtering excludes only `eye` and `eyelight`. Eyebrow and eyelash receive a Toon-v3 outline source with their own textures/raw material values, while `COLOR.r` remains the continuous per-vertex width scale. |
 
 A `MeshBasicMaterial` fallback remains only for non-character materials that do
 not expose the kernel's Toon output hook. Exported CostumeShop body/face/hair
 materials take the full Toon outline path.
+
+The Web/capture kernel writes the final-resolution canvas directly, whereas
+CostumeShop renders the character into a 1024x1024 intermediate and then lets
+the UI scale it. At the current 2048px capture output, the unchanged
+world-space shell looked substantially thicker and the 50% shaded-color
+contribution read as a dirty purple/brown contour. The presentation calibration
+therefore multiplies both captured width endpoints by `0.82` and uses a
+shaded-color blend of `0.3`. It does not alter the distance/FOV curve, vertex
+color R mask, second normal, outline offset, or Toon shading path.
 
 ## Eye, eyelash and hair stencil
 

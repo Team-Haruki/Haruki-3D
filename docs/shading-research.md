@@ -110,6 +110,15 @@ formation's global outline color/blending. The Engine therefore reuses the
 source Toon fragment/uniforms for body, face, hair and accessory outline
 passes; a solid purple-gray `MeshBasicMaterial` would be the wrong path.
 
+For direct high-resolution Web/capture presentation, the Engine deliberately
+keeps these captured values as evidence rather than sending them unchanged to
+the final-resolution canvas. CostumeShop's 1024x1024 intermediate is scaled by
+its UI; the browser kernel currently renders the final 2048px image directly.
+The presentation layer therefore scales the two outline-width endpoints by
+`0.82` and reduces the shaded-color contribution from `0.5` to `0.3`. This
+produces a thin dark contour without changing the official shell formula,
+per-vertex mask, second-normal direction, or material sampling.
+
 The final global-outline blend is a Gamma-space operation. The game runs a
 Unity Gamma pipeline (the CostumeShop preview renders into a 1024x1024
 Gamma-space target), and the driver-final `0090` fragment computes

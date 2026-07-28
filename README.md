@@ -162,7 +162,7 @@ For a runtime root containing region directories such as `/data/runtime/jp` and
 serves its role registry. Runtime metadata is exclusively Brotli-compressed
 MessagePack; part packages must use core+delta and declare `corePath`.
 
-The service starts one persistent headless Chromium page and keeps the engine loaded. Requests reuse that page, write only the final `/data/captures/<imageId>.png`, and atomically replace an existing file with the same id. `width` and `height` control CSS framing; `scale` controls output DPR, so `700x500` with `scale: 2` writes a `1400x1000` PNG. The service-owned Chromium profile/cache directory is removed on shutdown or session restart. Open `http://localhost:8080/capture.html` only when inspecting the harness manually.
+The service starts one persistent headless Chromium page and keeps the engine loaded. Requests reuse that page, write only the final `/data/captures/<imageId>.png`, and atomically replace an existing file with the same id. The default `1024x1024` CSS viewport at scale `2` writes a `2048x2048` PNG. Explicit `width` and `height` values still control CSS framing, while `scale` controls output DPR; for example, `700x500` with `scale: 2` writes a `1400x1000` PNG. The service-owned Chromium profile/cache directory is removed on shutdown or session restart. Open `http://localhost:8080/capture.html` only when inspecting the harness manually.
 
 ## Development Notes
 

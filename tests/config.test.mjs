@@ -101,8 +101,8 @@ test("loads engine config JSON and applies capture runtime CLI overrides", () =>
 test("capture server bind host can be restricted without changing container defaults", () => {
   const defaults = resolveCaptureServerOptions({}, {});
   assert.equal(defaults.host, "0.0.0.0");
-  assert.equal(defaults.defaultWidth, 1400);
-  assert.equal(defaults.defaultHeight, 1000);
+  assert.equal(defaults.defaultWidth, 1024);
+  assert.equal(defaults.defaultHeight, 1024);
   assert.equal(defaults.defaultScale, 2);
   assert.equal(resolveCaptureServerOptions({}, {
     HARUKI_SERVER_HOST: "127.0.0.1",
@@ -391,8 +391,8 @@ test("docker runtime image includes capture server support modules", () => {
   assert.match(dockerfile, /COPY png-rgba\.mjs \.\/png-rgba\.mjs/);
   assert.match(dockerfile, /runtime-binary-codec\.mjs/);
   assert.match(dockerfile, /COPY THIRD_PARTY_NOTICES\.md \.\/THIRD_PARTY_NOTICES\.md/);
-  assert.match(dockerfile, /HARUKI_CAPTURE_WIDTH=1400/);
-  assert.match(dockerfile, /HARUKI_CAPTURE_HEIGHT=1000/);
+  assert.match(dockerfile, /HARUKI_CAPTURE_WIDTH=1024/);
+  assert.match(dockerfile, /HARUKI_CAPTURE_HEIGHT=1024/);
   assert.match(dockerfile, /HARUKI_CAPTURE_SCALE=2/);
   assert.match(dockerfile, /HARUKI_CAPTURE_WARMUP_FRAMES=180/);
   assert.match(dockerfile, /HARUKI_CAPTURE_SPRING_RUNTIME_MODE=unity-prefab/);

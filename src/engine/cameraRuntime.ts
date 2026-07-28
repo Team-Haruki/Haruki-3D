@@ -4,6 +4,7 @@ const DEFAULT_TARGET_SCALE = new THREE.Vector3(0.04835, 0.48222, 0.07241);
 const DEFAULT_OFFSET_SCALE = new THREE.Vector3(-0.08532, 0.12848, 1.93551);
 const DEFAULT_FOV = 35;
 const CAPTURE_LATERAL_SHIFT_SCALE = -0.0245;
+const FULL_BODY_CAPTURE_CENTER_Y = 0.765;
 const COSTUME_SHOP_CAMERA = {
   zoomDuration: 0.35,
   bottomLowerLimitPosition: 0.4,
@@ -96,7 +97,9 @@ export function getCostumeShopCameraPose(
     zoomRatio
   );
   const zoomMoveValue = THREE.MathUtils.clamp(state.zoomMoveValue, 0, 1);
-  const y = THREE.MathUtils.lerp(bottomY, topY, zoomMoveValue);
+  const y = profile === "full-body"
+    ? FULL_BODY_CAPTURE_CENTER_Y
+    : THREE.MathUtils.lerp(bottomY, topY, zoomMoveValue);
   const z = THREE.MathUtils.lerp(
     COSTUME_SHOP_CAMERA.nearZ,
     COSTUME_SHOP_CAMERA.farZ,
