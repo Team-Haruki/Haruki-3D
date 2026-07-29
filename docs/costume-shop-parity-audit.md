@@ -216,8 +216,9 @@ CostumeShop renders the character into a 1024x1024 intermediate and then lets
 the UI scale it. At the current 2048px capture output, the unchanged
 world-space shell looked substantially thicker and the 50% shaded-color
 contribution read as a dirty purple/brown contour. The presentation calibration
-therefore multiplies both captured width endpoints by `0.82` and uses a
-shaded-color blend of `0.3`. It does not alter the distance/FOV curve, vertex
+therefore multiplies both captured width endpoints by `0.5`, preserving the
+1024px intermediate's screen-space contour at a direct 2048px output, and uses
+a shaded-color blend of `0.3`. It does not alter the distance/FOV curve, vertex
 color R mask, second normal, outline offset, or Toon shading path.
 
 ## Eye, eyelash and hair stencil

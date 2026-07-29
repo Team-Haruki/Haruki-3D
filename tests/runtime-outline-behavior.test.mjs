@@ -51,9 +51,31 @@ test("costume shop outline globals match the captured 6.6.2 runtime", () => {
 
 test("high-resolution preview keeps the official shell thin and dark", () => {
   assert.deepEqual(sekaiPreviewOutlineCalibration, {
-    widthScale: 0.82,
+    widthScale: 0.5,
     shadedColorBlend: 0.3,
   });
+
+  const fieldOfView = 25;
+  const cameraDistance = 4.5;
+  const distanceFactor = Math.min(
+    ((cameraDistance - sekaiCostumeShopOutlineSettings.distanceNear) /
+      (sekaiCostumeShopOutlineSettings.distanceFar -
+        sekaiCostumeShopOutlineSettings.distanceNear)) *
+      evaluateSekaiOutlineFovFactor(fieldOfView),
+    1
+  );
+  const worldWidth =
+    sekaiCostumeShopOutlineSettings.widthMin +
+    (sekaiCostumeShopOutlineSettings.widthMax -
+      sekaiCostumeShopOutlineSettings.widthMin) *
+      distanceFactor;
+  const focalPixels = 2048 / (2 * Math.tan(fieldOfView * Math.PI / 360));
+  const outputPixels =
+    worldWidth *
+    sekaiPreviewOutlineCalibration.widthScale *
+    focalPixels /
+    cameraDistance;
+  assert.ok(outputPixels >= 1.15 && outputPixels <= 1.25, outputPixels);
 });
 
 test("raw material lookup preserves unknown exported color properties", () => {

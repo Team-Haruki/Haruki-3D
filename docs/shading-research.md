@@ -115,8 +115,10 @@ keeps these captured values as evidence rather than sending them unchanged to
 the final-resolution canvas. CostumeShop's 1024x1024 intermediate is scaled by
 its UI; the browser kernel currently renders the final 2048px image directly.
 The presentation layer therefore scales the two outline-width endpoints by
-`0.82` and reduces the shaded-color contribution from `0.5` to `0.3`. This
-produces a thin dark contour without changing the official shell formula,
+`0.5` to preserve the 1024px intermediate's screen-space contour at a direct
+2048px output, and reduces the shaded-color contribution from `0.5` to `0.3`.
+At the fixed full-body camera this puts a fully weighted silhouette near
+`1.2px` instead of `2px`, without changing the official shell formula,
 per-vertex mask, second-normal direction, or material sampling.
 
 The final global-outline blend is a Gamma-space operation. The game runs a

@@ -77,7 +77,7 @@ export const sekaiCostumeShopOutlineControllerDefaults = {
  * Keep the captured globals above intact and correct only the presentation.
  */
 export const sekaiPreviewOutlineCalibration = {
-  widthScale: 0.82,
+  widthScale: 0.5,
   shadedColorBlend: 0.3,
 } as const;
 
