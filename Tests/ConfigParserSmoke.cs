@@ -30,6 +30,32 @@ if (args is ["--compiled-cache-copy-race-worker", var sourcePath, var targetPath
 
 var tempDir = Path.Combine(Path.GetTempPath(), $"haruki-exporter-config-test-{Guid.NewGuid():N}");
 Directory.CreateDirectory(tempDir);
+var compactMasterDir = Path.Combine(tempDir, "compact-master");
+Directory.CreateDirectory(compactMasterDir);
+WriteJsonFile(Path.Combine(compactMasterDir, "compactCostume3dModels.json"), new Dictionary<string, object?>
+{
+    ["__ENUM__"] = new Dictionary<string, string[]>
+    {
+        ["unit"] = ["piapro", "light_sound"],
+        ["headCostume3dAssetbundleType"] = ["head_and_hair", "head_only"],
+    },
+    ["costume3dId"] = new[] { 101, 102 },
+    ["unit"] = new object?[] { 1, 0 },
+    ["assetbundleName"] = new object?[] { "01/0101", null },
+    ["headCostume3dAssetbundleType"] = new object?[] { 0, 1 },
+    ["colorAssetbundleName"] = new object?[] { null, "01" },
+    ["part"] = new object?[] { null, "a03" },
+    ["thumbnailAssetbundleName"] = new object?[] { "thumb-101", null },
+});
+var compactModels = MasterDataReader.ReadCostume3dModels(compactMasterDir);
+Expect(
+    compactModels.Count == 2 &&
+    compactModels[0].Unit == "light_sound" &&
+    compactModels[0].HeadCostume3dAssetbundleType == "head_and_hair" &&
+    compactModels[1].Unit == "piapro" &&
+    compactModels[1].Part == "a03",
+    "compact costume3dModels columns and enums expand to normal model rows"
+);
 var dependencyAssetRoot = Path.Combine(tempDir, "dependency-assets");
 var commonDependencyPath = Path.Combine(
     dependencyAssetRoot,
@@ -1298,51 +1324,6 @@ WriteJsonFile(Path.Combine(registryMasterDir, "gameCharacters.json"), new[]
 });
 WriteJsonFile(Path.Combine(registryMasterDir, "cards.json"), Array.Empty<object>());
 WriteJsonFile(Path.Combine(registryMasterDir, "cardCostume3ds.json"), Array.Empty<object>());
-WriteJsonFile(Path.Combine(registryMasterDir, "costume3dModelAvailablePatterns.json"), new[]
-{
-    new
-    {
-        headCostume3dId = 11001,
-        hairCostume3dId = 202,
-        unit = "light_sound",
-        isDefault = false
-    },
-    new
-    {
-        headCostume3dId = 11009,
-        hairCostume3dId = 202,
-        unit = "idol",
-        isDefault = false
-    },
-    new
-    {
-        headCostume3dId = 11001,
-        hairCostume3dId = 202,
-        unit = "idol",
-        isDefault = false
-    },
-    new
-    {
-        headCostume3dId = 11009,
-        hairCostume3dId = 203,
-        unit = "idol",
-        isDefault = false
-    },
-    new
-    {
-        headCostume3dId = 11001,
-        hairCostume3dId = 203,
-        unit = "idol",
-        isDefault = false
-    },
-    new
-    {
-        headCostume3dId = 11001,
-        hairCostume3dId = 202,
-        unit = "piapro",
-        isDefault = false
-    }
-});
 WriteJsonFile(Path.Combine(registryMasterDir, "costume3dModelNotAvailablePatterns.json"), new[]
 {
     new
@@ -1353,7 +1334,16 @@ WriteJsonFile(Path.Combine(registryMasterDir, "costume3dModelNotAvailablePattern
         isDefault = false
     }
 });
-WriteJsonFile(Path.Combine(registryMasterDir, "costume3dModelDefaultHairs.json"), Array.Empty<object>());
+WriteJsonFile(Path.Combine(registryMasterDir, "costume3dModelDefaultHairs.json"), new[]
+{
+    new
+    {
+        headCostume3dId = 11001,
+        hairCostume3dId = 202,
+        unit = "light_sound",
+        isDefault = true
+    }
+});
 var legacyAccessory = Path.Combine(
     registryAssetRoot,
     "live_pv",
@@ -1481,6 +1471,18 @@ File.WriteAllBytes(defaultHairFallback, new byte[] { 5 });
 File.WriteAllBytes(faceModelTypeVariant, new byte[] { 6 });
 File.WriteAllBytes(presetBody, new byte[] { 7 });
 var registryExport = new CostumeRegistryExporter().ExportInMemory(registryMasterDir, registryAssetRoot);
+Expect(
+    registryExport.HeadHairCompatibility.Rules.All(rule => rule.State is "not_available" or "default_hint"),
+    "compatibility registry contains only blacklist rows and default-hair hints"
+);
+Expect(
+    registryExport.HeadHairCompatibility.Rules.Any(rule =>
+        rule.State == "default_hint" &&
+        rule.HeadCostume3dId == 11001 &&
+        rule.HairCostume3dId == 202 &&
+        rule.IsDefault),
+    "default-hair master remains a fallback hint"
+);
 var registryOutput = Path.Combine(tempDir, "registry-output");
 new CostumeRegistryExporter().Export(
     registryMasterDir,
@@ -1683,19 +1685,19 @@ Expect(roleHeadOptionalAlias.PartType == "head_optional", "official cross-role h
 Expect(roleHeadOptionalAlias.Unit == "light_sound", "official cross-role alias keeps model unit");
 Expect(roleHeadOptionalAlias.PackagePath == legacyAccessoryEntry.PackagePath, "official cross-role alias reuses source package path");
 Expect(roleHeadOptionalAlias.AccessoryId == 11000, "official alias receives the canonical accessory id");
-var compatibleHeadAlias = registryExport.PartRegistry.Entries.Single(entry => entry.Costume3dId == 11001 && entry.CharacterId == 2 && entry.Unit == "light_sound");
-Expect(compatibleHeadAlias.PackagePath == legacyAccessoryEntry.PackagePath, "available cross-role head/hair pair reuses the accessory source package");
-Expect(compatibleHeadAlias.AccessoryId == 11000, "compatible alias receives the canonical accessory id");
-var crossUnitCompatibleBase = registryExport.PartRegistry.Entries.Single(entry => entry.Costume3dId == 11009 && entry.CharacterId == 2 && entry.Unit == "idol");
-var crossUnitCompatibleColor = registryExport.PartRegistry.Entries.Single(entry => entry.Costume3dId == 11001 && entry.CharacterId == 2 && entry.Unit == "idol");
-Expect(crossUnitCompatibleBase.AccessoryId == 11000, "cross-character cross-unit alias receives the canonical accessory id");
-Expect(crossUnitCompatibleColor.AccessoryId == 11000, "cross-character cross-unit color inherits the canonical accessory id");
-var sameCharacterCrossUnitBase = registryExport.PartRegistry.Entries.Single(entry => entry.Costume3dId == 11009 && entry.CharacterId == 21 && entry.Unit == "idol");
-var sameCharacterCrossUnitColor = registryExport.PartRegistry.Entries.Single(entry => entry.Costume3dId == 11001 && entry.CharacterId == 21 && entry.Unit == "idol");
-Expect(sameCharacterCrossUnitBase.AccessoryId == 11000, "same-character cross-unit alias is retained");
-Expect(sameCharacterCrossUnitColor.AccessoryId == 11000, "same-character cross-unit color inherits the canonical accessory id");
-var directSourceColorAlias = registryExport.PartRegistry.Entries.Single(entry => entry.Costume3dId == 11001 && entry.CharacterId == 2 && entry.Unit == "piapro");
-Expect(directSourceColorAlias.AccessoryId == 11000, "color-only cross-unit alias inherits its original source accessory id");
+Expect(
+    !registryExport.PartRegistry.Entries.Any(entry =>
+        entry.Costume3dId is 11001 or 11009 &&
+        entry.CharacterId == 2),
+    "head-hair compatibility does not invent cross-character part ownership"
+);
+Expect(
+    !registryExport.PartRegistry.Entries.Any(entry =>
+        entry.Costume3dId is 11001 or 11009 &&
+        entry.CharacterId == 21 &&
+        entry.Unit == "idol"),
+    "head-hair compatibility does not invent cross-unit part ownership"
+);
 var roleHairAlias = registryExport.PartRegistry.Entries.Single(entry => entry.Costume3dId == 202 && entry.CharacterId == 23);
 Expect(roleHairAlias.Unit == "light_sound", "official cross-role alias promotes default-unit rows into the preset role unit");
 Expect(roleHairAlias.PackagePath == defaultHairEntry.PackagePath, "official cross-role hair alias reuses source package path");

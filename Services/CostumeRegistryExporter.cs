@@ -177,14 +177,10 @@ public sealed class CostumeRegistryExporter
 
         var character3ds = ReadMaster<IReadOnlyList<Character3dMaster>>(normalizedMasterDirectory, "character3ds.json");
         var costume3ds = ReadMaster<IReadOnlyList<Costume3dMaster>>(normalizedMasterDirectory, "costume3ds.json");
-        var costumeModels = ReadMaster<IReadOnlyList<Costume3dModelMaster>>(normalizedMasterDirectory, "costume3dModels.json");
+        var costumeModels = MasterDataReader.ReadCostume3dModels(normalizedMasterDirectory);
         var gameCharacters = ReadMaster<IReadOnlyList<GameCharacterMaster>>(normalizedMasterDirectory, "gameCharacters.json");
         var cards = ReadMaster<IReadOnlyList<CardMaster>>(normalizedMasterDirectory, "cards.json");
         var cardCostumes = ReadMaster<IReadOnlyList<CardCostume3dMaster>>(normalizedMasterDirectory, "cardCostume3ds.json");
-        var availablePatterns = ReadMaster<IReadOnlyList<Costume3dModelPatternMaster>>(
-            normalizedMasterDirectory,
-            "costume3dModelAvailablePatterns.json"
-        );
         var notAvailablePatterns = ReadMaster<IReadOnlyList<Costume3dModelPatternMaster>>(
             normalizedMasterDirectory,
             "costume3dModelNotAvailablePatterns.json"
@@ -209,8 +205,6 @@ public sealed class CostumeRegistryExporter
         var partRegistry = BuildPartRegistry(
             costume3ds,
             character3ds,
-            availablePatterns,
-            costumeById,
             modelsByCostumeId,
             characterById,
             normalizedAssetRoot,
@@ -220,7 +214,6 @@ public sealed class CostumeRegistryExporter
         return new CostumeRegistryExport(
             PartRegistry: partRegistry,
             HeadHairCompatibility: BuildHeadHairCompatibility(
-                availablePatterns,
                 notAvailablePatterns,
                 defaultHairs,
                 costumeById,
@@ -240,8 +233,6 @@ public sealed class CostumeRegistryExporter
     private static PartRegistry BuildPartRegistry(
         IReadOnlyList<Costume3dMaster> costume3ds,
         IReadOnlyList<Character3dMaster> character3ds,
-        IReadOnlyList<Costume3dModelPatternMaster> availablePatterns,
-        IReadOnlyDictionary<int, Costume3dMaster> costumeById,
         IReadOnlyDictionary<int, IReadOnlyList<Costume3dModelMaster>> modelsByCostumeId,
         IReadOnlyDictionary<int, GameCharacterMaster> characterById,
         string assetRoot,
@@ -277,7 +268,6 @@ public sealed class CostumeRegistryExporter
             }
         }
 
-        AddCompatibleHeadRoleAliases(entries, availablePatterns, costumeById);
         AddOfficialPresetRoleAliases(entries, character3ds, characterById, assetRoot);
         AssignAccessoryIds(entries);
         return new PartRegistry(Version: 2, Source: source, Entries: entries);
@@ -408,73 +398,6 @@ public sealed class CostumeRegistryExporter
         entries.AddRange(aliases);
     }
 
-    private static void AddCompatibleHeadRoleAliases(
-        List<PartRegistryEntry> entries,
-        IReadOnlyList<Costume3dModelPatternMaster> availablePatterns,
-        IReadOnlyDictionary<int, Costume3dMaster> costumeById
-    )
-    {
-        var entriesByCostumeAndUnit = entries
-            .GroupBy(entry => (entry.Costume3dId, UnitKey(entry.Unit)))
-            .ToDictionary(group => group.Key, group => group.ToList());
-        var entriesByCostume = entries
-            .GroupBy(entry => entry.Costume3dId)
-            .ToDictionary(group => group.Key, group => group.ToList());
-        var existing = entries.Select(PartRegistryRoleKey).ToHashSet(StringComparer.Ordinal);
-        var aliases = new List<PartRegistryEntry>();
-
-        foreach (var pattern in availablePatterns)
-        {
-            if (!costumeById.ContainsKey(pattern.HeadCostume3dId) ||
-                !costumeById.TryGetValue(pattern.HairCostume3dId, out var hair))
-            {
-                continue;
-            }
-
-            foreach (var entry in ResolveCompatibleHeadCandidates(
-                         entriesByCostumeAndUnit,
-                         entriesByCostume,
-                         pattern.HeadCostume3dId,
-                         pattern.Unit))
-            {
-                var alias = entry with { CharacterId = hair.CharacterId, Unit = pattern.Unit };
-                if (existing.Add(PartRegistryRoleKey(alias)))
-                {
-                    aliases.Add(alias);
-                }
-            }
-        }
-
-        entries.AddRange(aliases);
-    }
-
-    private static IReadOnlyList<PartRegistryEntry> ResolveCompatibleHeadCandidates(
-        IReadOnlyDictionary<(int Costume3dId, string Unit), List<PartRegistryEntry>> entriesByCostumeAndUnit,
-        IReadOnlyDictionary<int, List<PartRegistryEntry>> entriesByCostume,
-        int costume3dId,
-        string? unit
-    )
-    {
-        var exact = ResolveOfficialPresetPartCandidates(entriesByCostumeAndUnit, costume3dId, unit);
-        if (exact.Count > 0 || !entriesByCostume.TryGetValue(costume3dId, out var candidates))
-        {
-            return exact;
-        }
-
-        var units = candidates
-            .Select(entry => UnitKey(entry.Unit))
-            .Distinct(StringComparer.Ordinal)
-            .ToList();
-        if (units.Count != 1)
-        {
-            throw new InvalidDataException(
-                $"Compatible head {costume3dId} for unit {UnitKey(unit)} has multiple model units: " +
-                string.Join(", ", units.OrderBy(value => value, StringComparer.Ordinal))
-            );
-        }
-        return candidates;
-    }
-
     private static void AddOfficialPresetPartAlias(
         IReadOnlyDictionary<(int Costume3dId, string Unit), List<PartRegistryEntry>> entriesByCostumeAndUnit,
         HashSet<string> existing,
@@ -586,7 +509,6 @@ public sealed class CostumeRegistryExporter
     }
 
     private static HeadHairCompatibilityRegistry BuildHeadHairCompatibility(
-        IReadOnlyList<Costume3dModelPatternMaster> availablePatterns,
         IReadOnlyList<Costume3dModelPatternMaster> notAvailablePatterns,
         IReadOnlyList<Costume3dModelPatternMaster> defaultHairs,
         IReadOnlyDictionary<int, Costume3dMaster> costumeById,
@@ -594,10 +516,9 @@ public sealed class CostumeRegistryExporter
         IReadOnlyDictionary<string, string> source
     )
     {
-        var available = NormalizePatterns(availablePatterns);
         var notAvailable = NormalizePatterns(notAvailablePatterns);
         var defaults = NormalizePatterns(defaultHairs);
-        var keys = available.Keys.Concat(notAvailable.Keys).Concat(defaults.Keys)
+        var keys = notAvailable.Keys.Concat(defaults.Keys)
             .Distinct()
             .OrderBy(key => key, StringComparer.Ordinal)
             .ToList();
@@ -605,18 +526,11 @@ public sealed class CostumeRegistryExporter
 
         foreach (var key in keys)
         {
-            available.TryGetValue(key, out var availablePattern);
             notAvailable.TryGetValue(key, out var notAvailablePattern);
             defaults.TryGetValue(key, out var defaultPattern);
-            var chosen = notAvailablePattern ?? availablePattern ?? defaultPattern!;
-            var state = notAvailablePattern is not null
-                ? "not_available"
-                : availablePattern is not null ? "available" : "default_hint";
+            var chosen = notAvailablePattern ?? defaultPattern!;
+            var state = notAvailablePattern is not null ? "not_available" : "default_hint";
             var sources = new List<string>();
-            if (availablePattern is not null)
-            {
-                sources.Add("costume3dModelAvailablePatterns");
-            }
             if (notAvailablePattern is not null)
             {
                 sources.Add("costume3dModelNotAvailablePatterns");
@@ -636,7 +550,7 @@ public sealed class CostumeRegistryExporter
                 HeadCostume3dId: chosen.HeadCostume3dId,
                 HairCostume3dId: chosen.HairCostume3dId,
                 State: state,
-                IsDefault: availablePattern?.IsDefault == true || defaultPattern is not null,
+                IsDefault: defaultPattern is not null,
                 HeadCompositionKind: composition.Kind,
                 ActiveContributors: composition.ActiveContributors,
                 Source: sources,
@@ -1209,14 +1123,7 @@ public sealed class CostumeRegistryExporter
         var result = new Dictionary<string, Costume3dModelPatternMaster>(StringComparer.Ordinal);
         foreach (var pattern in patterns)
         {
-            var key = PatternKey(pattern);
-            if (result.TryGetValue(key, out var existing))
-            {
-                result[key] = existing with { IsDefault = existing.IsDefault == true || pattern.IsDefault == true };
-                continue;
-            }
-
-            result[key] = pattern;
+            result.TryAdd(PatternKey(pattern), pattern);
         }
 
         return result;

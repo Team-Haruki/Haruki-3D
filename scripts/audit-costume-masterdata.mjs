@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -8,7 +8,6 @@ let costume3ds;
 let costume3dModels;
 let cards;
 let cardCostume3ds;
-let availablePatterns;
 let notAvailablePatterns;
 let defaultHairs;
 let costumeById;
@@ -29,10 +28,9 @@ export function auditCostumeMasterdata(options = {}) {
   sampleLimit = Number(options.sampleLimit ?? 12);
 
   costume3ds = readMaster("costume3ds.json");
-  costume3dModels = readMaster("costume3dModels.json");
+  costume3dModels = readCostume3dModels();
   cards = readMaster("cards.json");
   cardCostume3ds = readMaster("cardCostume3ds.json");
-  availablePatterns = readMaster("costume3dModelAvailablePatterns.json");
   notAvailablePatterns = readMaster("costume3dModelNotAvailablePatterns.json");
   defaultHairs = readMaster("costume3dModelDefaultHairs.json");
 
@@ -60,7 +58,6 @@ export function auditCostumeMasterdata(options = {}) {
       costume3dModels: costume3dModels.length,
       cards: cards.length,
       cardCostume3ds: cardCostume3ds.length,
-      availablePatterns: availablePatterns.length,
       notAvailablePatterns: notAvailablePatterns.length,
       defaultHairs: defaultHairs.length,
     },
@@ -164,52 +161,32 @@ function auditCardCostumeReferences() {
 }
 
 function auditCompatibilityPatterns() {
-  const available = normalizePatterns(availablePatterns, "available");
-  const notAvailable = normalizePatterns(notAvailablePatterns, "not_available");
-  const defaults = normalizePatterns(defaultHairs, "default_hair");
+  const notAvailable = normalizePatterns(notAvailablePatterns);
+  const defaults = normalizePatterns(defaultHairs);
   const conflicts = [];
-  let defaultInAvailable = 0;
-  let defaultInNotAvailable = 0;
-  let defaultOnly = 0;
 
-  for (const key of available.keys()) {
+  for (const key of defaults.keys()) {
     if (notAvailable.has(key)) {
       conflicts.push(key);
     }
   }
 
-  for (const key of defaults.keys()) {
-    if (available.has(key)) {
-      defaultInAvailable += 1;
-    } else {
-      defaultOnly += 1;
-    }
-    if (notAvailable.has(key)) {
-      defaultInNotAvailable += 1;
-    }
-  }
-
   if (conflicts.length > 0) {
-    addError("available_notAvailable_conflicts", { count: conflicts.length });
-    addSample("available_notAvailable_conflicts", conflicts);
+    addError("defaultHair_notAvailable_conflicts", { count: conflicts.length });
+    addSample("defaultHair_notAvailable_conflicts", conflicts);
   }
 
   addNote("compatibility_pattern_stats", {
-    availableRows: availablePatterns.length,
-    availableKeys: available.size,
-    availableDuplicateRows: available.duplicateRows,
-    availableConflictingDefaultRows: available.conflictingIsDefaultRows,
     notAvailableRows: notAvailablePatterns.length,
     notAvailableKeys: notAvailable.size,
+    notAvailableDuplicateRows: notAvailable.duplicateRows,
     defaultHairRows: defaultHairs.length,
     defaultHairKeys: defaults.size,
-    defaultInAvailable,
-    defaultInNotAvailable,
-    defaultOnly,
+    defaultHairDuplicateRows: defaults.duplicateRows,
+    blockedDefaultHairs: conflicts.length,
   });
 
   for (const [name, normalized] of [
-    ["available", available],
     ["not_available", notAvailable],
     ["default_hair", defaults],
   ]) {
@@ -348,28 +325,20 @@ function warnInvalidPatternRefs(patternName, role, ids) {
 function normalizePatterns(patterns) {
   const map = new Map();
   let duplicateRows = 0;
-  let conflictingIsDefaultRows = 0;
   for (const pattern of patterns) {
     const key = compatibilityKey(pattern);
     const normalized = {
       unit: pattern.unit ?? "",
       headCostume3dId: pattern.headCostume3dId,
       hairCostume3dId: pattern.hairCostume3dId,
-      isDefault: Boolean(pattern.isDefault),
     };
-    const existing = map.get(key);
-    if (existing) {
+    if (map.has(key)) {
       duplicateRows += 1;
-      if (existing.isDefault !== normalized.isDefault) {
-        conflictingIsDefaultRows += 1;
-      }
-      existing.isDefault = existing.isDefault || normalized.isDefault;
     } else {
       map.set(key, normalized);
     }
   }
   map.duplicateRows = duplicateRows;
-  map.conflictingIsDefaultRows = conflictingIsDefaultRows;
   return map;
 }
 
@@ -441,6 +410,26 @@ function addSample(code, values) {
 
 function readMaster(fileName) {
   return JSON.parse(readFileSync(path.join(masterDir, fileName), "utf8"));
+}
+
+function readCostume3dModels() {
+  if (existsSync(path.join(masterDir, "costume3dModels.json"))) {
+    return readMaster("costume3dModels.json");
+  }
+
+  const compact = readMaster("compactCostume3dModels.json");
+  const enums = compact.__ENUM__ ?? {};
+  const rowCount = compact.costume3dId?.length ?? 0;
+  return Array.from({ length: rowCount }, (_, index) => Object.fromEntries(
+    Object.entries(compact)
+      .filter(([key, column]) => key !== "__ENUM__" && Array.isArray(column))
+      .map(([key, column]) => [
+        key,
+        Number.isInteger(column[index]) && Array.isArray(enums[key])
+          ? enums[key][column[index]]
+          : column[index],
+      ])
+  ));
 }
 
 function normalizeBundleName(assetbundleName) {

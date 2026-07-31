@@ -26,10 +26,6 @@ test("audit passes a minimal valid costume master set", () => {
       { cardId: 900, costume3dId: 10, isInitialObtainHair: false },
       { cardId: 900, costume3dId: 30, isInitialObtainHair: false },
     ],
-    availablePatterns: [
-      pattern(10, 20, "light_sound", false),
-      pattern(10, 20, "light_sound", true),
-    ],
     notAvailablePatterns: [],
     defaultHairs: [
       pattern(10, 20, "light_sound"),
@@ -40,8 +36,8 @@ test("audit passes a minimal valid costume master set", () => {
     const result = runAudit(dir);
     assert.equal(result.errors.length, 0);
     assert.equal(result.warnings.length, 0);
-    assert.equal(result.notes.find((note) => note.code === "compatibility_pattern_stats").availableDuplicateRows, 1);
-    assert.equal(result.notes.find((note) => note.code === "compatibility_pattern_stats").availableKeys, 1);
+    assert.equal(result.notes.find((note) => note.code === "compatibility_pattern_stats").notAvailableKeys, 0);
+    assert.equal(result.notes.find((note) => note.code === "compatibility_pattern_stats").defaultHairKeys, 1);
     assert.equal(result.counts.cardUnlockPartsets["body+head"], 1);
     assert.equal(result.counts.costumeGroupColorCounts["2"], 1);
   } finally {
@@ -66,7 +62,6 @@ test("audit fails broken hard references", () => {
       { cardId: 901, costume3dId: 10, isInitialObtainHair: false },
       { cardId: 900, costume3dId: 999, isInitialObtainHair: false },
     ],
-    availablePatterns: [],
     notAvailablePatterns: [],
     defaultHairs: [],
   });
@@ -85,7 +80,7 @@ test("audit fails broken hard references", () => {
   }
 });
 
-test("audit reports compatibility conflicts as fatal", () => {
+test("audit reports a blacklisted default hair as fatal", () => {
   const dir = makeMasterFixture({
     costume3ds: [
       costume(10, "head", 1, 100, 1),
@@ -97,19 +92,18 @@ test("audit reports compatibility conflicts as fatal", () => {
     ],
     cards: [],
     cardCostume3ds: [],
-    availablePatterns: [
-      pattern(10, 20, "light_sound"),
-    ],
     notAvailablePatterns: [
       pattern(10, 20, "light_sound"),
     ],
-    defaultHairs: [],
+    defaultHairs: [
+      pattern(10, 20, "light_sound"),
+    ],
   });
 
   try {
     const result = runAudit(dir);
     assert.deepEqual(result.errors.map((error) => error.code), [
-      "available_notAvailable_conflicts",
+      "defaultHair_notAvailable_conflicts",
     ]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -127,7 +121,6 @@ function makeMasterFixture(files) {
     costume3dModels: "costume3dModels.json",
     cards: "cards.json",
     cardCostume3ds: "cardCostume3ds.json",
-    availablePatterns: "costume3dModelAvailablePatterns.json",
     notAvailablePatterns: "costume3dModelNotAvailablePatterns.json",
     defaultHairs: "costume3dModelDefaultHairs.json",
   };

@@ -21,9 +21,7 @@ public sealed class Character3dCostumeResolver
         var character3ds = ReadJson<IReadOnlyList<Character3dMaster>>(
             Path.Combine(normalizedMasterDirectory, "character3ds.json")
         );
-        var costumeModels = ReadJson<IReadOnlyList<Costume3dModelMaster>>(
-            Path.Combine(normalizedMasterDirectory, "costume3dModels.json")
-        );
+        var costumeModels = MasterDataReader.ReadCostume3dModels(normalizedMasterDirectory);
         var gameCharacters = ReadJson<IReadOnlyList<GameCharacterMaster>>(
             Path.Combine(normalizedMasterDirectory, "gameCharacters.json")
         );

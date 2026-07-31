@@ -168,9 +168,9 @@ bundle exists and can be opened.
 
 There is no runtime preset mode. Default role components and explicitly selected
 components use the same assembly and compatibility rules.
-`costume3dModelNotAvailablePatterns.json` wins over available patterns,
-and default hairs are emitted as hints when they are not explicit allow/block
-rules.
+`costume3dModelNotAvailablePatterns.json` is the custom head/hair blacklist:
+combinations absent from it are allowed. Default hairs are emitted separately
+as conflict fallback hints.
 
 ## Runtime Part Packages
 
