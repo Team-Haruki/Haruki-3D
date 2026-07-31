@@ -116,6 +116,12 @@ each region whenever that region's masterdata updates; it does not create a
 release directory or release identifier. The runtime role Catalog records the
 masterdata `dataVersion` as `masterVersion` and skips unchanged refreshes.
 
+Updater sparse inputs contain a `.haruki-sparse-input` marker and zero-byte
+placeholders for unchanged bundles whose raw files were already removed. Part
+workers process only non-empty bundles in that mode, preserve manifest stamps
+for reusable runtime packages, and fail rather than publish an empty or
+incomplete manifest.
+
 ## License
 
 Haruki-3D-Exporter is released under the MIT License. See `LICENSE`.

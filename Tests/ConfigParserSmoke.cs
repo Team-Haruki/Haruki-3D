@@ -214,6 +214,125 @@ Expect(JsonSerializer.Serialize(planned) == JsonSerializer.Serialize(plannedAgai
 var plannedWeights = planned.Select(worker => worker.Sum(entry => new FileInfo(entry.BundlePath!).Length)).ToArray();
 Expect(plannedWeights.Max() - plannedWeights.Min() <= 200,
     "work planner balances heavy source groups");
+var sparsePlaceholder = PartEntry(plannerRoot, "sparse-placeholder", 0, "sparse-source");
+Expect(PartPackageWorkPlanner.Plan(new[] { sparsePlaceholder }, 1).SelectMany(worker => worker).Any(),
+    "work planner does not hide empty bundles during a full export");
+Expect(!PartPackageWorkPlanner.Plan(new[] { sparsePlaceholder }, 1, sparseInput: true).SelectMany(worker => worker).Any(),
+    "work planner excludes sparse zero-byte bundle placeholders");
+
+var sparseManifestRoot = Path.Combine(tempDir, "sparse-manifest");
+var sparseManifestOutput = Path.Combine(sparseManifestRoot, "output");
+var sparseManifestPath = Path.Combine(sparseManifestRoot, "manifest.json");
+Directory.CreateDirectory(sparseManifestRoot);
+var sparseManifestEntry = PartEntry(
+    sparseManifestRoot,
+    "existing-runtime",
+    3,
+    "existing-runtime-source"
+);
+var sparseRuntimePath = Path.Combine(
+    sparseManifestOutput,
+    sparseManifestEntry.PackagePath,
+    "part-runtime.msgpack.br"
+);
+Directory.CreateDirectory(Path.GetDirectoryName(sparseRuntimePath)!);
+File.WriteAllBytes(sparseRuntimePath, new byte[] { 1 });
+var originalSparseStamp = PartPackageInputStamp.From(sparseManifestEntry);
+PartPackageExportManifest.Rebuild(
+    sparseManifestPath,
+    sparseManifestOutput,
+    new[] { sparseManifestEntry }
+);
+File.WriteAllBytes(sparseManifestEntry.BundlePath!, Array.Empty<byte>());
+var staleSparseError = Path.Combine(
+    sparseManifestOutput,
+    sparseManifestEntry.PackagePath,
+    "part-export-error.json"
+);
+File.WriteAllText(staleSparseError, "{}");
+PartPackageExportManifest.Rebuild(
+    sparseManifestPath,
+    sparseManifestOutput,
+    new[] { sparseManifestEntry },
+    sparseInput: true
+);
+Expect(
+    PartPackageExportManifest.Load(sparseManifestPath).CanSkip(
+        sparseManifestEntry.PackagePath,
+        sparseRuntimePath,
+        originalSparseStamp
+    ),
+    "sparse manifest rebuild preserves the real input stamp for an existing runtime"
+);
+Expect(!File.Exists(staleSparseError),
+    "sparse manifest rebuild clears stale errors beside reusable runtimes");
+
+var newSparseManifestPath = Path.Combine(sparseManifestRoot, "new-sparse-manifest.json");
+var newSparseEntry = PartEntry(
+    sparseManifestRoot,
+    "new-sparse-runtime",
+    0,
+    "new-sparse-runtime-source"
+);
+var newSparseRuntimePath = Path.Combine(
+    sparseManifestOutput,
+    newSparseEntry.PackagePath,
+    "part-runtime.msgpack.br"
+);
+Directory.CreateDirectory(Path.GetDirectoryName(newSparseRuntimePath)!);
+File.WriteAllBytes(newSparseRuntimePath, new byte[] { 1 });
+PartPackageExportManifest.Rebuild(
+    newSparseManifestPath,
+    sparseManifestOutput,
+    new[] { newSparseEntry },
+    sparseInput: true
+);
+Expect(
+    PartPackageExportManifest.Load(newSparseManifestPath).CanSkip(
+        newSparseEntry.PackagePath,
+        newSparseRuntimePath,
+        PartPackageInputStamp.From(newSparseEntry)
+    ),
+    "sparse manifest rebuild creates a placeholder stamp for an existing untracked runtime"
+);
+
+var missingSparseRuntime = PartEntry(
+    sparseManifestRoot,
+    "missing-runtime",
+    0,
+    "missing-runtime-source"
+);
+var rejectedMissingSparseRuntime = false;
+try
+{
+    PartPackageExportManifest.Rebuild(
+        sparseManifestPath,
+        sparseManifestOutput,
+        new[] { missingSparseRuntime },
+        sparseInput: true
+    );
+}
+catch (InvalidOperationException)
+{
+    rejectedMissingSparseRuntime = true;
+}
+Expect(rejectedMissingSparseRuntime,
+    "sparse manifest rebuild fails instead of silently publishing a missing runtime");
+var rejectedEmptyManifest = false;
+try
+{
+    PartPackageExportManifest.Rebuild(
+        newSparseManifestPath,
+        sparseManifestOutput,
+        Array.Empty<PartRegistryEntry>()
+    );
+}
+catch (InvalidOperationException)
+{
+    rejectedEmptyManifest = true;
+}
+Expect(rejectedEmptyManifest,
+    "manifest rebuild refuses to replace an existing registry with an empty one");
 var serializedWorkListPath = Path.Combine(plannerRoot, "worker.json");
 File.WriteAllText(serializedWorkListPath, JsonSerializer.Serialize(new PartPackageWorkList(
     new Dictionary<string, float> { ["5"] = 1.56f },
@@ -1707,6 +1826,7 @@ PartMaterialMetadataSmoke.Run();
 var repoRoot = FindRepoRoot();
 var programSource = File.ReadAllText(Path.Combine(repoRoot, "Program.cs"));
 var partPackageExporterSource = File.ReadAllText(Path.Combine(repoRoot, "Services", "PartPackageExporter.cs"));
+var partPackageManifestSource = File.ReadAllText(Path.Combine(repoRoot, "Services", "PartPackageExportManifest.cs"));
 var compiledPartCacheSource = File.ReadAllText(Path.Combine(repoRoot, "Services", "CompiledPartCache.cs"));
 var nativeMeshExporterSource = File.ReadAllText(Path.Combine(repoRoot, "Services", "UnityRuntimeNativeMeshExporter.cs"));
 var runtimeModelsSource = File.ReadAllText(Path.Combine(repoRoot, "Models", "PjskSekaiRuntimeModels.cs"));
@@ -1945,7 +2065,7 @@ Expect(partPackageExporterSource.Contains("part-export-error.json"), "part packa
 Expect(partPackageExporterSource.Contains("Part package export skipped"), "part package exporter continues after per-package export failures");
 Expect(partPackageExporterSource.Contains("DeletePartExportError"), "part package exporter removes stale per-package errors after success");
 Expect(partPackageExporterSource.Contains("IsInShard"), "part package exporter can filter deterministic shards");
-Expect(partPackageExporterSource.Contains("public static void Rebuild"), "part package exporter rebuilds one canonical worker manifest");
+Expect(partPackageManifestSource.Contains("public static void Rebuild"), "part package exporter rebuilds one canonical worker manifest");
 Expect(!partPackageExporterSource.Contains("bundle-open-summary.json"), "part package exporter omits per-package debug summaries from production output");
 Expect(partPackageExporterSource.Contains("missing_after_fallback"), "part package exporter marks material failures after full-directory fallback");
 Expect(assetStudioLoadedBundleSource.Contains("ResolveLoadBundlePaths"), "loaded bundle uses shared dependency resolver");

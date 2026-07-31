@@ -58,9 +58,10 @@ public sealed class PartPackageExporter
         bundleHashes = new BundleHashIndex(bundleHashIndex);
         bundleDependencies = new BundleDependencyIndex(bundleDependencyIndex);
         var manifest = PartPackageExportManifest.Load(manifestPath);
+        var sparseInput = File.Exists(Path.Combine(assetRoot, ".haruki-sparse-input"));
         var partEntries = LoadPartEntries(masterDirectory, assetRoot, workListPath)
             .Where(entry => entry.BundlePath is not null && entry.Status != "missing")
-            .Where(HasRequiredBundleFiles)
+            .Where(entry => PartPackageWorkPlanner.HasRequiredBundleFiles(entry, sparseInput))
             .ToList();
         var results = new List<PartPackageExportResult>();
         var claims = string.IsNullOrWhiteSpace(claimDirectory)
@@ -1460,13 +1461,6 @@ public sealed class PartPackageExporter
         return output.PartRegistry.Entries;
     }
 
-    private static bool HasRequiredBundleFiles(PartRegistryEntry entry)
-    {
-        return entry.BundlePath is not null &&
-            File.Exists(entry.BundlePath) &&
-            (entry.ColorVariationBundlePath is null || File.Exists(entry.ColorVariationBundlePath));
-    }
-
     private static PjskSpringBoneRuntimeManager BuildRuntimeManager(string partKind, SpringMonoBehaviourEntry manager, SpringBoneExport part)
     {
         var bonePathIds = part.Bones
@@ -2036,141 +2030,4 @@ public sealed record PartPackageWorkerSummary(
         batch.FileHashComputations,
         batch.ElapsedMilliseconds
     );
-}
-
-public sealed class PartPackageExportManifest
-{
-    private static readonly JsonSerializerOptions JsonOptions = new()
-    {
-        WriteIndented = false,
-        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-    };
-
-    private readonly string? manifestPath;
-    private readonly Dictionary<string, PartPackageInputStamp> packages;
-
-    private PartPackageExportManifest(string? manifestPath, Dictionary<string, PartPackageInputStamp> packages)
-    {
-        this.manifestPath = manifestPath;
-        this.packages = packages;
-    }
-
-    public static PartPackageExportManifest Load(string? manifestPath)
-    {
-        if (string.IsNullOrWhiteSpace(manifestPath) || !File.Exists(manifestPath))
-        {
-            return new PartPackageExportManifest(manifestPath, new Dictionary<string, PartPackageInputStamp>(StringComparer.Ordinal));
-        }
-
-        var packages = JsonSerializer.Deserialize<Dictionary<string, PartPackageInputStamp>>(
-            File.ReadAllText(manifestPath),
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
-        ) ?? new Dictionary<string, PartPackageInputStamp>(StringComparer.Ordinal);
-        return new PartPackageExportManifest(manifestPath, new Dictionary<string, PartPackageInputStamp>(packages, StringComparer.Ordinal));
-    }
-
-    public bool CanSkip(string packagePath, string runtimePath, PartPackageInputStamp stamp)
-    {
-        return !string.IsNullOrWhiteSpace(manifestPath) &&
-            File.Exists(runtimePath) &&
-            packages.TryGetValue(packagePath, out var existing) &&
-            existing == stamp;
-    }
-
-    public void Update(string packagePath, PartPackageInputStamp stamp)
-    {
-        if (string.IsNullOrWhiteSpace(manifestPath))
-        {
-            return;
-        }
-
-        packages[packagePath] = stamp;
-    }
-
-    public void Save()
-    {
-        if (string.IsNullOrWhiteSpace(manifestPath))
-        {
-            return;
-        }
-
-        var parent = Path.GetDirectoryName(manifestPath);
-        if (!string.IsNullOrWhiteSpace(parent))
-        {
-            Directory.CreateDirectory(parent);
-        }
-        File.WriteAllText(manifestPath, JsonSerializer.Serialize(packages, JsonOptions));
-    }
-
-    public static void Rebuild(
-        string manifestPath,
-        string outputDirectory,
-        IEnumerable<PartRegistryEntry> entries
-    )
-    {
-        var rebuilt = entries
-            .Where(entry => entry.BundlePath is not null && File.Exists(entry.BundlePath))
-            .Where(entry => entry.ColorVariationBundlePath is null || File.Exists(entry.ColorVariationBundlePath))
-            .GroupBy(entry => entry.PackagePath, StringComparer.Ordinal)
-            .Select(group => group.First())
-            .Where(entry => RuntimeJsonWriter.OutputsExist(
-                Path.Combine(
-                    outputDirectory,
-                    entry.PackagePath.Replace('/', Path.DirectorySeparatorChar),
-                    "part-runtime.json"
-                )
-            ))
-            .ToDictionary(
-                entry => entry.PackagePath,
-                PartPackageInputStamp.From,
-                StringComparer.Ordinal
-            );
-
-        var parent = Path.GetDirectoryName(manifestPath);
-        if (!string.IsNullOrWhiteSpace(parent))
-        {
-            Directory.CreateDirectory(parent);
-        }
-        var temporaryPath = manifestPath + $".{Guid.NewGuid():N}.tmp";
-        try
-        {
-            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(rebuilt, JsonOptions));
-            File.Move(temporaryPath, manifestPath, overwrite: true);
-        }
-        finally
-        {
-            File.Delete(temporaryPath);
-        }
-    }
-}
-
-public sealed record PartPackageInputStamp(
-    string BundlePath,
-    long BundleLength,
-    long BundleLastWriteUtcTicks,
-    string? ColorVariationBundlePath,
-    long? ColorVariationLength,
-    long? ColorVariationLastWriteUtcTicks
-)
-{
-    public static PartPackageInputStamp From(PartRegistryEntry entry)
-    {
-        if (entry.BundlePath is null)
-        {
-            throw new InvalidOperationException($"Part entry {entry.PackagePath} has no bundle path.");
-        }
-
-        var bundle = new FileInfo(entry.BundlePath);
-        FileInfo? colorVariation = entry.ColorVariationBundlePath is null
-            ? null
-            : new FileInfo(entry.ColorVariationBundlePath);
-        return new PartPackageInputStamp(
-            BundlePath: entry.BundlePath,
-            BundleLength: bundle.Length,
-            BundleLastWriteUtcTicks: bundle.LastWriteTimeUtc.Ticks,
-            ColorVariationBundlePath: entry.ColorVariationBundlePath,
-            ColorVariationLength: colorVariation?.Length,
-            ColorVariationLastWriteUtcTicks: colorVariation?.LastWriteTimeUtc.Ticks
-        );
-    }
 }

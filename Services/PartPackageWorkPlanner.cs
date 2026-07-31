@@ -12,7 +12,8 @@ public static class PartPackageWorkPlanner
 
     public static IReadOnlyList<IReadOnlyList<PartRegistryEntry>> Plan(
         IReadOnlyList<PartRegistryEntry> entries,
-        int workerCount
+        int workerCount,
+        bool sparseInput = false
     )
     {
         if (workerCount < 1)
@@ -22,7 +23,7 @@ public static class PartPackageWorkPlanner
 
         var representatives = entries
             .Where(entry => entry.BundlePath is not null && entry.Status != "missing")
-            .Where(HasRequiredBundleFiles)
+            .Where(entry => HasRequiredBundleFiles(entry, sparseInput))
             .GroupBy(entry => entry.PackagePath, StringComparer.Ordinal)
             .Select(group => group
                 .OrderBy(entry => entry.Costume3dId)
@@ -61,10 +62,26 @@ public static class PartPackageWorkPlanner
             .ToList();
     }
 
-    private static bool HasRequiredBundleFiles(PartRegistryEntry entry) =>
+    internal static bool HasRequiredBundleFiles(PartRegistryEntry entry, bool sparseInput) =>
         entry.BundlePath is not null &&
         File.Exists(entry.BundlePath) &&
-        (entry.ColorVariationBundlePath is null || File.Exists(entry.ColorVariationBundlePath));
+        (!sparseInput || new FileInfo(entry.BundlePath).Length > 0) &&
+        (
+            entry.ColorVariationBundlePath is null ||
+            (
+                File.Exists(entry.ColorVariationBundlePath) &&
+                (!sparseInput || new FileInfo(entry.ColorVariationBundlePath).Length > 0)
+            )
+        );
+
+    internal static bool HasSparsePlaceholder(PartRegistryEntry entry) =>
+        IsEmptyExistingFile(entry.BundlePath) ||
+        IsEmptyExistingFile(entry.ColorVariationBundlePath);
+
+    private static bool IsEmptyExistingFile(string? path) =>
+        path is not null &&
+        File.Exists(path) &&
+        new FileInfo(path).Length == 0;
 
     private static string SourceKey(PartRegistryEntry entry) =>
         entry.BaseSourceKey ?? entry.SourceKey ?? entry.PackagePath;

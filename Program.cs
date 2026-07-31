@@ -241,11 +241,16 @@ static int RunPartPackageWorkers(
     try
     {
         var planningStopwatch = Stopwatch.StartNew();
+        var sparseInput = File.Exists(Path.Combine(options.AssetRoot!, ".haruki-sparse-input"));
         var registry = new CostumeRegistryExporter().ExportInMemory(
             options.MasterDirectory!,
             options.AssetRoot!
         );
-        var partitions = PartPackageWorkPlanner.Plan(registry.PartRegistry.Entries, requestedWorkers);
+        var partitions = PartPackageWorkPlanner.Plan(
+            registry.PartRegistry.Entries,
+            requestedWorkers,
+            sparseInput
+        );
         var workers = partitions.Count;
         var workListPaths = new List<string>(workers);
         for (var index = 0; index < workers; index++)
@@ -330,7 +335,8 @@ static int RunPartPackageWorkers(
         PartPackageExportManifest.Rebuild(
             manifestPath,
             options.OutputDirectory,
-            registry.PartRegistry.Entries
+            registry.PartRegistry.Entries,
+            sparseInput
         );
         finalizingStopwatch.Stop();
         totalStopwatch.Stop();
