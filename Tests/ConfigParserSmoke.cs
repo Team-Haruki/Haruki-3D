@@ -1487,7 +1487,7 @@ var fallbackAccessory = Path.Combine(
     registryAssetRoot,
     "live_pv",
     "model",
-    "characterv2",
+    "character",
     "head_optional",
     "0020",
     "a04.bundle"
@@ -1496,7 +1496,7 @@ var fallbackAccessoryColor = Path.Combine(
     registryAssetRoot,
     "live_pv",
     "model",
-    "characterv2",
+    "character",
     "color_variation",
     "head_optional",
     "0020",
@@ -1761,9 +1761,9 @@ Expect(legacyAccessoryEntry.BundlePath == legacyAccessory, "head_optional regist
 Expect(legacyAccessoryEntry.ColorVariationBundlePath == legacyAccessoryColor, "head_optional registry resolves characterv2 color variation bundle");
 Expect(legacyAccessoryEntry.PackagePath.StartsWith("parts/_sources/head_optional/"), "head_optional registry writes shared source package path");
 var fallbackAccessoryEntry = registryExport.PartRegistry.Entries.Single(entry => entry.Costume3dId == 11009 && entry.CharacterId == 21 && entry.Unit == "light_sound");
-Expect(fallbackAccessoryEntry.Status == "planned", "head_optional fallback accessory is planned");
-Expect(fallbackAccessoryEntry.BundlePath == fallbackAccessory, "head_optional registry resolves costume assetbundleName fallback");
-Expect(fallbackAccessoryEntry.ColorVariationBundlePath == fallbackAccessoryColor, "head_optional registry resolves fallback color variation");
+Expect(fallbackAccessoryEntry.Status == "planned", "legacy head_optional accessory is planned alongside characterv2 accessories");
+Expect(fallbackAccessoryEntry.BundlePath == fallbackAccessory, "head_optional registry resolves the legacy character base bundle");
+Expect(fallbackAccessoryEntry.ColorVariationBundlePath == fallbackAccessoryColor, "head_optional registry resolves the legacy character color variation");
 Expect(fallbackAccessoryEntry.AttachNode == "a04", "head_optional fallback accessory keeps attach node");
 var emptyAccessoryEntry = registryExport.PartRegistry.Entries.Single(entry => entry.Costume3dId == 1);
 Expect(emptyAccessoryEntry.PartType == "head_optional", "empty head_default slot is exported as head_optional");
@@ -2028,7 +2028,8 @@ Expect(costumeRegistryExporterSource.Contains("BuildSourceIdentity"), "registry 
 Expect(costumeRegistryExporterSource.Contains("SHA256.HashData"), "registry exporter uses stable source key hashes");
 Expect(costumeRegistryExporterSource.Contains("parts/_sources/"), "registry exporter points duplicate part ids at shared source package paths");
 Expect(costumeRegistryExporterSource.Contains("ResolveAssetBaseDirectoryCandidates"), "registry exporter resolves the characterv2 asset root");
-Expect(!costumeRegistryExporterSource.Contains("\"model\", \"character\""), "registry exporter omits legacy character model roots");
+Expect(costumeRegistryExporterSource.Contains("string.Equals(part, \"head_optional\""), "legacy character model roots are limited to head_optional");
+Expect(costumeRegistryExporterSource.Contains("\"model\", \"character\", part"), "registry exporter includes legacy head_optional model roots");
 Expect(!costumeRegistryExporterSource.Contains("Path.Combine(assetRoot, part)"), "registry exporter omits flat asset roots");
 Expect(partPackageExporterSource.Contains("SelectRepresentativePartEntries"), "part package exporter exports each shared source package once");
 Expect(partPackageExporterSource.Contains("GroupBy(entry => entry.PackagePath"), "part package exporter groups export work by package path");

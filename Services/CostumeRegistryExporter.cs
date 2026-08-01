@@ -1179,11 +1179,21 @@ public sealed class CostumeRegistryExporter
     private static IEnumerable<string> ResolveAssetBaseDirectoryCandidates(string assetRoot, string part)
     {
         yield return Path.Combine(assetRoot, "live_pv", "model", "characterv2", part);
+
+        if (string.Equals(part, "head_optional", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return Path.Combine(assetRoot, "live_pv", "model", "character", part);
+        }
     }
 
     private static IEnumerable<string> ResolveColorVariationBaseDirectoryCandidates(string assetRoot, string part)
     {
         yield return Path.Combine(assetRoot, "live_pv", "model", "characterv2", "color_variation", part);
+
+        if (string.Equals(part, "head_optional", StringComparison.OrdinalIgnoreCase))
+        {
+            yield return Path.Combine(assetRoot, "live_pv", "model", "character", "color_variation", part);
+        }
     }
 
     private static string? ResolveExistingBundlePath(IEnumerable<string> baseDirectories, string relativePath)
