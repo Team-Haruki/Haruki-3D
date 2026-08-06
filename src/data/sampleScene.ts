@@ -19,7 +19,6 @@ export type PreviewLightState = {
   rimEmission: number;
   rimLightInfluence: number;
   rimShadowSharpness: number;
-  characterHeight: number;
 };
 
 export type SekaiRuntimeMaterialProfile = {
@@ -380,7 +379,6 @@ export const previewLightDefaults: PreviewLightState = {
   rimEmission: sekaiCostumeShopControllerDefaults.rimEmission,
   rimLightInfluence: sekaiCostumeShopControllerDefaults.rimLightInfluence,
   rimShadowSharpness: sekaiCostumeShopControllerDefaults.rimShadowSharpness,
-  characterHeight: 1,
 };
 
 export const sekaiRuntimeMaterialProfile: SekaiRuntimeMaterialProfile = {

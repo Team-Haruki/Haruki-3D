@@ -152,7 +152,9 @@ export {
   readRawMaterialTexture,
 } from "./engine/rawMaterialRuntime";
 export {
-  applyUnityCharacterHeight,
+  applyUnityCharacterModelScale,
+  resolveCostumeShopHeightRate,
+  resolveCostumeShopModelScale,
   buildUnityPrefabSourceGraph,
   createUnityPrefabConstraintRuntime,
   installUnityRuntimeNativeMeshes,

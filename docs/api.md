@@ -5,6 +5,10 @@ runtime loading, character assembly, animation, SpringBone, camera state, and
 WebGL rendering. The product owns layout, controls, command parsing,
 localization, loading indicators, and user-facing errors.
 
+This API renders the CostumeShop-style single-character preview. Full 3DMV is a
+separate original-Unity WebGL/WASM runtime; consumers must not treat this API as
+a translated 3DMV player.
+
 The browser API does not accept raw Unity bundles and does not call the Docker
 capture service.
 

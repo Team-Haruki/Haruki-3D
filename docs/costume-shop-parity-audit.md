@@ -36,6 +36,7 @@ Status vocabulary:
 | Drag/pinch input and mutable camera interaction state | web host | host boundary |
 | Full character rebuild after resolved part change | kernel | implemented |
 | Body/face/head_optional model assembly | exporter + kernel | implemented |
+| Master height and CostumeShop `heightRate` | exporter + kernel | implemented |
 | Materials, C/S/H, lighting and skin ramp | exporter + kernel | implemented |
 | FaceSDF and hair shadow | exporter + kernel | implemented |
 | Outline geometry, color path and fixed state | kernel | implemented |
@@ -118,6 +119,9 @@ Projected head coordinates stayed inside NDC
 | Official invariant | Implementation |
 | --- | --- |
 | Body prefab selection is exactly `gameCharacters.figure + breastSize`; no neighboring body variant is a fallback. | Registry/exporter resolution fails the entry when the selected bundle is absent. Five-region role-8 audits resolve every usable entry to `ladies_s`. |
+| `characterHeightMeters` remains the raw MasterGameCharacter height; it is not a precomputed root scale. | Exporter and registries carry one canonical height value without duplicating a derived field. |
+| CostumeShop computes `heightRate = 0.5 + 0.8 / characterHeightMeters`, then passes `characterHeightMeters * heightRate` through the shared model setup chain. | `resolveCostumeShopHeightRate`, `resolveCostumeShopModelScale` and `applyCostumeShopCharacterHeight` derive the final `Position` scale once at import. |
+| `heightRate` differentiates roles that share one `figure + breastSize` body bundle; it does not select a bundle or scale only the chest. | The final scale is uniform on `body/Position`, so face, body, hair, accessory and their bones remain one assembled character. |
 | Body is the final host; face is an assembly input. | `unityPrefabRuntime.ts` builds the body-rooted source graph and exposes the surviving face Neck as the live body attach point, never the destroyed body Neck. |
 | Move body Head children into face Head. | `applyOfficialModelCombineSetup()` drains the body Head children into the surviving face Head while preserving their authored local TRS. |
 | Patch body Neck/Head bone slots to face Neck/Head. | Native skinned-mesh rebinding uses the assembled node map. |
@@ -141,7 +145,7 @@ destruction of the temporary face wrapper, not a fixed node-count rule.
 | Official invariant | Implementation |
 | --- | --- |
 | Rotation, Parent and Aim sources are rebound by active transform name/path. | `unityConstraintRuntime.ts` and `resolveReboundConstraintSourceNode`. |
-| ParentConstraint translation offsets scale with character height. | Constraint runtime receives the active height and scales translation offsets. |
+| ParentConstraint translation offsets scale with the final model scale passed to `CharacterModel.Setup`. | Constraint runtime receives the derived CostumeShop model scale, not raw Master height or the dimensionless rate. |
 | Constraints run after model combination and before SpringBone simulation. | Engine frame order is assembly sync, ExtraBone/constraints, then SpringBone. |
 | Constraint state is continuously applied, not only copied once at load. | `UnityConstraintRuntime.update()` runs in the runtime frame. |
 

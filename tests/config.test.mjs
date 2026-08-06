@@ -523,7 +523,7 @@ test("capture camera preset uses official CostumeShop camera parameters and keep
     engineSource,
     /this\.setCameraTarget\(pose\.target\);\s+this\.camera\.position\.copy\(pose\.position\);\s+this\.camera\.fov = pose\.fov;/s
   );
-  assert.match(engineSource, /getDefaultCameraPose\(this\.characterHeight\)/);
+  assert.match(engineSource, /getDefaultCameraPose\(this\.characterModelScaleMeters\)/);
   assert.match(harnessSource, /cameraPreset: "capture"/);
   assert.match(harnessSource, /return normalizeCameraPreset\(params\.get\("cameraPreset"\)\);/);
   assert.match(harnessSource, /return normalizeCameraProfile\(params\.get\("cameraProfile"\)\);/);
@@ -537,7 +537,7 @@ test("combined runtime imports apply character height before capture camera fram
 
   assert.match(
     engineSource,
-    /this\.currentBodyAsset = characterAsset\.bodyAsset;\s+this\.currentHeadAsset = characterAsset\.headAsset;\s+this\.characterLighting\.setCharacterSkinColors\(characterAsset\.skinColors \?\? null\);\s+(?:this\.lastConstraintSetupDiagnostics = null;\s+)?this\.applyCharacterHeight\(characterAsset\.bodyAsset\.characterHeightMeters \?\? this\.characterHeight\);/s
+    /this\.currentBodyAsset = characterAsset\.bodyAsset;\s+this\.currentHeadAsset = characterAsset\.headAsset;\s+this\.characterLighting\.setCharacterSkinColors\(characterAsset\.skinColors \?\? null\);\s+(?:this\.lastConstraintSetupDiagnostics = null;\s+)?this\.applyCostumeShopCharacterHeight\(\s*characterAsset\.bodyAsset\.characterHeightMeters \?\? this\.masterCharacterHeightMeters\s*\);/s
   );
 });
 
@@ -886,7 +886,7 @@ test("part registry runtime path keeps role motion separate from part packages",
   assert.match(constraintRuntimeSource, /aim constraint applied with exported aim\/up vectors/);
   assert.match(constraintRuntimeSource, /applyAimConstraint/);
   assert.match(constraintRuntimeSource, /worldUpObject/);
-  assert.match(constraintRuntimeSource, /multiplyScalar\(characterHeight\)/);
+  assert.match(constraintRuntimeSource, /multiplyScalar\(characterModelScale\)/);
   assert.match(constraintRuntimeSource, /export class UnityConstraintRuntime/);
   assert.match(constraintRuntimeSource, /update\(\): RuntimeConstraintDebug/);
   assert.match(constraintRuntimeSource, /applyConstraintRotationOffset/);

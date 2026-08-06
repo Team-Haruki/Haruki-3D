@@ -4,6 +4,10 @@ Runtime engine for rendering converted Project SEKAI 3D character packages in a 
 
 This package is not a product GUI. Its public entry is a browser rendering kernel that owns package loading, scene assembly, animation, SpringBone, camera state, and rendering. The capture stack uses a separate internal adapter around the same kernel implementation.
 
+This kernel is the CostumeShop/character-preview runtime. Full 3DMV playback is
+owned by the original Unity WebGL/WASM project and is deliberately not
+reimplemented here.
+
 The engine does not parse Unity bundles. It loads only the final, role-scoped
 Haruki runtime package:
 
@@ -108,6 +112,18 @@ The engine reads exact PJSK semantics from `PJSK_sekai_runtime`:
 - morph hash/channel bindings
 - embedded face/light motion data
 - SpringBone metadata and Unity Prefab runtime data
+
+The runtime package keeps `characterHeightMeters` as the unmodified
+`gameCharacters.height` value. The kernel applies the CostumeShop caller policy
+once before model setup:
+
+```text
+heightRate = 0.5 + 0.8 / characterHeightMeters
+Position.localScale = characterHeightMeters * heightRate
+```
+
+This preserves the authored `figure + breastSize` body bundle while retaining
+continuous per-character height differences inside the same size category.
 
 Motion behavior:
 

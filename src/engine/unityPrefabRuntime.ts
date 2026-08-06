@@ -24,6 +24,7 @@ export type PrefabHeadFollowDebug = {
   setupVersion?: string;
   sourceScaleCorrection?: {
     characterHeightMeters: number | null;
+    costumeShopHeightRate: number | null;
     characterModelScaleMeters: number | null;
     scale: number;
     reason: string;
@@ -102,16 +103,36 @@ export type NativeMeshSkinBindingDiagnostics = {
   restMatrixSpreadBonePath: string | null;
 };
 
-export function applyUnityCharacterHeight(
+const COSTUME_SHOP_NEUTRAL_HEIGHT_METERS = 1.6;
+
+export function resolveCostumeShopHeightRate(masterHeightMeters: number) {
+  const height = THREE.MathUtils.clamp(
+    masterHeightMeters || COSTUME_SHOP_NEUTRAL_HEIGHT_METERS,
+    0.5,
+    2
+  );
+  return 0.5 + 0.8 / height;
+}
+
+export function resolveCostumeShopModelScale(masterHeightMeters: number) {
+  const height = THREE.MathUtils.clamp(
+    masterHeightMeters || COSTUME_SHOP_NEUTRAL_HEIGHT_METERS,
+    0.5,
+    2
+  );
+  return height * resolveCostumeShopHeightRate(height);
+}
+
+export function applyUnityCharacterModelScale(
   graph: UnityPrefabSourceGraph,
-  characterHeight: number
+  characterModelScale: number
 ) {
-  const height = THREE.MathUtils.clamp(characterHeight || 1, 0.5, 2);
+  const scale = THREE.MathUtils.clamp(characterModelScale || 1, 0.5, 2);
   const positionNote = graph.nodeByPath.get("body/Position");
   if (!positionNote) {
     throw new Error("Official CharacterModel PositionNote 'body/Position' was not found.");
   }
-  positionNote.scale.setScalar(height);
+  positionNote.scale.setScalar(scale);
   positionNote.updateMatrix();
   graph.root.updateMatrixWorld(true);
   return positionNote;
@@ -595,11 +616,18 @@ function resolveUnityPrefabSourceScaleCorrection(extension: unknown) {
       bodyManifest.CharacterHeightMeters ??
       bodyManifest.characterHeightMeters
   );
+  const costumeShopHeightRate = characterHeightMeters === null
+    ? null
+    : resolveCostumeShopHeightRate(characterHeightMeters);
+  const characterModelScaleMeters = characterHeightMeters === null
+    ? null
+    : resolveCostumeShopModelScale(characterHeightMeters);
   return {
     characterHeightMeters,
-    characterModelScaleMeters: characterHeightMeters,
+    costumeShopHeightRate,
+    characterModelScaleMeters,
     scale: 1,
-    reason: "master-character-height-via-position-note",
+    reason: "costume-shop-height-rate-via-position-note",
   };
 }
 
@@ -930,7 +958,7 @@ function buildUnityRuntimeNativeGeometry(source: RuntimeNativeMeshSource) {
 export function syncUnityPrefabSourceGraph(
   graph: UnityPrefabSourceGraph,
   extension: unknown,
-  characterHeight: number,
+  characterModelScale: number,
   constraintRuntime?: { update(): RuntimeConstraintDebug } | null
 ): RuntimeConstraintDebug | null {
   graph.root.updateMatrixWorld(true);
@@ -939,7 +967,7 @@ export function syncUnityPrefabSourceGraph(
     : applyUnityRuntimeConstraints(
       graph,
       readRuntimeUnitySetup0414(extension)?.constraintSetup,
-      characterHeight
+      characterModelScale
     );
 
   for (const binding of graph.meshCarrierBindings) {
@@ -955,11 +983,11 @@ export function syncUnityPrefabSourceGraph(
 export function createUnityPrefabConstraintRuntime(
   graph: UnityPrefabSourceGraph,
   extension: unknown,
-  characterHeight: number
+  characterModelScale: number
 ) {
   const setup = readRuntimeUnitySetup0414(extension)?.constraintSetup;
   return setup
-    ? new UnityConstraintRuntime(graph, setup, characterHeight)
+    ? new UnityConstraintRuntime(graph, setup, characterModelScale)
     : null;
 }
 

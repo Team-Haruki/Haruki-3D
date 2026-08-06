@@ -41,7 +41,8 @@ export type RuntimeCameraDebug = {
   zoom: number;
   minPolarDegrees: number;
   maxPolarDegrees: number;
-  characterHeight: number;
+  masterCharacterHeightMeters: number;
+  characterModelScaleMeters: number;
 };
 
 type HarukiCameraPose = {
@@ -58,11 +59,11 @@ type HarukiCameraPose = {
   } | null;
 };
 
-export function getDefaultCameraPose(characterHeight: number): HarukiCameraPose {
-  const target = DEFAULT_TARGET_SCALE.clone().multiplyScalar(characterHeight);
+export function getDefaultCameraPose(characterModelScale: number): HarukiCameraPose {
+  const target = DEFAULT_TARGET_SCALE.clone().multiplyScalar(characterModelScale);
   return {
     target,
-    position: target.clone().add(DEFAULT_OFFSET_SCALE.clone().multiplyScalar(characterHeight)),
+    position: target.clone().add(DEFAULT_OFFSET_SCALE.clone().multiplyScalar(characterModelScale)),
     fov: DEFAULT_FOV,
     costumeShopState: null,
   };
@@ -127,12 +128,12 @@ export function shiftCameraPoseRight(
   position: THREE.Vector3,
   target: THREE.Vector3,
   amount: number,
-  characterHeight: number
+  characterModelScale: number
 ) {
   const forward = target.clone().sub(position).normalize();
   const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
   const shift = right.multiplyScalar(
-    CAPTURE_LATERAL_SHIFT_SCALE * amount * characterHeight
+    CAPTURE_LATERAL_SHIFT_SCALE * amount * characterModelScale
   );
   return {
     target: target.clone().add(shift),

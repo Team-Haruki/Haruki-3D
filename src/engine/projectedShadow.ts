@@ -23,7 +23,7 @@ export type ProjectedShadowSettingsInput = Partial<ProjectedShadowSettings>;
 export type RuntimeProjectedShadowDebug = {
   visible: boolean;
   floorY: number;
-  characterHeight: number;
+  characterModelScale: number;
   settings: ProjectedShadowSettings;
   targetPosition: { x: number; y: number; z: number };
   targetPositions: Array<{ x: number; y: number; z: number }>;
@@ -62,7 +62,7 @@ export const defaultProjectedShadowSettings: ProjectedShadowSettings = {
 type CharacterProjectedShadowUpdate = {
   targetWorldPositions: THREE.Vector3[];
   lightWorldPosition: THREE.Vector3 | null;
-  characterHeight: number;
+  characterModelScale: number;
   visible: boolean;
 };
 
@@ -160,7 +160,7 @@ export class CharacterProjectedShadowController {
 
       const direction = this.resolveDirection(target, state.lightWorldPosition);
       const heightRatio = (target.y - this.settings.floorY) /
-        Math.max(0.001, state.characterHeight);
+        Math.max(0.001, state.characterModelScale);
       const distanceToFloor = this.settings.height * heightRatio;
       const directionalX = target.x + direction.x * distanceToFloor;
       const directionalZ = target.z + direction.z * distanceToFloor;
@@ -185,7 +185,7 @@ export class CharacterProjectedShadowController {
     }
   }
 
-  getDebugSnapshot(characterHeight: number): RuntimeProjectedShadowDebug {
+  getDebugSnapshot(characterModelScale: number): RuntimeProjectedShadowDebug {
     const pair = this.pairs[0];
     pair.directionalAnchor.updateMatrixWorld(true);
     pair.crossAnchor.updateMatrixWorld(true);
@@ -198,7 +198,7 @@ export class CharacterProjectedShadowController {
     return {
       visible: this.group.visible,
       floorY: Number(this.settings.floorY.toFixed(4)),
-      characterHeight: Number(characterHeight.toFixed(4)),
+      characterModelScale: Number(characterModelScale.toFixed(4)),
       settings: { ...this.settings },
       targetPosition: vectorSnapshot(targetPosition),
       targetPositions: this.pairs.map((current) => vectorSnapshot(current.targetWorldPosition)),

@@ -130,12 +130,12 @@ export class UnityConstraintRuntime {
   constructor(
     private readonly graph: UnityConstraintRuntimeGraph,
     private readonly setup: RuntimeConstraintSetupSource,
-    characterHeight: number
+    characterModelScale: number
   ) {
     graph.root.updateMatrixWorld(true);
     const constraints = Array.isArray(setup.constraints) ? setup.constraints : [];
     this.constraints = constraints.map((constraint) =>
-      resolveRuntimeConstraint(graph, constraint, characterHeight)
+      resolveRuntimeConstraint(graph, constraint, characterModelScale)
     );
   }
 
@@ -150,7 +150,7 @@ export class UnityConstraintRuntime {
 export function applyUnityRuntimeConstraints(
   graph: UnityConstraintRuntimeGraph,
   setup: RuntimeConstraintSetupSource | undefined,
-  characterHeight: number
+  characterModelScale: number
 ): RuntimeConstraintDebug | null {
   if (!setup) {
     return null;
@@ -159,7 +159,7 @@ export function applyUnityRuntimeConstraints(
   const constraints = Array.isArray(setup.constraints) ? setup.constraints : [];
   graph.root.updateMatrixWorld(true);
   const entries = constraints
-    .map((constraint) => resolveRuntimeConstraint(graph, constraint, characterHeight))
+    .map((constraint) => resolveRuntimeConstraint(graph, constraint, characterModelScale))
     .map(applyResolvedRuntimeConstraint);
   graph.root.updateMatrixWorld(true);
 
@@ -190,7 +190,7 @@ function makeRuntimeConstraintDebug(
 function resolveRuntimeConstraint(
   graph: UnityConstraintRuntimeGraph,
   constraint: RuntimeConstraintSource,
-  characterHeight: number
+  characterModelScale: number
 ): ResolvedRuntimeConstraint {
   const type = readRuntimeString(constraint.type) ?? "unknown";
   const ownerPath = readRuntimeString(constraint.ownerPath);
@@ -203,7 +203,7 @@ function resolveRuntimeConstraint(
   ).node;
   const sourceRows = Array.isArray(constraint.sources) ? constraint.sources : [];
   const sources = sourceRows.map((source) =>
-    resolveConstraintSource(graph, source, characterHeight)
+    resolveConstraintSource(graph, source, characterModelScale)
   );
   const sourceDebug = sources.map((source) => source.debug);
   return {
@@ -340,13 +340,16 @@ function appliedEntry(
 function resolveConstraintSource(
   graph: UnityConstraintRuntimeGraph,
   source: RuntimeConstraintBindingSource,
-  characterHeight: number
+  characterModelScale: number
 ): ResolvedConstraintSource {
   const sourcePath = readRuntimeString(source.sourcePath);
   const sourceName = readRuntimeString(source.sourceName);
   const resolved = resolveReboundConstraintSourceNode(graph, sourcePath, sourceName);
   const weight = readRuntimeNumber(source.weight) ?? 1;
-  const translationOffset = asConstraintTranslationOffset(source.translationOffset, characterHeight);
+  const translationOffset = asConstraintTranslationOffset(
+    source.translationOffset,
+    characterModelScale
+  );
   const rotationOffset = asConstraintRotationOffset(source.rotationOffset);
   return {
     node: resolved.node,
@@ -706,14 +709,14 @@ function weightedSourceRotation(sources: AppliedConstraintSource[]) {
 
 function asConstraintTranslationOffset(
   value: RuntimeConstraintBindingSource["translationOffset"],
-  characterHeight: number
+  characterModelScale: number
 ): THREE.Vector3 | null {
   if (!value || typeof value !== "object") {
     return null;
   }
   return convertUnityPositionToThree(
     readUnityVector3(value, new THREE.Vector3())
-  ).multiplyScalar(characterHeight);
+  ).multiplyScalar(characterModelScale);
 }
 
 function asConstraintRotationOffset(

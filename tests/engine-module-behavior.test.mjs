@@ -44,7 +44,7 @@ test("projected shadow updates retain official toe-layer state", () => {
       new THREE.Vector3(0.1, 0.05, 0.2),
     ],
     lightWorldPosition: new THREE.Vector3(1, 2, -1),
-    characterHeight: 1,
+    characterModelScale: 1,
     visible: true,
   });
 
@@ -64,7 +64,7 @@ test("a missing toe never duplicates the remaining projected shadow", () => {
   shadow.update({
     targetWorldPositions: [new THREE.Vector3(-0.1, 0.05, 0.2)],
     lightWorldPosition: new THREE.Vector3(1, 2, -1),
-    characterHeight: 1,
+    characterModelScale: 1,
     visible: true,
   });
 

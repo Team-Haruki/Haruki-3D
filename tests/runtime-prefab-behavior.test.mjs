@@ -2,15 +2,22 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import {
-  applyUnityCharacterHeight,
+  applyUnityCharacterModelScale,
   buildUnityPrefabSourceGraph,
   createUnityPrefabConstraintRuntime,
   installUnityRuntimeNativeMeshes,
   makeUnityPrefabHeadFollowDebugSnapshot,
+  resolveCostumeShopHeightRate,
+  resolveCostumeShopModelScale,
   syncUnityPrefabSourceGraph,
 } from "../dist/haruki-3d-engine-internal.js";
 
-test("character height follows the official PositionNote scale boundary", () => {
+test("CostumeShop height rate differentiates characters inside one body-size bundle", () => {
+  assert.ok(Math.abs(resolveCostumeShopHeightRate(1.68) - 0.9761904762) < 1e-9);
+  assert.ok(Math.abs(resolveCostumeShopModelScale(1.52) - 1.56) < 1e-9);
+  assert.ok(Math.abs(resolveCostumeShopModelScale(1.6) - 1.6) < 1e-9);
+  assert.ok(Math.abs(resolveCostumeShopModelScale(1.68) - 1.64) < 1e-9);
+
   const extension = makeRuntimeExtension();
   extension.runtimeUnitySetup.prefabGraphs[0].transforms.push(
     transform(15, "body/Position", 1),
@@ -19,12 +26,12 @@ test("character height follows the official PositionNote scale boundary", () => 
   const graph = buildUnityPrefabSourceGraph(extension);
 
   assert.ok(graph);
-  applyUnityCharacterHeight(graph, 1.68);
+  applyUnityCharacterModelScale(graph, resolveCostumeShopModelScale(1.68));
 
   assert.deepEqual(graph.root.scale.toArray(), [1, 1, 1]);
   assert.deepEqual(
     graph.nodeByPath.get("body/Position").scale.toArray(),
-    [1.68, 1.68, 1.68]
+    [1.6400000000000001, 1.6400000000000001, 1.6400000000000001]
   );
   assert.deepEqual(
     graph.nodeByPath.get("body/Body").scale.toArray(),
@@ -49,9 +56,10 @@ test("character height never applies a one-off body bundle scale override", () =
   assert.deepEqual(graph.root.scale.toArray(), [1, 1, 1]);
   assert.deepEqual(graph.debug.sourceScaleCorrection, {
     characterHeightMeters: 1.68,
-    characterModelScaleMeters: 1.68,
+    costumeShopHeightRate: 0.9761904761904763,
+    characterModelScaleMeters: 1.6400000000000001,
     scale: 1,
-    reason: "master-character-height-via-position-note",
+    reason: "costume-shop-height-rate-via-position-note",
   });
 });
 

@@ -76,11 +76,12 @@ import {
 } from "./projectedShadow";
 import { buildPrefabNodePathLookup } from "./prefabNodeLookup";
 import {
-  applyUnityCharacterHeight,
+  applyUnityCharacterModelScale,
   buildUnityPrefabSourceGraph,
   createUnityPrefabConstraintRuntime,
   installUnityRuntimeNativeMeshes,
   makeUnityPrefabHeadFollowDebugSnapshot,
+  resolveCostumeShopModelScale,
   syncUnityPrefabSourceGraph as syncUnityPrefabRuntimeGraph,
   type NativeMeshInstallDiagnostics,
   type PrefabHeadFollowDebug,
@@ -830,7 +831,8 @@ export class Haruki3DEngine {
     reason: null,
   };
   private springRuntimeMode: SpringRuntimeMode = "unity-prefab";
-  private characterHeight = 1;
+  private masterCharacterHeightMeters = 1.6;
+  private characterModelScaleMeters = 1.6;
   private readonly tempMatrixA = new THREE.Matrix4();
   private readonly tempMatrixB = new THREE.Matrix4();
   private readonly tempVector = new THREE.Vector3();
@@ -898,7 +900,7 @@ export class Haruki3DEngine {
     const viewportMinimum = this.ownsCanvas ? 320 : 1;
     const width = Math.max(viewport.clientWidth, viewportMinimum);
     const height = Math.max(viewport.clientHeight, viewportMinimum);
-    const initialCameraPose = getDefaultCameraPose(light.characterHeight);
+    const initialCameraPose = getDefaultCameraPose(this.characterModelScaleMeters);
     this.camera = new THREE.PerspectiveCamera(initialCameraPose.fov, width / height, 0.1, 100);
     this.camera.position.copy(initialCameraPose.position);
 
@@ -1028,7 +1030,6 @@ export class Haruki3DEngine {
       debug: this.runtimeDebug,
       valueShadowInfluence: COSTUME_SHOP_BODY_VALUE_SHADOW_INFLUENCE,
     });
-    this.applyCharacterHeight(light.characterHeight);
     this.scene.add(this.characterRoot);
     this.projectedShadow = new CharacterProjectedShadowController();
     this.scene.add(this.projectedShadow.group);
@@ -1065,7 +1066,9 @@ export class Haruki3DEngine {
     this.currentHeadAsset = characterAsset.headAsset;
     this.characterLighting.setCharacterSkinColors(characterAsset.skinColors ?? null);
     this.lastConstraintSetupDiagnostics = null;
-    this.applyCharacterHeight(characterAsset.bodyAsset.characterHeightMeters ?? this.characterHeight);
+    this.applyCostumeShopCharacterHeight(
+      characterAsset.bodyAsset.characterHeightMeters ?? this.masterCharacterHeightMeters
+    );
     const loaded = await this.loadCombinedCharacterAsset(characterAsset);
 
     if (revision !== this.importRevision) {
@@ -1100,7 +1103,10 @@ export class Haruki3DEngine {
 
     this.bodySlot.add(loaded.root);
     this.currentPrefabSourceGraph = loaded.prefabSourceGraph;
-    applyUnityCharacterHeight(loaded.prefabSourceGraph, this.characterHeight);
+    applyUnityCharacterModelScale(
+      loaded.prefabSourceGraph,
+      this.characterModelScaleMeters
+    );
     if (loaded.prefabSourceGraph.root !== loaded.root) {
       this.bodySlot.add(loaded.prefabSourceGraph.root);
     }
@@ -1116,7 +1122,7 @@ export class Haruki3DEngine {
     this.currentConstraintRuntime = createUnityPrefabConstraintRuntime(
       loaded.prefabSourceGraph,
       this.currentRuntimeExtension,
-      this.characterHeight
+      this.characterModelScaleMeters
     );
     this.syncUnityPrefabSourceGraph();
     this.currentExtraBoneRuntime = SekaiExtraBoneRuntime.fromPjskRuntimeExtension(
@@ -1262,7 +1268,7 @@ export class Haruki3DEngine {
       camera: this.getCameraDebugSnapshot(),
       faceLight: this.getFaceLightDebugSnapshot(),
       projectedShadow: this.projectedShadow.getDebugSnapshot(
-        this.characterHeight
+        this.characterModelScaleMeters
       ),
     };
   }
@@ -1422,7 +1428,8 @@ export class Haruki3DEngine {
       zoom: Number(this.camera.zoom.toFixed(4)),
       minPolarDegrees: Number(THREE.MathUtils.radToDeg(this.controls?.minPolarAngle ?? THREE.MathUtils.degToRad(82)).toFixed(3)),
       maxPolarDegrees: Number(THREE.MathUtils.radToDeg(this.controls?.maxPolarAngle ?? THREE.MathUtils.degToRad(100)).toFixed(3)),
-      characterHeight: Number(this.characterHeight.toFixed(4)),
+      masterCharacterHeightMeters: Number(this.masterCharacterHeightMeters.toFixed(4)),
+      characterModelScaleMeters: Number(this.characterModelScaleMeters.toFixed(4)),
     };
   }
 
@@ -1624,7 +1631,7 @@ export class Haruki3DEngine {
       this.projectedShadow.update({
         targetWorldPositions: [],
         lightWorldPosition: null,
-        characterHeight: this.characterHeight,
+        characterModelScale: this.characterModelScaleMeters,
         visible: false,
       });
       return;
@@ -1635,7 +1642,7 @@ export class Haruki3DEngine {
     this.projectedShadow.update({
       targetWorldPositions: this.resolveProjectedShadowTargetWorldPositions(),
       lightWorldPosition: lightPosition,
-      characterHeight: this.characterHeight,
+      characterModelScale: this.characterModelScaleMeters,
       visible: true,
     });
   }
@@ -1969,7 +1976,6 @@ export class Haruki3DEngine {
   }
 
   updatePreviewLight(next: PreviewLightState) {
-    this.applyCharacterHeight(next.characterHeight);
     this.characterLighting.updatePreviewLight(
       next,
       this.currentBodyAsset,
@@ -2045,18 +2051,20 @@ export class Haruki3DEngine {
     this.camera.lookAt(this.cameraTarget);
   }
 
-  private applyCharacterHeight(height: number) {
-    const nextHeight = THREE.MathUtils.clamp(height || 1, 0.5, 2);
-    const changed = Math.abs(nextHeight - this.characterHeight) >= 0.0001;
-    this.characterHeight = nextHeight;
+  private applyCostumeShopCharacterHeight(masterHeightMeters: number) {
+    const nextMasterHeight = THREE.MathUtils.clamp(masterHeightMeters || 1.6, 0.5, 2);
+    const nextModelScale = resolveCostumeShopModelScale(nextMasterHeight);
+    const changed = Math.abs(nextModelScale - this.characterModelScaleMeters) >= 0.0001;
+    this.masterCharacterHeightMeters = nextMasterHeight;
+    this.characterModelScaleMeters = nextModelScale;
     this.characterRoot.scale.setScalar(1);
     if (this.currentPrefabSourceGraph) {
-      applyUnityCharacterHeight(this.currentPrefabSourceGraph, nextHeight);
+      applyUnityCharacterModelScale(this.currentPrefabSourceGraph, nextModelScale);
     }
-    if (!changed) {
+    if (!changed || this.currentCameraPreset !== "default") {
       return;
     }
-    const pose = getDefaultCameraPose(nextHeight);
+    const pose = getDefaultCameraPose(nextModelScale);
     this.setCameraTarget(pose.target);
     this.camera.position.copy(pose.position);
     this.syncCameraTarget();
@@ -2072,7 +2080,7 @@ export class Haruki3DEngine {
       this.camera.fov = pose.fov;
     } else {
       this.currentCameraProfile = null;
-      const pose = getDefaultCameraPose(this.characterHeight);
+      const pose = getDefaultCameraPose(this.characterModelScaleMeters);
       this.setCameraTarget(pose.target);
       this.camera.position.copy(pose.position);
       this.camera.fov = pose.fov;
@@ -2091,7 +2099,7 @@ export class Haruki3DEngine {
       this.camera.position,
       target,
       amount,
-      this.characterHeight
+      this.characterModelScaleMeters
     );
     this.setCameraTarget(pose.target);
     this.camera.position.copy(pose.position);
@@ -2670,7 +2678,7 @@ export class Haruki3DEngine {
     this.lastConstraintSetupDiagnostics = syncUnityPrefabRuntimeGraph(
       graph,
       this.currentRuntimeExtension,
-      this.characterHeight,
+      this.characterModelScaleMeters,
       this.currentConstraintRuntime
     );
   }
