@@ -10,6 +10,67 @@ internal static class MasterDataReader
         PropertyNameCaseInsensitive = true,
     };
 
+    public static IReadOnlyList<Costume3dMaster> ReadCostume3ds(
+        string masterDirectory
+    )
+    {
+        var costumes = Read<IReadOnlyList<Costume3dMaster>>(
+            Path.Combine(masterDirectory, "costume3ds.json")
+        );
+        if (costumes.All(costume => costume.CharacterId > 0))
+        {
+            return costumes;
+        }
+
+        var groupPath = Path.Combine(masterDirectory, "costume3dGroups.json");
+        if (!File.Exists(groupPath))
+        {
+            throw new InvalidDataException(
+                $"costume3ds.json contains rows without characterId, but {groupPath} was not found"
+            );
+        }
+
+        var groupsById = Read<IReadOnlyList<Costume3dGroupMaster>>(groupPath)
+            .ToDictionary(group => group.GroupId);
+        var colorPath = Path.Combine(masterDirectory, "costume3dColors.json");
+        var colorsById = File.Exists(colorPath)
+            ? Read<IReadOnlyList<Costume3dColorMaster>>(colorPath)
+                .ToDictionary(color => color.Id)
+            : new Dictionary<int, Costume3dColorMaster>();
+
+        return costumes.Select(costume =>
+        {
+            if (costume.CharacterId > 0)
+            {
+                return costume;
+            }
+            if (!groupsById.TryGetValue(costume.Costume3dGroupId, out var group) ||
+                group.CharacterId <= 0)
+            {
+                throw new InvalidDataException(
+                    $"costume3ds row {costume.Id} has no characterId and group " +
+                    $"{costume.Costume3dGroupId} cannot supply one"
+                );
+            }
+
+            colorsById.TryGetValue(costume.ColorId, out var color);
+            return costume with
+            {
+                CharacterId = group.CharacterId,
+                Name = !string.IsNullOrWhiteSpace(costume.Name)
+                    ? costume.Name
+                    : group.Name ?? throw new InvalidDataException(
+                        $"costume3ds row {costume.Id} has no name and group " +
+                        $"{costume.Costume3dGroupId} cannot supply one"
+                    ),
+                ColorName = costume.ColorName ?? color?.Name,
+                Costume3dType = costume.Costume3dType ?? "normal",
+                Costume3dRarity = costume.Costume3dRarity ?? group.Rarity,
+                HowToObtain = costume.HowToObtain ?? group.HowToObtain,
+            };
+        }).ToList();
+    }
+
     public static IReadOnlyList<Costume3dModelMaster> ReadCostume3dModels(
         string masterDirectory
     )

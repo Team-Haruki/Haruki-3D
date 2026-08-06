@@ -176,7 +176,7 @@ public sealed class CostumeRegistryExporter
         var normalizedAssetRoot = Path.GetFullPath(assetRoot);
 
         var character3ds = ReadMaster<IReadOnlyList<Character3dMaster>>(normalizedMasterDirectory, "character3ds.json");
-        var costume3ds = ReadMaster<IReadOnlyList<Costume3dMaster>>(normalizedMasterDirectory, "costume3ds.json");
+        var costume3ds = MasterDataReader.ReadCostume3ds(normalizedMasterDirectory);
         var costumeModels = MasterDataReader.ReadCostume3dModels(normalizedMasterDirectory);
         var gameCharacters = ReadMaster<IReadOnlyList<GameCharacterMaster>>(normalizedMasterDirectory, "gameCharacters.json");
         var cards = ReadMaster<IReadOnlyList<CardMaster>>(normalizedMasterDirectory, "cards.json");

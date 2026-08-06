@@ -73,8 +73,63 @@ test("audit fails broken hard references", () => {
       "cardCostume3ds_character_mismatch",
       "cardCostume3ds_missing_cards",
       "cardCostume3ds_missing_costume3ds",
-      "costume3dModels_missing_costume3ds",
     ]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("audit allows model inventory that is not selectable in this region", () => {
+  const dir = makeMasterFixture({
+    costume3ds: [],
+    costume3dModels: [
+      model(999, "light_sound", "99/9999"),
+    ],
+    cards: [],
+    cardCostume3ds: [],
+    notAvailablePatterns: [],
+    defaultHairs: [],
+  });
+
+  try {
+    const result = runAudit(dir);
+    assert.equal(result.errors.length, 0);
+    assert.equal(
+      result.notes.find((note) => note.code === "costume3dModels_unlisted_inventory").uniqueCount,
+      1,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("audit normalizes split Nuverse costume tables", () => {
+  const dir = makeMasterFixture({
+    costume3ds: [
+      { id: 10, costume3dGroupId: 100, partType: "head", colorId: 1 },
+    ],
+    costume3dGroups: [
+      { groupId: 100, characterId: 1, name: "split costume", rarity: "normal" },
+    ],
+    costume3dColors: [
+      { id: 1, name: "original" },
+    ],
+    costume3dModels: [
+      model(10, "light_sound", "01/0001", "head_and_hair"),
+    ],
+    cards: [
+      { id: 900, characterId: 1, cardRarityType: "rarity_4", prefix: "fixture" },
+    ],
+    cardCostume3ds: [
+      { cardId: 900, costume3dId: 10, isInitialObtainHair: false },
+    ],
+    notAvailablePatterns: [],
+    defaultHairs: [],
+  });
+
+  try {
+    const result = runAudit(dir);
+    assert.equal(result.errors.length, 0);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -118,6 +173,8 @@ function makeMasterFixture(files) {
   const dir = mkdtempSync(path.join(os.tmpdir(), "haruki-costume-master-"));
   const fileNames = {
     costume3ds: "costume3ds.json",
+    costume3dGroups: "costume3dGroups.json",
+    costume3dColors: "costume3dColors.json",
     costume3dModels: "costume3dModels.json",
     cards: "cards.json",
     cardCostume3ds: "cardCostume3ds.json",

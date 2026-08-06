@@ -61,6 +61,19 @@ public sealed record Costume3dMaster(
     [property: JsonPropertyName("howToObtain")] string? HowToObtain
 );
 
+public sealed record Costume3dGroupMaster(
+    [property: JsonPropertyName("groupId")] int GroupId,
+    [property: JsonPropertyName("characterId")] int CharacterId,
+    [property: JsonPropertyName("name")] string? Name,
+    [property: JsonPropertyName("rarity")] string? Rarity,
+    [property: JsonPropertyName("howToObtain")] string? HowToObtain
+);
+
+public sealed record Costume3dColorMaster(
+    [property: JsonPropertyName("id")] int Id,
+    [property: JsonPropertyName("name")] string? Name
+);
+
 public sealed record CardMaster(
     [property: JsonPropertyName("id")] int Id,
     [property: JsonPropertyName("characterId")] int CharacterId,

@@ -56,6 +56,56 @@ Expect(
     compactModels[1].Part == "a03",
     "compact costume3dModels columns and enums expand to normal model rows"
 );
+var splitCostumeMasterDir = Path.Combine(tempDir, "split-costume-master");
+Directory.CreateDirectory(splitCostumeMasterDir);
+WriteJsonFile(Path.Combine(splitCostumeMasterDir, "costume3ds.json"), new object[]
+{
+    new
+    {
+        id = 1002,
+        costume3dGroupId = 1001,
+        partType = "body",
+        colorId = 1,
+    },
+    new
+    {
+        id = 1,
+        costume3dGroupId = 1,
+        partType = "head",
+        characterId = 1,
+        colorId = 1,
+        colorName = "original",
+        name = "default head",
+        costume3dType = "default",
+    },
+});
+WriteJsonFile(Path.Combine(splitCostumeMasterDir, "costume3dGroups.json"), new[]
+{
+    new
+    {
+        groupId = 1001,
+        characterId = 1,
+        name = "school rock",
+        rarity = "normal",
+        howToObtain = "shop",
+    },
+});
+WriteJsonFile(Path.Combine(splitCostumeMasterDir, "costume3dColors.json"), new[]
+{
+    new { id = 1, name = "original" },
+});
+var splitCostumes = MasterDataReader.ReadCostume3ds(splitCostumeMasterDir);
+Expect(
+    splitCostumes[0].CharacterId == 1 &&
+    splitCostumes[0].Name == "school rock" &&
+    splitCostumes[0].ColorName == "original" &&
+    splitCostumes[0].Costume3dType == "normal" &&
+    splitCostumes[0].Costume3dRarity == "normal" &&
+    splitCostumes[0].HowToObtain == "shop" &&
+    splitCostumes[1].Name == "default head" &&
+    splitCostumes[1].Costume3dType == "default",
+    "split Nuverse costume tables normalize to the monolithic costume model"
+);
 var dependencyAssetRoot = Path.Combine(tempDir, "dependency-assets");
 var commonDependencyPath = Path.Combine(
     dependencyAssetRoot,

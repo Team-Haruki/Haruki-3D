@@ -27,7 +27,7 @@ export function auditCostumeMasterdata(options = {}) {
   }
   sampleLimit = Number(options.sampleLimit ?? 12);
 
-  costume3ds = readMaster("costume3ds.json");
+  costume3ds = normalizeCostume3ds(readMaster("costume3ds.json"));
   costume3dModels = readCostume3dModels();
   cards = readMaster("cards.json");
   cardCostume3ds = readMaster("cardCostume3ds.json");
@@ -45,7 +45,7 @@ export function auditCostumeMasterdata(options = {}) {
   notes = [];
   samples = {};
 
-  auditCostumeModelReferences();
+  auditCostumeModelInventory();
   auditCardCostumeReferences();
   auditCompatibilityPatterns();
   auditCostumeGroups();
@@ -103,7 +103,7 @@ if (isMainModule()) {
   }
 }
 
-function auditCostumeModelReferences() {
+function auditCostumeModelInventory() {
   const missingCostumes = [];
   for (const model of costume3dModels) {
     if (!costumeById.has(model.costume3dId)) {
@@ -112,11 +112,12 @@ function auditCostumeModelReferences() {
   }
 
   if (missingCostumes.length > 0) {
-    addError("costume3dModels_missing_costume3ds", {
+    addNote("costume3dModels_unlisted_inventory", {
       count: missingCostumes.length,
       uniqueCount: new Set(missingCostumes).size,
+      note: "Model inventory may contain preloaded or cross-region parts. Export only ids listed by costume3ds.",
     });
-    addSample("costume3dModels_missing_costume3ds", missingCostumes);
+    addSample("costume3dModels_unlisted_inventory", missingCostumes);
   }
 }
 
@@ -410,6 +411,41 @@ function addSample(code, values) {
 
 function readMaster(fileName) {
   return JSON.parse(readFileSync(path.join(masterDir, fileName), "utf8"));
+}
+
+function normalizeCostume3ds(costumes) {
+  if (costumes.every((costume) => costume.characterId > 0)) {
+    return costumes;
+  }
+
+  const groups = new Map(readMaster("costume3dGroups.json")
+    .map((group) => [group.groupId, group]));
+  const colorPath = path.join(masterDir, "costume3dColors.json");
+  const colors = existsSync(colorPath)
+    ? new Map(readMaster("costume3dColors.json").map((color) => [color.id, color]))
+    : new Map();
+
+  return costumes.map((costume) => {
+    if (costume.characterId > 0) {
+      return costume;
+    }
+    const group = groups.get(costume.costume3dGroupId);
+    if (!group?.characterId) {
+      throw new Error(
+        `costume3ds row ${costume.id} has no characterId and group ` +
+        `${costume.costume3dGroupId} cannot supply one`,
+      );
+    }
+    return {
+      ...costume,
+      characterId: group.characterId,
+      name: costume.name ?? group.name,
+      colorName: costume.colorName ?? colors.get(costume.colorId)?.name,
+      costume3dType: costume.costume3dType ?? "normal",
+      costume3dRarity: costume.costume3dRarity ?? group.rarity,
+      howToObtain: costume.howToObtain ?? group.howToObtain,
+    };
+  });
 }
 
 function readCostume3dModels() {
