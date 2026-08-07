@@ -492,7 +492,7 @@ test("capture camera preset uses official CostumeShop camera parameters and keep
     "utf8"
   );
   const cameraSource = fs.readFileSync(
-    path.join(repoRoot, "src/engine/cameraRuntime.ts"),
+    path.join(repoRoot, "src/costume_shop/cameraPolicy.ts"),
     "utf8"
   );
 

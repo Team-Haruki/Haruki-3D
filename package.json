@@ -13,11 +13,23 @@
     "./internal": {
       "types": "./dist/types/internal.d.ts",
       "import": "./dist/haruki-3d-engine-internal.js"
+    },
+    "./base": {
+      "types": "./dist/types/base/index.d.ts",
+      "import": "./dist/haruki-3d-engine-base.js"
+    },
+    "./costume_shop": {
+      "types": "./dist/types/costume_shop/index.d.ts",
+      "import": "./dist/haruki-3d-engine-costume-shop.js"
+    },
+    "./mv": {
+      "types": "./dist/types/mv/index.d.ts",
+      "import": "./dist/haruki-3d-engine-mv.js"
     }
   },
   "scripts": {
     "dev:capture": "vite --config vite.capture.config.ts",
-    "build": "npm run build:types && npm run build:lib && npm run build:capture",
+    "build": "npm run build:lib && npm run build:types && npm run build:capture",
     "build:types": "tsc -p tsconfig.build.json",
     "build:lib": "vite build",
     "build:capture": "vite build --config vite.capture.config.ts",

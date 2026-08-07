@@ -64,7 +64,7 @@ import {
   type PjskCameraProfile,
   type PjskCameraPreset,
   type RuntimeCameraDebug,
-} from "./cameraRuntime";
+} from "../costume_shop/cameraPolicy";
 import { createCaptureBackgroundTexture } from "./captureBackground";
 import {
   CharacterProjectedShadowController,
@@ -81,12 +81,12 @@ import {
   createUnityPrefabConstraintRuntime,
   installUnityRuntimeNativeMeshes,
   makeUnityPrefabHeadFollowDebugSnapshot,
-  resolveCostumeShopModelScale,
   syncUnityPrefabSourceGraph as syncUnityPrefabRuntimeGraph,
   type NativeMeshInstallDiagnostics,
   type PrefabHeadFollowDebug,
   type UnityPrefabSourceGraph,
 } from "./unityPrefabRuntime";
+import { resolveCostumeShopModelScale } from "../costume_shop/heightPolicy";
 import { inferBodyAnimationKind } from "./runtimeMotion";
 import {
   AnimationPlaybackRuntime,
@@ -142,7 +142,7 @@ export type {
   PjskCameraProfile,
   PjskCameraPreset,
   RuntimeCameraDebug,
-} from "./cameraRuntime";
+} from "../costume_shop/cameraPolicy";
 export {
   defaultProjectedShadowSettings,
 } from "./projectedShadow";

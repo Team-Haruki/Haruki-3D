@@ -5,9 +5,10 @@ runtime loading, character assembly, animation, SpringBone, camera state, and
 WebGL rendering. The product owns layout, controls, command parsing,
 localization, loading indicators, and user-facing errors.
 
-This API renders the CostumeShop-style single-character preview. Full 3DMV is a
-separate original-Unity WebGL/WASM runtime; consumers must not treat this API as
-a translated 3DMV player.
+This API renders the CostumeShop-style single-character preview. The package
+also exposes explicit `base`, `costume_shop`, and `mv` subpaths. Full 3DMV is a
+separate original-Unity WebGL/WASM runtime; consumers must not treat the
+CostumeShop API as a translated 3DMV player.
 
 The browser API does not accept raw Unity bundles and does not call the Docker
 capture service.
@@ -40,6 +41,53 @@ import {
 The public entry intentionally exports only the kernel factory, its public
 types, and the default preview light. Do not import from
 `haruki-3d-engine/internal` in a product page.
+
+Use the named entries when integrating more than one rendering context:
+
+```ts
+import {
+  createCostumeShopKernel,
+} from "haruki-3d-engine/costume_shop";
+import {
+  createHarukiMvRuntime,
+  type UnityWebGLCreateInstance,
+} from "haruki-3d-engine/mv";
+```
+
+`haruki-3d-engine/base` is the shared assembly/runtime boundary. Product pages
+normally use `costume_shop` or `mv` rather than constructing Base directly.
+
+## 3DMV Integration
+
+The MV module receives Unity's generated `createUnityInstance` function from
+the host. It does not inject scripts, invent a release identifier, or translate
+the Unity scene into Three.js.
+
+```ts
+const mv = createHarukiMvRuntime({
+  canvas,
+  createUnityInstance,
+  build: {
+    dataUrl: "/mv/Build/live.data",
+    frameworkUrl: "/mv/Build/live.framework.js",
+    codeUrl: "/mv/Build/live.wasm",
+    streamingAssetsUrl: "/mv/StreamingAssets",
+  },
+  onProgress(progress) {
+    console.log(progress);
+  },
+});
+
+await mv.prepare();
+mv.sendMessage("HarukiMvBridge", "LoadLive", "001");
+
+// On page/component disposal:
+await mv.destroy();
+```
+
+The Unity project's actual bridge object and method names remain its contract;
+the strings above only illustrate forwarding. `destroy()` calls Unity `Quit()`
+exactly once and waits for an in-flight initialization before releasing it.
 
 ## Minimal Integration
 

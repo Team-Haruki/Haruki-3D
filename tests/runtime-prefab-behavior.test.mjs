@@ -56,10 +56,8 @@ test("character height never applies a one-off body bundle scale override", () =
   assert.deepEqual(graph.root.scale.toArray(), [1, 1, 1]);
   assert.deepEqual(graph.debug.sourceScaleCorrection, {
     characterHeightMeters: 1.68,
-    costumeShopHeightRate: 0.9761904761904763,
-    characterModelScaleMeters: 1.6400000000000001,
     scale: 1,
-    reason: "costume-shop-height-rate-via-position-note",
+    reason: "presentation-module-applies-position-scale",
   });
 });
 

@@ -101,12 +101,12 @@ export {
   createHaruki3DKernelRuntime,
   type Haruki3DKernel,
   type Haruki3DKernelOptions,
-} from "./kernel/Haruki3DKernel";
+} from "./costume_shop/CostumeShopKernel";
 export {
   getCostumeShopCameraPose,
   getDefaultCameraPose,
   shiftCameraPoseRight,
-} from "./engine/cameraRuntime";
+} from "./costume_shop/cameraPolicy";
 export { createCaptureBackgroundTexture } from "./engine/captureBackground";
 export { CharacterProjectedShadowController } from "./engine/projectedShadow";
 export {
@@ -153,14 +153,16 @@ export {
 } from "./engine/rawMaterialRuntime";
 export {
   applyUnityCharacterModelScale,
-  resolveCostumeShopHeightRate,
-  resolveCostumeShopModelScale,
   buildUnityPrefabSourceGraph,
   createUnityPrefabConstraintRuntime,
   installUnityRuntimeNativeMeshes,
   makeUnityPrefabHeadFollowDebugSnapshot,
   syncUnityPrefabSourceGraph,
 } from "./engine/unityPrefabRuntime";
+export {
+  resolveCostumeShopHeightRate,
+  resolveCostumeShopModelScale,
+} from "./costume_shop/heightPolicy";
 export {
   UnityPrefabSpringRuntime,
   type SpringTimelineControl,

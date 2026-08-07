@@ -1,10 +1,10 @@
 export {
   previewLightDefaults,
   type PreviewLightState,
-} from "./data/sampleScene";
-export type { HarukiRenderRecipe } from "./kernel/renderRecipe";
+} from "./costume_shop";
+export type { HarukiRenderRecipe } from "./costume_shop";
 export {
   createHaruki3DKernel,
   type Haruki3DKernel,
   type Haruki3DKernelOptions,
-} from "./kernel/Haruki3DKernel";
+} from "./costume_shop";

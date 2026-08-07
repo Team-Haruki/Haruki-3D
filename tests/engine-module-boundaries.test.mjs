@@ -9,12 +9,26 @@ const readSource = (relativePath) => fs.readFileSync(path.join(repoRoot, relativ
 
 test("camera policy is isolated from the engine orchestrator", () => {
   const engineSource = readSource("src/engine/Haruki3DEngine.ts");
-  const cameraSource = readSource("src/engine/cameraRuntime.ts");
+  const cameraSource = readSource("src/costume_shop/cameraPolicy.ts");
 
-  assert.match(engineSource, /from "\.\/cameraRuntime"/);
+  assert.match(engineSource, /from "\.\.\/costume_shop\/cameraPolicy"/);
   assert.doesNotMatch(engineSource, /function calculateCostumeShopCameraPose/);
   assert.match(cameraSource, /export function getCostumeShopCameraPose/);
   assert.match(cameraSource, /export function getDefaultCameraPose/);
+});
+
+test("base, CostumeShop, and MV have one-way module boundaries", () => {
+  const baseSource = [
+    readSource("src/base/index.ts"),
+    readSource("src/base/browserCharacterRuntime.ts"),
+  ].join("\n");
+  const costumeShopSource = readSource("src/costume_shop/CostumeShopKernel.ts");
+  const mvSource = readSource("src/mv/index.ts");
+
+  assert.doesNotMatch(baseSource, /costume_shop|\/mv\//i);
+  assert.match(costumeShopSource, /\.\.\/base\/browserCharacterRuntime/);
+  assert.doesNotMatch(mvSource, /costume_shop|three/i);
+  assert.match(mvSource, /createUnityInstance/);
 });
 
 test("capture background generation is isolated from rendering", () => {

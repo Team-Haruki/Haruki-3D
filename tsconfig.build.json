@@ -9,6 +9,9 @@
   "include": [
     "src/index.ts",
     "src/internal.ts",
+    "src/base/**/*.ts",
+    "src/costume_shop/**/*.ts",
+    "src/mv/**/*.ts",
     "src/kernel/**/*.ts",
     "src/capture/**/*.ts",
     "src/host/**/*.ts",

@@ -24,8 +24,6 @@ export type PrefabHeadFollowDebug = {
   setupVersion?: string;
   sourceScaleCorrection?: {
     characterHeightMeters: number | null;
-    costumeShopHeightRate: number | null;
-    characterModelScaleMeters: number | null;
     scale: number;
     reason: string;
   };
@@ -102,26 +100,6 @@ export type NativeMeshSkinBindingDiagnostics = {
   restMatrixSpread: number;
   restMatrixSpreadBonePath: string | null;
 };
-
-const COSTUME_SHOP_NEUTRAL_HEIGHT_METERS = 1.6;
-
-export function resolveCostumeShopHeightRate(masterHeightMeters: number) {
-  const height = THREE.MathUtils.clamp(
-    masterHeightMeters || COSTUME_SHOP_NEUTRAL_HEIGHT_METERS,
-    0.5,
-    2
-  );
-  return 0.5 + 0.8 / height;
-}
-
-export function resolveCostumeShopModelScale(masterHeightMeters: number) {
-  const height = THREE.MathUtils.clamp(
-    masterHeightMeters || COSTUME_SHOP_NEUTRAL_HEIGHT_METERS,
-    0.5,
-    2
-  );
-  return height * resolveCostumeShopHeightRate(height);
-}
 
 export function applyUnityCharacterModelScale(
   graph: UnityPrefabSourceGraph,
@@ -616,18 +594,10 @@ function resolveUnityPrefabSourceScaleCorrection(extension: unknown) {
       bodyManifest.CharacterHeightMeters ??
       bodyManifest.characterHeightMeters
   );
-  const costumeShopHeightRate = characterHeightMeters === null
-    ? null
-    : resolveCostumeShopHeightRate(characterHeightMeters);
-  const characterModelScaleMeters = characterHeightMeters === null
-    ? null
-    : resolveCostumeShopModelScale(characterHeightMeters);
   return {
     characterHeightMeters,
-    costumeShopHeightRate,
-    characterModelScaleMeters,
     scale: 1,
-    reason: "costume-shop-height-rate-via-position-note",
+    reason: "presentation-module-applies-position-scale",
   };
 }
 
