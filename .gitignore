@@ -6,3 +6,19 @@ playwright-report
 blob-report
 .DS_Store
 haruki-3d-engine.config.json
+
+# Local toolchains and Unity-generated state
+.toolchains/
+unity/Haruki3DMV/[Ll]ibrary/
+unity/Haruki3DMV/[Tt]emp/
+unity/Haruki3DMV/[Oo]bj/
+unity/Haruki3DMV/[Ll]ogs/
+unity/Haruki3DMV/[Uu]ser[Ss]ettings/
+unity/Haruki3DMV/Build/
+unity/Haruki3DMV/TestResults/
+unity/Haruki3DMV/Assets/Haruki/MV/Generated/
+
+# Unity activation material must stay outside Git.
+*.alf
+*.ulf
+UnityEntitlementLicense.xml

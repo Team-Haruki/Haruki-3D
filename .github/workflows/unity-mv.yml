@@ -1,0 +1,96 @@
+name: Unity 3DMV WebGL
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/unity-mv.yml"
+      - "scripts/build-unity-mv.sh"
+      - "src/mv/**"
+      - "unity/Haruki3DMV/**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  checks: write
+
+concurrency:
+  group: unity-mv-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    environment: unity-build
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Require Unity credentials
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        run: |
+          test -n "$UNITY_LICENSE" || { echo "::error::Missing UNITY_LICENSE secret"; exit 1; }
+          test -n "$UNITY_EMAIL" || { echo "::error::Missing UNITY_EMAIL secret"; exit 1; }
+          test -n "$UNITY_PASSWORD" || { echo "::error::Missing UNITY_PASSWORD secret"; exit 1; }
+
+      - uses: actions/cache@v4
+        with:
+          path: unity/Haruki3DMV/Library
+          key: unity-mv-2022.3.62f2-${{ hashFiles('unity/Haruki3DMV/Packages/**', 'unity/Haruki3DMV/ProjectSettings/**') }}
+          restore-keys: unity-mv-2022.3.62f2-
+
+      - name: Run Unity EditMode tests
+        uses: game-ci/unity-test-runner@0ff419b913a3630032cbe0de48a0099b5a9f0ed9 # v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: unity/Haruki3DMV
+          unityVersion: 2022.3.62f2
+          testMode: editmode
+          artifactsPath: unity-test-results
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build Unity WebGL player
+        uses: game-ci/unity-builder@1d4ee0697f193f54668e98961d79907911f4b4f2 # v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          projectPath: unity/Haruki3DMV
+          unityVersion: 2022.3.62f2
+          targetPlatform: WebGL
+          buildMethod: Haruki.MV.Editor.BuildWebGL.PerformBuild
+          versioning: None
+          allowDirtyBuild: true
+
+      - name: Verify Unity WebGL artifact
+        run: |
+          test -f unity/Haruki3DMV/Build/HarukiMV/Build/HarukiMV.loader.js
+          test -f unity/Haruki3DMV/Build/HarukiMV/Build/HarukiMV.framework.js.gz
+          test -f unity/Haruki3DMV/Build/HarukiMV/Build/HarukiMV.data.gz
+          test -f unity/Haruki3DMV/Build/HarukiMV/Build/HarukiMV.wasm.gz
+
+      - name: Upload Unity test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: unity-mv-test-results
+          path: unity-test-results
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload Unity WebGL player
+        uses: actions/upload-artifact@v4
+        with:
+          name: haruki-3dmv-webgl
+          path: unity/Haruki3DMV/Build/HarukiMV
+          if-no-files-found: error
+          retention-days: 14

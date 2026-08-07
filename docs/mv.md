@@ -4,10 +4,83 @@ The `haruki-3d-engine/mv` module hosts one original Unity WebGL/WASM build. It
 does not translate MV scenes, Timeline tracks, character assembly, or Sekai's
 URP renderer into Three.js.
 
+The matching Unity 2022.3.62f2 project lives in `unity/Haruki3DMV`. Its WebGL
+player is compiled to JavaScript glue, a data archive, and WebAssembly; the
+TypeScript package remains the host rather than a second renderer.
+
+## Build the Unity WebGL/WASM player
+
+Install Unity 2022.3.62f2 with WebGL Build Support, then run:
+
+```bash
+UNITY_EDITOR=/path/to/Editor/Unity npm run build:mv:unity
+```
+
+The repository-local toolchain path `/data/xy/.toolchains/unity-2022.3.62f2`
+is detected automatically. The command runs Unity EditMode tests before
+writing the generated player to `unity/Haruki3DMV/Build/HarukiMV`. It fails if a
+matching editor is unavailable; it never creates placeholder WASM artifacts.
+Unity license and package-manager state are isolated under
+`/data/xy/.toolchains/unity-home` rather than the system user's home.
+
+To rebuild recovered Sekai assets together with the player, point the build at
+the recovered Unity project and the exporter's `mv-source-set.json`:
+
+```bash
+HARUKI_MV_RECOVERED_PROJECT=/path/to/ExportedProject \
+HARUKI_MV_SOURCE_SET_MANIFEST=/path/to/mv-source-set.json \
+npm run build:mv:unity
+```
+
+The source-set catalog lists the independent AssetBundles needed by one launch,
+so neither the music ID nor stage ID is compiled into the viewer. It is not a
+new monolithic MV package. Every source bundle remains a separately requested
+and cacheable file, is rebuilt for WebGL under its original logical bundle
+name, and keeps its dependency edges in the generated `deps.json`. Main-MV
+character declarations provide the default formation and may be replaced by
+the player's formation; a CutIn may declare a fixed character. The build does
+not strip missing game scripts, replace materials, synthesize a camera, or
+invent a light rig.
+
+Built-in Unity Timeline script references recovered by AssetRipper are remapped
+to the matching Unity Timeline 1.7.6 types before rebuilding. The remap is
+limited to `timeline.playable` YAML; binary textures and other recovered assets
+are copied byte-for-byte into the Unity import tree. Sekai-specific Track and
+Clip classes are not substitutes for built-in Timeline types. Until their
+original behavior is recovered and implemented, Unity reports those scripts as
+missing and the corresponding effects remain unsupported.
+
+Pushes that touch the MV project also run `.github/workflows/unity-mv.yml`.
+The workflow runs EditMode tests, compiles the real WebGL player, validates its
+four generated build files, and uploads `haruki-3dmv-webgl`. It needs the
+protected `unity-build` environment secrets `UNITY_LICENSE`, `UNITY_EMAIL`, and
+`UNITY_PASSWORD`; moving the build to GitHub does not remove Unity's
+editor-license requirement. `UNITY_LICENSE` must contain the activated `.ulf`
+file expected by GameCI. Do not upload the machine-local
+`UnityEntitlementLicense.xml`, and do not commit either file. The repository
+ignores `.alf`, `.ulf`, and entitlement files and tests that none are tracked.
+The GameCI actions are pinned to full commit SHAs so a moving tag cannot change
+the code that receives those secrets.
+
+The committed Unity project provides a browser bridge, recursive AssetBundle
+dependency loading, additive scene loading, and one playback coordinator for
+every scene root. Its exact recovered Timeline binding uses
+`PlayableBinding.streamName` to select the shared target and passes
+`PlayableBinding.sourceObject` to `PlayableDirector.SetGenericBinding`, then
+sets time to zero and evaluates. Original Sekai scripts and custom Timeline
+types remain inputs; the bridge does not pretend to reproduce missing game
+behavior.
+
+`loadBundleSet()` accepts the `deps.json` format used by ClauseKAI. It validates
+the requested dependency closure, rejects missing/cyclic entries, and loads
+dependencies before roots. The referenced files must already be rebuilt for
+the WebGL target; source iOS/Android bundles are deliberately rejected by Unity.
+
 ## Start a generated Unity build
 
 ```ts
 import {
+  createHarukiMvBridge,
   createHarukiMvRuntime,
   resolveUnityWebGLBuild,
 } from "haruki-3d-engine/mv";
@@ -32,25 +105,76 @@ const mv = createHarukiMvRuntime({
 });
 
 await mv.prepare();
-mv.sendMessage(bridgeObjectName, loadMethodName, JSON.stringify(request));
+const bridge = createHarukiMvBridge(mv);
+await bridge.loadBundleSet({
+  baseUrl: "/3dmv/StreamingAssets/sekai_webgl_bundles",
+});
+const mvData = await bridge.readMvData({
+  bundleName: "live_pv/mv_data/0112",
+  assetName: "data",
+});
+await bridge.loadMv({
+  musicId: 112,
+  enableCutIns: false,
+  characters: runtimeMembers.map((member) => ({
+    characterId: member.characterId,
+    bodyBundleName: member.bodyBundleName,
+    faceBundleName: member.faceBundleName,
+    heightRate: member.heightRate,
+    heelOffset: member.heelOffset,
+  })),
+});
+bridge.seek(12.5);
+bridge.setPaused(false);
 
 // On page/component disposal:
 await mv.destroy();
 ```
 
+Bridge operations that emit a completion event are single-flight promises.
+Await each download/read/assembly call before starting the next one. `loadMv()`
+assembles from the dependency catalog; `loadScene()` loads a complete authored
+scene bundle. They are alternative ownership paths and must not be mixed in one
+session without disposing the current path first.
+
 The loader script is shared by URL. Unity instance creation is single-flight;
 a failed creation may be retried. Destroying during creation waits for the
 instance and calls Unity `Quit()` exactly once.
+
+`readMvData()` loads the original `MusicVideoData` asset from a rebuilt bundle
+and emits `mv-data-ready`. The compatible Unity type uses the original script
+GUID and serialized field names, so stage selection, character slots, heel
+offsets, decorations, penlight, camera flags, post-effect flags, and cut-in IDs
+come from the bundle rather than a parallel host-side copy.
+
+Recovered bundle roots now have stable runtime addresses where the original
+asset contract is known:
+
+| Logical bundle | Address |
+| --- | --- |
+| `live_pv/mv_data/{id}` | `data` |
+| `live_pv/timeline/{id}/{node}` | `timeline` |
+| `live_pv/model/stage/{id}` | `stage` |
+| `live_pv/model/stage_decoration/{id}` | `decoration` |
+| `live_pv/model/camera_decoration/{id}` | `decoration` |
+| `live_pv/model/penlight/{id}` | `penlight` |
+| `live_pv/model/characterv2/body/{model}/{figure}` | `body` |
+| `live_pv/model/characterv2/face/{model}` | `face` |
+
+These names select the recovered root asset only; Unity still packs the root's
+referenced meshes, materials, textures, and other dependencies into the same
+independent bundle. Other groups retain their recovered asset names until an
+official root-address contract is known.
 
 `state` reports `idle`, `loading`, `ready`, `failed`, `destroying`, or
 `destroyed`. `getMemoryInfo()` exposes Unity's WASM/JS heap counters when the
 generated loader supports them. Product UI and user-facing errors remain host
 concerns.
 
-## Unity build contract
+## Official runtime target and current boundary
 
-The Unity project owns the actual `HarukiMvBridge`. Its coordinator must keep
-the official runtime ordering:
+The browser bridge is only the host boundary. A complete player must keep the
+official runtime ordering recovered from `Background3DPlayer`:
 
 1. load the manifest and recursive bundle dependency closure;
 2. construct stage and characters using the original Unity object graph;
@@ -61,14 +185,133 @@ the official runtime ordering:
    spring policy, and audio follower;
 7. dispose scene instances, PlayableGraphs, bundles, and caches together.
 
+Prefab instantiation preserves the recovered object's authored transform. It
+does not frame the object from its renderer bounds or modify any camera; the
+official main camera is created and adjusted by `CameraNode` and
+`CameraAdjustment` later in the runtime chain.
+
 Character motion keeps the authored `Position` transform and
 `Animator.applyRootMotion = false`. A stopped motion holds its sampled pose; the
 host must not add a position-reset or anti-sliding correction. Do not enable a
 JSON fallback driver for a property already driven by an original Timeline.
 
-The JavaScript module deliberately exposes raw `sendMessage()` because the
-Unity project's bridge method names and request schema are its interface. They
-must not be guessed in the browser package.
+The typed bridge currently covers bundle/scene loading, prefab instantiation,
+MVData reading, MV assembly, optional CutIn activation, pause, seek, state, and
+disposal. `loadMv()` receives the runtime character body/face bundle choices
+for slots whose `MusicVideoData` deliberately leaves them blank. Fixed
+`face`/`body` entries resolve from the loaded catalog. CutIn is disabled by
+default; disabled, absent, and unavailable child IDs never block the main
+player. Available children are built as independent inactive players and are
+activated explicitly by CutIn order.
+
+The Unity runtime now contains
+the confirmed core of the official `TimelineNode`: it creates the six Stage,
+Character, Camera, Light, Effect, and Penlight directors, loads their original
+`timeline` assets, records default bindings in one shared dictionary, waits for
+the object nodes to replace those entries, binds every output, evaluates at
+zero, and starts every director at the same requested music time. Missing
+per-node Timeline bundles fall back to the corresponding
+`live_pv/timeline/0001/{node}` bundle, matching the recovered resource-level
+fallback rather than synthesizing missing tracks.
+
+Pause and resume preserve the recovered call order: every director is paused or
+resumed first and then assigned the same absolute music time. Retry enumerates
+every output track implementing the MV retry contract before restoring the
+Effect director's `MvLiveEffectTimelineManager` state. Its setup stores the
+main/CutIn flag and order, initializes playing to `!isCutIn`, and initializes
+switch execution to false; the same values are retained for retry.
+
+Absolute seek assigns one requested time to all six directors and immediately
+evaluates them. Character body motions split across multiple clips use a nested
+`AnimationMixerPlayable`: cumulative clip start times select exactly one active
+input, the selected clip receives segment-local time, and the final endpoint is
+held after the total duration. There is no crossfade, velocity integration, or
+second root-position correction. This small runtime primitive follows the
+public ClauseKAI Unity behavior while retaining the authored `Position` and
+`PositionOffset` hierarchy.
+
+The confirmed data-only part of the player chain is also implemented without
+inventing object behavior: unpadded main-MV and six-digit CutIn bundle paths,
+plus compatibility with the four-digit main-MV directories present in the
+current exported catalog, main-character
+counting that excludes insert slots, field-for-field inherited-stage
+resolution, and the camera's three separate arrays for actual character
+height, actual heel offset, and MV-default heel offset. Camera vertical
+adjustment uses the recovered formula
+`actualHeight * (actualHeelOffset + 0.883) - selectedDefaultHeight *
+(mvDefaultHeelOffset + 0.883)` and clamps the LateUpdate blend factor before
+interpolating the two target offsets. The normal 3DMV light array is preserved
+in its recovered order: GlobalSettings, AmbientLight, DirectionalLight,
+SpotLight, CharacterRimLight, CharacterAmbientLight, and ShadowLight. The enum
+also records ShadowLight_VL, FlareLight, and PointLight, which are not members
+of that seven-item array. These are data contracts; object creation remains the
+responsibility of the corresponding node. The recovered
+`Background3DPlayer.OnLoad` renderer policy is available as
+`MvPlayerRenderSettings`: character skinned meshes cast and receive no Unity
+shadows, generate no motion vectors, and use neither light nor reflection
+probes. These helpers are ready for the corresponding object nodes; they do not
+stand in for those nodes.
+
+Stage override dictionaries follow the recovered precedence as well: entries
+from the current MV are inserted first, then additional MV dictionaries only
+fill absent texture names in their declared order. This pure merge is available
+without pretending that the two still-unknown material property names or the
+unimplemented stage controllers have been recovered.
+
+The directly recoverable player nodes are now wired. `MvCharacterNode` keeps a
+single `Position` hierarchy, grafts missing face/accessory branches into it,
+remaps every attached `SkinnedMeshRenderer` bone, disables Animator root motion,
+applies the official renderer policy, and writes the slot binding into the
+shared Timeline dictionary. Runtime-selected characters must supply their
+body, face, height rate, and heel offset; fixed MVData models can resolve their
+loaded bundles automatically. Standalone multi-clip motion is available only
+when an original Character Timeline is not driving the same Animator.
+
+`MvStageNode` loads the base stage and ordered decorations, applies parent-stage
+inheritance and current-before-additional texture precedence, clones CutIn
+materials, and replaces only the recovered `_LightMapTex` and
+`_LightTexture_*` property family. It deliberately leaves the two unknown
+property slots untouched. `MvCameraAdjustment` keeps the three official height
+arrays separate and applies the recovered two-target LateUpdate formula. The
+player assembler owns main/CutIn roots, optional audio, the shared absolute
+clock, and coordinated disposal.
+
+This is not yet a complete `Background3DPlayer`. `CameraNode`, `LightNode`,
+`PenlightNode`, the game-global `MusicVideoModel` registration layer, and
+Sekai's custom Timeline Track/Clip runtime remain unimplemented until their
+recovered behavior is landed. Stage feature flags that require the missing
+HeightFog, reflection, distortion, monitor, or water controllers are preserved
+as data but are not replaced with generic Unity effects. The lower-level
+runtime still exposes `sendMessage()` for original project methods that are not
+part of this stable host contract.
+
+The remaining hard boundaries are deliberate. The complete Transform hierarchy
+of `Camera/MainCamera_MV` and `Camera/SubCamera` is not present. Stage controller
+types and override precedence are known, but two of the four supported texture
+property names are still unavailable. Penlight constants and update behavior
+are substantially recovered, while its final closed generic binding component
+type is not. Released AssetBundles preserve custom Timeline class, assembly,
+and bundle-local MonoScript PathID, but not the original Unity project `.meta`
+GUID. Recovered dummy scripts therefore cannot safely be promoted to empty
+Track/Clip implementations: each type still needs its exact serialized fields
+and runtime behavior, after which the rebuild may deliberately remap it to this
+project's own script GUID. Until those facts are closed, the player fails
+explicitly instead of silently substituting a generic camera, light rig, stage
+controller, penlight driver, or no-op Timeline track.
+
+After building, run a real headless-Chromium startup smoke with:
+
+```bash
+npm run test:mv:browser
+```
+
+Set `HARUKI_MV_BUNDLE_SET` to a directory containing WebGL-target bundles and
+`deps.json` to additionally exercise dependency loading. The generated test
+page exposes `window.harukiMvUnityInstance`; this is the same Unity instance the
+typed host wraps and is useful for non-UI integration shells.
+Set `HARUKI_MV_PREFAB_BUNDLE` and optionally `HARUKI_MV_PREFAB_ASSET` to also
+instantiate a rebuilt prefab. `HARUKI_MV_SCREENSHOT` writes the rendered canvas
+for visual smoke verification.
 
 ## Hosting headers
 

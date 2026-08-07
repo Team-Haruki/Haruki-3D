@@ -1,0 +1,14 @@
+{
+  "name": "Haruki.MV.Editor",
+  "rootNamespace": "Haruki.MV.Editor",
+  "references": ["Haruki.MV.Runtime", "Unity.Timeline"],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": true,
+  "defineConstraints": [],
+  "versionDefines": [],
+  "noEngineReferences": false
+}

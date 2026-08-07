@@ -4,6 +4,7 @@ import test from "node:test";
 import * as base from "../dist/haruki-3d-engine-base.js";
 import * as costumeShop from "../dist/haruki-3d-engine-costume-shop.js";
 import {
+  createHarukiMvBridge,
   createHarukiMvRuntime,
   resolveUnityWebGLBuild,
 } from "../dist/haruki-3d-engine-mv.js";
@@ -15,6 +16,219 @@ test("named runtime entries expose their own responsibilities", () => {
   assert.equal(typeof costumeShop.CostumeShopEngine, "function");
   assert.equal(typeof costumeShop.resolveCostumeShopModelScale, "function");
   assert.equal(typeof createHarukiMvRuntime, "function");
+});
+
+test("MV bridge sends the Unity project's typed command contract", async () => {
+  const originalWindow = globalThis.window;
+  const eventTarget = new EventTarget();
+  globalThis.window = eventTarget;
+  const calls = [];
+  const completionEvents = {
+    LoadBundleSet: "bundle-set-ready",
+    InstantiatePrefab: "prefab-ready",
+    ReadMvData: "mv-data-ready",
+    LoadMv: "mv-ready",
+    LoadScene: "scene-ready",
+    Dispose: "disposed",
+  };
+  const runtime = createHarukiMvRuntime({
+    canvas: {},
+    build: {
+      dataUrl: "mv.data",
+      frameworkUrl: "mv.framework.js",
+      codeUrl: "mv.wasm",
+    },
+    async createUnityInstance() {
+      return {
+        SendMessage(...args) {
+          calls.push(args);
+          const completion = completionEvents[args[1]];
+          if (completion) {
+            const request = JSON.parse(args[2]);
+            const event = new Event("haruki-mv");
+            Object.defineProperty(event, "detail", {
+              value: {
+                type: completion,
+                payload: JSON.stringify({ requestId: request.requestId }),
+              },
+            });
+            eventTarget.dispatchEvent(event);
+          }
+        },
+        async Quit() {},
+      };
+    },
+  });
+  const bridge = createHarukiMvBridge(runtime);
+
+  try {
+  await runtime.prepare();
+  await bridge.loadBundleSet({ baseUrl: "/mv-bundles" });
+  await bridge.instantiatePrefab({
+    bundleName: "live_pv/model/stage/0005",
+    assetName: "stage",
+  });
+  await bridge.readMvData({
+    bundleName: "live_pv/mv_data/0112",
+    assetName: "data",
+  });
+  await bridge.loadMv({
+    musicId: 112,
+    enableCutIns: false,
+    characters: [],
+  });
+  bridge.setCutInActive(0, true);
+  await bridge.loadScene({
+    baseUrl: "/mv-assets",
+    manifestBundleName: "manifest",
+    sceneBundleName: "live/scene/001",
+    sceneName: "Live001",
+  });
+  bridge.setPaused(true);
+  bridge.seek(12.5);
+  bridge.retry();
+  bridge.getState();
+  await bridge.disposeScene();
+
+  const requestIds = [];
+  for (const call of calls) {
+    if (typeof call[2] !== "string" || !call[2].startsWith("{")) continue;
+    const payload = JSON.parse(call[2]);
+    if (!payload.requestId) continue;
+    requestIds.push(payload.requestId);
+    delete payload.requestId;
+    call[2] = JSON.stringify(payload);
+  }
+  assert.equal(new Set(requestIds).size, 6);
+
+  assert.deepEqual(calls, [
+    ["HarukiMvBridge", "LoadBundleSet", '{"baseUrl":"/mv-bundles"}'],
+    [
+      "HarukiMvBridge",
+      "InstantiatePrefab",
+      '{"bundleName":"live_pv/model/stage/0005","assetName":"stage"}',
+    ],
+    [
+      "HarukiMvBridge",
+      "ReadMvData",
+      '{"bundleName":"live_pv/mv_data/0112","assetName":"data"}',
+    ],
+    [
+      "HarukiMvBridge",
+      "LoadMv",
+      '{"musicId":112,"enableCutIns":false,"characters":[]}',
+    ],
+    ["HarukiMvBridge", "SetCutInActive", '{"cutInOrder":0,"active":true}'],
+    [
+      "HarukiMvBridge",
+      "LoadScene",
+      '{"baseUrl":"/mv-assets","manifestBundleName":"manifest","sceneBundleName":"live/scene/001","sceneName":"Live001"}',
+    ],
+    ["HarukiMvBridge", "SetPaused", '{"paused":true}'],
+    ["HarukiMvBridge", "Seek", '{"timeSeconds":12.5}'],
+    ["HarukiMvBridge", "Retry", ""],
+    ["HarukiMvBridge", "GetState", ""],
+    ["HarukiMvBridge", "Dispose", "{}"],
+  ]);
+  } finally {
+    globalThis.window = originalWindow;
+  }
+});
+
+test("MV bridge rejects incomplete scene requests before Unity", () => {
+  const bridge = createHarukiMvBridge({});
+  assert.throws(
+    () => bridge.loadScene({
+      baseUrl: "",
+      manifestBundleName: "manifest",
+      sceneBundleName: "scene",
+      sceneName: "Live001",
+    }),
+    /baseUrl is required/
+  );
+});
+
+test("MV bridge rejects incomplete prefab requests before Unity", () => {
+  const bridge = createHarukiMvBridge({});
+  assert.throws(
+    () => bridge.instantiatePrefab({ bundleName: "stage", assetName: "" }),
+    /bundleName and assetName are required/
+  );
+});
+
+test("MV bridge rejects incomplete MVData requests before Unity", () => {
+  const bridge = createHarukiMvBridge({});
+  assert.throws(
+    () => bridge.readMvData({ bundleName: "", assetName: "data" }),
+    /bundleName and assetName are required/
+  );
+});
+
+test("MV bridge ignores completion events for another correlated request", async () => {
+  const originalWindow = globalThis.window;
+  const eventTarget = new EventTarget();
+  globalThis.window = eventTarget;
+  let sentRequest;
+  try {
+    const bridge = createHarukiMvBridge({
+      sendMessage(_object, _method, json) {
+        sentRequest = JSON.parse(json);
+      },
+    });
+    let settled = false;
+    const loading = bridge.loadBundleSet({ baseUrl: "/mv" });
+    loading.finally(() => { settled = true; });
+
+    const unrelated = new Event("haruki-mv");
+    Object.defineProperty(unrelated, "detail", {
+      value: {
+        type: "error",
+        payload: JSON.stringify({ requestId: "another-request", message: "ignore" }),
+      },
+    });
+    eventTarget.dispatchEvent(unrelated);
+    await Promise.resolve();
+    assert.equal(settled, false);
+
+    const completed = new Event("haruki-mv");
+    Object.defineProperty(completed, "detail", {
+      value: {
+        type: "bundle-set-ready",
+        payload: JSON.stringify({ requestId: sentRequest.requestId, bundleCount: 1 }),
+      },
+    });
+    eventTarget.dispatchEvent(completed);
+    await loading;
+  } finally {
+    globalThis.window = originalWindow;
+  }
+});
+
+test("MV runtime destruction cancels a pending bridge operation", async () => {
+  const originalWindow = globalThis.window;
+  globalThis.window = new EventTarget();
+  const runtime = createHarukiMvRuntime({
+    canvas: {},
+    build: {
+      dataUrl: "mv.data",
+      frameworkUrl: "mv.framework.js",
+      codeUrl: "mv.wasm",
+    },
+    async createUnityInstance() {
+      return {
+        SendMessage() {},
+        async Quit() {},
+      };
+    },
+  });
+  try {
+    await runtime.prepare();
+    const pending = createHarukiMvBridge(runtime).loadBundleSet({ baseUrl: "/mv" });
+    await runtime.destroy();
+    await assert.rejects(pending, /destroy/i);
+  } finally {
+    globalThis.window = originalWindow;
+  }
 });
 
 test("MV runtime owns one original Unity instance lifecycle", async () => {

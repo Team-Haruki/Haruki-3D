@@ -1,4 +1,15 @@
 export {
+  createHarukiMvBridge,
+  HARUKI_MV_BRIDGE_OBJECT,
+  type HarukiMvBridge,
+  type HarukiMvAssetRequest,
+  type HarukiMvBundleSetRequest,
+  type HarukiMvCharacterRequest,
+  type HarukiMvCutInRequest,
+  type HarukiMvPlayerRequest,
+  type HarukiMvPrefabRequest,
+} from "./HarukiMvBridge";
+export {
   createHarukiMvRuntime,
   loadUnityWebGLCreateInstance,
   type HarukiMvRuntime,

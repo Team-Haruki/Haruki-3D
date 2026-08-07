@@ -34,6 +34,7 @@
     "build:lib": "vite build",
     "build:capture": "vite build --config vite.capture.config.ts",
     "build:consumer": "vite build --config vite.consumer.config.ts",
+    "build:mv:unity": "bash scripts/build-unity-mv.sh",
     "preview:capture": "vite preview --config vite.capture.config.ts",
     "test": "node --test tests/*.test.mjs",
     "test:config": "node --test tests/config.test.mjs",
@@ -41,6 +42,7 @@
     "test:browser:chromium": "playwright test --project=chromium",
     "test:browser:runtime": "playwright test --config=playwright.runtime.config.mjs",
     "test:browser:runtime:local": "bash scripts/run-runtime-browser-e2e.sh",
+    "test:mv:browser": "node scripts/smoke-unity-mv.mjs",
     "test:consumer": "npm run build && npm run build:consumer && node scripts/check-consumer-build.mjs",
     "check:web-headers": "node scripts/check-web-asset-headers.mjs",
     "capture:server": "node capture-server.mjs"

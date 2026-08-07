@@ -40,6 +40,8 @@ export type HarukiMvRuntimeOptions = {
 export type HarukiMvRuntime = {
   readonly build: UnityWebGLBuildConfig;
   readonly state: HarukiMvRuntimeState;
+  /** Aborted as soon as destroy() starts, before Unity Quit() is awaited. */
+  readonly signal: AbortSignal;
   prepare(): Promise<UnityWebGLInstance>;
   sendMessage(gameObject: string, method: string, parameter?: string | number): void;
   setFullscreen(fullscreen: boolean): void;
@@ -62,6 +64,7 @@ export function createHarukiMvRuntime(options: HarukiMvRuntimeOptions): HarukiMv
   let loading: Promise<UnityWebGLInstance> | null = null;
   let destroying: Promise<void> | null = null;
   let destroyRequested = false;
+  const lifecycle = new AbortController();
 
   const prepare = () => {
     if (destroyRequested) {
@@ -108,6 +111,7 @@ export function createHarukiMvRuntime(options: HarukiMvRuntimeOptions): HarukiMv
 
   return {
     build,
+    signal: lifecycle.signal,
     get state() {
       return state;
     },
@@ -135,6 +139,7 @@ export function createHarukiMvRuntime(options: HarukiMvRuntimeOptions): HarukiMv
     destroy() {
       if (destroying) return destroying;
       destroyRequested = true;
+      lifecycle.abort(new Error("Haruki MV runtime is being destroyed."));
       state = "destroying";
       const pending = loading
         ? loading.catch(() => null)
