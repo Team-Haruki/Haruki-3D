@@ -10,8 +10,9 @@ also exposes explicit `base`, `costume_shop`, and `mv` subpaths. Full 3DMV is a
 separate original-Unity WebGL/WASM runtime; consumers must not treat the
 CostumeShop API as a translated 3DMV player.
 
-The browser API does not accept raw Unity bundles and does not call the Docker
-capture service.
+The CostumeShop browser interface does not accept raw Unity bundles and does
+not call the Docker capture service. The MV Host starts an original Unity build,
+which owns its StreamingAssets and AssetBundle loading.
 
 ## Browser Requirements
 
@@ -19,9 +20,9 @@ capture service.
 - WebGL 2
 - ES modules, `fetch`, WebAssembly, and `requestAnimationFrame`
 
-The engine uses Three.js/WebGL. It does not require WebGPU. Feature-detect
-WebGL 2 before creating the kernel and show the product's own unsupported
-browser message when it is unavailable.
+The CostumeShop engine uses Three.js/WebGL; MV uses Unity WebGL/WASM. Neither
+requires WebGPU. Feature-detect WebGL 2 before creating either runtime and show
+the product's own unsupported-browser message when it is unavailable.
 
 ## Install And Import
 
@@ -50,7 +51,7 @@ import {
 } from "haruki-3d-engine/costume_shop";
 import {
   createHarukiMvRuntime,
-  type UnityWebGLCreateInstance,
+  resolveUnityWebGLBuild,
 } from "haruki-3d-engine/mv";
 ```
 
@@ -59,27 +60,27 @@ normally use `costume_shop` or `mv` rather than constructing Base directly.
 
 ## 3DMV Integration
 
-The MV module receives Unity's generated `createUnityInstance` function from
-the host. It does not inject scripts, invent a release identifier, or translate
-the Unity scene into Three.js.
+The MV module can load Unity's generated loader itself or receive an already
+loaded `createUnityInstance` function. It does not invent a release identifier
+or translate the Unity scene into Three.js.
 
 ```ts
+const build = resolveUnityWebGLBuild({
+  buildBaseUrl: "/mv/Build",
+  streamingAssetsUrl: "/mv/StreamingAssets",
+  buildName: "live",
+});
 const mv = createHarukiMvRuntime({
   canvas,
-  createUnityInstance,
-  build: {
-    dataUrl: "/mv/Build/live.data",
-    frameworkUrl: "/mv/Build/live.framework.js",
-    codeUrl: "/mv/Build/live.wasm",
-    streamingAssetsUrl: "/mv/StreamingAssets",
-  },
+  loaderUrl: build.loaderUrl,
+  build: build.config,
   onProgress(progress) {
     console.log(progress);
   },
 });
 
 await mv.prepare();
-mv.sendMessage("HarukiMvBridge", "LoadLive", "001");
+mv.sendMessage(bridgeObjectName, loadMethodName, JSON.stringify(request));
 
 // On page/component disposal:
 await mv.destroy();
@@ -88,6 +89,8 @@ await mv.destroy();
 The Unity project's actual bridge object and method names remain its contract;
 the strings above only illustrate forwarding. `destroy()` calls Unity `Quit()`
 exactly once and waits for an in-flight initialization before releasing it.
+See [mv.md](mv.md) for the generated-build, hosting-header, and Unity-side
+coordinator contract.
 
 ## Minimal Integration
 

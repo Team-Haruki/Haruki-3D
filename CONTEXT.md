@@ -25,6 +25,18 @@ The 3DMV context. It is the original Unity WebGL/WASM player and owns MV scenes,
 formations, timelines, cameras, lights, and live-specific runtime behavior. MV
 does not run through the Costume Shop renderer.
 
+## MV Host
+
+The browser-facing module that starts and owns one original Unity WebGL/WASM
+player. It knows the generated Unity build contract, but not song, formation,
+Timeline, or character-selection rules.
+
+## MV Playback Coordinator
+
+The Unity-side module that loads an MV scene and keeps characters, Timeline,
+camera, lighting, effects, post-processing, SpringBone, and audio on one
+playback state and absolute seek time.
+
 ## Render Recipe
 
 A complete role-scoped body, head, hair, and optional-head selection consumed
@@ -35,6 +47,8 @@ description.
 
 - Base never depends on Costume Shop or MV.
 - Costume Shop and MV may depend on Base, but never on each other.
+- The MV Host forwards commands; the MV Playback Coordinator owns their game
+  semantics and ordering.
 - A caller chooses one runtime module explicitly; presentation rules are not
   selected by hidden flags inside Base.
 - The default package entry remains the Costume Shop kernel for compatibility.

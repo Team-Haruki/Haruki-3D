@@ -23,11 +23,15 @@ test("base, CostumeShop, and MV have one-way module boundaries", () => {
     readSource("src/base/browserCharacterRuntime.ts"),
   ].join("\n");
   const costumeShopSource = readSource("src/costume_shop/CostumeShopKernel.ts");
-  const mvSource = readSource("src/mv/index.ts");
+  const mvSource = [
+    readSource("src/mv/index.ts"),
+    readSource("src/mv/HarukiMvRuntime.ts"),
+    readSource("src/mv/unityWebGLBuild.ts"),
+  ].join("\n");
 
   assert.doesNotMatch(baseSource, /costume_shop|\/mv\//i);
   assert.match(costumeShopSource, /\.\.\/base\/browserCharacterRuntime/);
-  assert.doesNotMatch(mvSource, /costume_shop|three/i);
+  assert.doesNotMatch(mvSource, /costume_shop|from ["']three["']/i);
   assert.match(mvSource, /createUnityInstance/);
 });
 

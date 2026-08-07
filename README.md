@@ -63,6 +63,7 @@ import { createHarukiMvRuntime } from "haruki-3d-engine/mv";
 ```
 
 The complete browser integration contract is in [docs/api.md](docs/api.md).
+The original-Unity MV host contract is in [docs/mv.md](docs/mv.md).
 The buildable canvas-only consumer in `examples/minimal` verifies package,
 Worker, Brotli WASM, and Basis transcoder delivery without defining product UI:
 
