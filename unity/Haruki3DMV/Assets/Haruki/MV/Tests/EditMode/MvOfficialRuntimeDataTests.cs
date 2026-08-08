@@ -40,6 +40,19 @@ namespace Haruki.MV.Tests
             Assert.That(
                 MvOfficialRuntimeData.StageDecorationBundleName(101120),
                 Is.EqualTo("live_pv/model/stage_decoration/101120"));
+            Assert.That(
+                MvOfficialRuntimeData.PenlightBundleName(112),
+                Is.EqualTo("live_pv/model/penlight/0112"));
+        }
+
+        [Test]
+        public void CharacterHeightUsesMasterCentimetersAtTheFixedMvRate()
+        {
+            Assert.That(
+                MvOfficialRuntimeData.CharacterHeightMeters(168),
+                Is.EqualTo(1.68f).Within(0.0001));
+            Assert.Throws<ArgumentOutOfRangeException>(() =>
+                MvOfficialRuntimeData.CharacterHeightMeters(0));
         }
 
         [Test]
@@ -63,6 +76,58 @@ namespace Haruki.MV.Tests
             finally
             {
                 UnityEngine.Object.DestroyImmediate(host);
+            }
+        }
+
+        [Test]
+        public void NormalCutInReusesTheMatchingFinalMainMember()
+        {
+            var mainHost = new GameObject("MainMVData");
+            var childHost = new GameObject("ChildMVData");
+            var main = mainHost.AddComponent<MusicVideoData>();
+            var child = childHost.AddComponent<MusicVideoData>();
+            var first = new MvCharacterLoadSpec { characterId = 1, characterHeight = 152 };
+            var fifth = new MvCharacterLoadSpec { characterId = 23, characterHeight = 158 };
+            try
+            {
+                main.characterInfos = new[]
+                {
+                    new MusicVideoCharacterInfo { id = 1 },
+                    new MusicVideoCharacterInfo { id = 5 },
+                };
+                child.id = 101120;
+                child.characterInfos = new[]
+                {
+                    new MusicVideoCharacterInfo { id = 5 },
+                };
+
+                var result = MvOfficialRuntimeData.ResolveNormalCutInCharacters(
+                    main,
+                    child,
+                    new[] { first, fifth });
+
+                Assert.That(result, Has.Length.EqualTo(1));
+                Assert.That(result[0], Is.SameAs(fifth));
+
+                Assert.Throws<InvalidOperationException>(() =>
+                    MvOfficialRuntimeData.ResolveCutInCharacters(
+                        main,
+                        child,
+                        new[] { first, fifth },
+                        false,
+                        Array.Empty<MvCharacterLoadSpec>()));
+                Assert.Throws<InvalidOperationException>(() =>
+                    MvOfficialRuntimeData.ResolveCutInCharacters(
+                        main,
+                        child,
+                        new[] { first, fifth },
+                        true,
+                        new[] { fifth }));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(mainHost);
+                UnityEngine.Object.DestroyImmediate(childHost);
             }
         }
 
@@ -258,6 +323,51 @@ namespace Haruki.MV.Tests
             Assert.That(merged["shared"], Is.EqualTo("current"));
             Assert.That(merged["additional-only"], Is.EqualTo("additional-1"));
             Assert.That(merged["last-only"], Is.EqualTo("additional-2"));
+        }
+
+        [Test]
+        public void StageOverrideTextureSlotsMatchTheRecoveredFourProperties()
+        {
+            Assert.That(MvStageNode.OverrideTextureProperties, Is.EqualTo(new[]
+            {
+                "_MainTex",
+                "_ColorTex",
+                "_LightMapTex",
+                "_SubTex",
+            }));
+        }
+
+        [Test]
+        public void StageOverrideKeepsTheOriginalTexture()
+        {
+            var shader = Shader.Find("Unlit/Texture");
+            Assert.That(shader, Is.Not.Null);
+            var root = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            var material = new Material(shader);
+            var original = new Texture2D(1, 1) { name = "stage-texture" };
+            var replacement = new Texture2D(1, 1) { name = "replacement" };
+            var originals = new Dictionary<string, Texture2D>();
+            try
+            {
+                material.SetTexture("_MainTex", original);
+                root.GetComponent<Renderer>().sharedMaterial = material;
+
+                MvStageNode.ApplyKnownTextureOverrides(
+                    root,
+                    new Dictionary<string, Texture2D> { [original.name] = replacement },
+                    false,
+                    originals);
+
+                Assert.That(material.GetTexture("_MainTex"), Is.SameAs(replacement));
+                Assert.That(originals[original.name], Is.SameAs(original));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+                UnityEngine.Object.DestroyImmediate(material);
+                UnityEngine.Object.DestroyImmediate(original);
+                UnityEngine.Object.DestroyImmediate(replacement);
+            }
         }
 
         [Test]

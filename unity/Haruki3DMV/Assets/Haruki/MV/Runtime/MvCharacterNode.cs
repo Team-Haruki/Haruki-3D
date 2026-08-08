@@ -21,7 +21,7 @@ namespace Haruki.MV
         public string timelineBindingName;
         public string standaloneMotionBundleName;
         public string[] standaloneMotionAssetNames = Array.Empty<string>();
-        public float heightRate = 1;
+        public float characterHeight;
         public float heelOffset;
     }
 
@@ -32,18 +32,18 @@ namespace Haruki.MV
         internal MvCharacterInstance(
             GameObject root,
             Animator animator,
-            float heightRate,
+            float heightMeters,
             float heelOffset)
         {
             Root = root;
             Animator = animator;
-            HeightRate = heightRate;
+            HeightMeters = heightMeters;
             HeelOffset = heelOffset;
         }
 
         public GameObject Root { get; }
         public Animator Animator { get; }
-        public float HeightRate { get; }
+        public float HeightMeters { get; }
         public float HeelOffset { get; }
 
         public MvMotionSequence BindStandaloneMotion(IReadOnlyList<AnimationClip> clips)
@@ -116,20 +116,15 @@ namespace Haruki.MV
             }
 
             var mainCount = MvOfficialRuntimeData.MainCharacterCount(mvData);
-            var insertIndex = 0;
             for (var index = 0; index < infos.Length; index++)
             {
                 var info = infos[index] ?? throw new InvalidOperationException(
                     $"MV {mvData.id} character slot {index} is null.");
                 var spec = specs != null && index < specs.Count ? specs[index] : null;
                 spec = ResolveSpec(info, spec);
-                var trackIndex = info.isInsertCharacter ? insertIndex++ : index;
                 var bindingName = !string.IsNullOrWhiteSpace(spec.timelineBindingName)
                     ? spec.timelineBindingName
-                    : info.isInsertCharacter
-                        ? throw new InvalidOperationException(
-                            $"MV {mvData.id} insert character {index - mainCount} requires timelineBindingName.")
-                        : $"Character{trackIndex}";
+                    : CharacterTrackName(index, mainCount, info.isInsertCharacter);
 
                 var body = _bundles.InstantiatePrefab(
                     new MvPrefabLoadRequest
@@ -160,6 +155,9 @@ namespace Haruki.MV
                     AttachSkinnedPart(body, headOptional);
                 }
 
+                var heightMeters = MvOfficialRuntimeData.CharacterHeightMeters(
+                    spec.characterHeight);
+
                 var animator = body.GetComponent<Animator>() ??
                     body.GetComponentInChildren<Animator>(true);
                 if (animator == null)
@@ -173,7 +171,7 @@ namespace Haruki.MV
                 var character = new MvCharacterInstance(
                     body,
                     animator,
-                    spec.heightRate,
+                    heightMeters,
                     spec.heelOffset);
                 if (spec.standaloneMotionAssetNames != null &&
                     spec.standaloneMotionAssetNames.Length > 0)
@@ -198,7 +196,15 @@ namespace Haruki.MV
                 }
                 else
                 {
-                    _bindings[bindingName] = body;
+                    if (HasCharacterTrack(_bindings, bindingName))
+                    {
+                        BindCharacterAliases(_bindings, bindingName, body);
+                    }
+                    else if (!(info.isLoadInActive && info.isInsertCharacter))
+                    {
+                        Debug.LogWarning(
+                            $"Character Timeline has no track for '{bindingName}'.");
+                    }
                 }
                 _characters.Add(character);
             }
@@ -216,7 +222,7 @@ namespace Haruki.MV
             }
 
             return MvOfficialRuntimeData.CreateCameraHeightData(
-                _characters.Select(character => character.HeightRate).ToArray(),
+                _characters.Select(character => character.HeightMeters).ToArray(),
                 _characters.Select(character => character.HeelOffset).ToArray(),
                 mvData.characterInfos);
         }
@@ -273,21 +279,70 @@ namespace Haruki.MV
             }
         }
 
+        public static string CharacterTrackName(
+            int formationIndex,
+            int mainCharacterCount,
+            bool isInsert)
+        {
+            if (formationIndex < 0)
+            {
+                throw new ArgumentOutOfRangeException(nameof(formationIndex));
+            }
+            if (mainCharacterCount < 0 || (isInsert && formationIndex < mainCharacterCount))
+            {
+                throw new ArgumentOutOfRangeException(nameof(mainCharacterCount));
+            }
+
+            var trackIndex = isInsert
+                ? formationIndex - mainCharacterCount
+                : formationIndex;
+            return $"Character{trackIndex}" + (isInsert ? "_insert" : string.Empty);
+        }
+
+        public static void BindCharacterAliases(
+            IDictionary<string, UnityEngine.Object> bindings,
+            string characterKey,
+            GameObject character)
+        {
+            if (bindings == null)
+            {
+                throw new ArgumentNullException(nameof(bindings));
+            }
+            if (string.IsNullOrWhiteSpace(characterKey))
+            {
+                throw new ArgumentException("Character binding key is required.", nameof(characterKey));
+            }
+            if (character == null)
+            {
+                throw new ArgumentNullException(nameof(character));
+            }
+
+            bindings[characterKey] = character;
+            bindings[characterKey + "_MV"] = character;
+        }
+
+        public static bool HasCharacterTrack(
+            IDictionary<string, UnityEngine.Object> bindings,
+            string characterKey)
+        {
+            if (bindings == null)
+            {
+                throw new ArgumentNullException(nameof(bindings));
+            }
+            if (string.IsNullOrWhiteSpace(characterKey))
+            {
+                throw new ArgumentException("Character binding key is required.", nameof(characterKey));
+            }
+
+            return bindings.ContainsKey(characterKey) ||
+                bindings.ContainsKey(characterKey + "_MV");
+        }
+
         private MvCharacterLoadSpec ResolveSpec(
             MusicVideoCharacterInfo info,
             MvCharacterLoadSpec input)
         {
             var spec = input ?? new MvCharacterLoadSpec();
-            if (spec.characterId != 0 && spec.characterId != info.id)
-            {
-                throw new InvalidOperationException(
-                    $"Character spec ID {spec.characterId} does not match MV slot ID {info.id}.");
-            }
-            if (spec.heightRate <= 0 || float.IsNaN(spec.heightRate) || float.IsInfinity(spec.heightRate))
-            {
-                throw new InvalidOperationException($"Character {info.id} requires a positive heightRate.");
-            }
-
             if (string.IsNullOrWhiteSpace(spec.faceBundleName) && !string.IsNullOrWhiteSpace(info.face))
             {
                 spec.faceBundleName = MvOfficialRuntimeData.CharacterFaceBundleName(info.face);

@@ -111,6 +111,55 @@ namespace Haruki.MV.Tests
         }
 
         [Test]
+        public void ActiveSceneRootSwitchIsOwnedByCoordinator()
+        {
+            var cutIn = new GameObject("cut-in");
+            cutIn.SetActive(false);
+            try
+            {
+                _coordinator.BindScene(new[] { _scene, cutIn }, null, 20);
+
+                _coordinator.SetActiveSceneRoot(cutIn);
+
+                Assert.That(_scene.activeSelf, Is.False);
+                Assert.That(cutIn.activeSelf, Is.True);
+
+                _coordinator.SetActiveSceneRoot(_scene);
+
+                Assert.That(_scene.activeSelf, Is.True);
+                Assert.That(cutIn.activeSelf, Is.False);
+            }
+            finally
+            {
+                Object.DestroyImmediate(cutIn);
+            }
+        }
+
+        [Test]
+        public void CutInToCutInSwitchPassesThroughMainRoot()
+        {
+            var firstCutIn = new GameObject("first-cut-in");
+            var secondCutIn = new GameObject("second-cut-in");
+            _scene.SetActive(false);
+            secondCutIn.SetActive(false);
+            try
+            {
+                var roots = new[] { _scene, firstCutIn, secondCutIn };
+
+                var path = MvPlaybackCoordinator.SceneRootTransitionPath(
+                    roots,
+                    secondCutIn);
+
+                Assert.That(path, Is.EqualTo(new[] { _scene, secondCutIn }));
+            }
+            finally
+            {
+                Object.DestroyImmediate(firstCutIn);
+                Object.DestroyImmediate(secondCutIn);
+            }
+        }
+
+        [Test]
         public void BundleSetDependenciesLoadBeforeRequestedRoots()
         {
             var manifest = new MvBundleSetManifest

@@ -114,6 +114,69 @@ namespace Haruki.MV
                 .ToArray();
         }
 
+        public static MvCharacterLoadSpec[] ResolveNormalCutInCharacters(
+            MusicVideoData mainMvData,
+            MusicVideoData childMvData,
+            IReadOnlyList<MvCharacterLoadSpec> mainCharacters)
+        {
+            if (mainMvData == null)
+            {
+                throw new ArgumentNullException(nameof(mainMvData));
+            }
+            if (childMvData == null)
+            {
+                throw new ArgumentNullException(nameof(childMvData));
+            }
+            if (mainCharacters == null)
+            {
+                throw new ArgumentNullException(nameof(mainCharacters));
+            }
+
+            var childInfos = childMvData.characterInfos ??
+                Array.Empty<MusicVideoCharacterInfo>();
+            if (childInfos.Length == 0 || childInfos[0] == null)
+            {
+                throw new InvalidOperationException(
+                    $"CutIn MV {childMvData.id} has no first character slot.");
+            }
+
+            var requestedId = childInfos[0].id;
+            var mainInfos = mainMvData.characterInfos ??
+                Array.Empty<MusicVideoCharacterInfo>();
+            var mainIndex = Array.FindIndex(
+                mainInfos,
+                info => info != null && info.id == requestedId);
+            if (mainIndex < 0 || mainIndex >= mainCharacters.Count ||
+                mainCharacters[mainIndex] == null)
+            {
+                throw new InvalidOperationException(
+                    $"CutIn character {requestedId} has no matching final main member.");
+            }
+
+            return new[] { mainCharacters[mainIndex] };
+        }
+
+        public static MvCharacterLoadSpec[] ResolveCutInCharacters(
+            MusicVideoData mainMvData,
+            MusicVideoData childMvData,
+            IReadOnlyList<MvCharacterLoadSpec> mainCharacters,
+            bool reuseMainMember,
+            IReadOnlyList<MvCharacterLoadSpec> explicitCharacters)
+        {
+            var hasExplicitCharacters = explicitCharacters != null &&
+                explicitCharacters.Count > 0;
+            if (reuseMainMember == hasExplicitCharacters)
+            {
+                throw new InvalidOperationException(
+                    "CutIn must select exactly one character source: " +
+                    "reuseMainMember or explicit characters.");
+            }
+
+            return reuseMainMember
+                ? ResolveNormalCutInCharacters(mainMvData, childMvData, mainCharacters)
+                : explicitCharacters.ToArray();
+        }
+
         public static string StageBundleName(int stageId)
         {
             ValidateMvId(stageId);
@@ -124,6 +187,12 @@ namespace Haruki.MV
         {
             ValidateMvId(decorationId);
             return "live_pv/model/stage_decoration/" + CatalogId(decorationId);
+        }
+
+        public static string PenlightBundleName(int penlightId)
+        {
+            ValidateMvId(penlightId);
+            return "live_pv/model/penlight/" + CatalogId(penlightId);
         }
 
         public static string StageOverrideTextureBundleName(int mvId)
@@ -289,6 +358,16 @@ namespace Haruki.MV
         {
             return actualHeight * (actualHeelOffset + CameraHeightBase) -
                 selectedDefaultHeight * (mvDefaultHeelOffset + CameraHeightBase);
+        }
+
+        public static float CharacterHeightMeters(float masterHeight)
+        {
+            if (masterHeight <= 0 || float.IsNaN(masterHeight) || float.IsInfinity(masterHeight))
+            {
+                throw new ArgumentOutOfRangeException(nameof(masterHeight));
+            }
+
+            return masterHeight * 0.01f;
         }
 
         public static float BlendedCameraHeightOffset(

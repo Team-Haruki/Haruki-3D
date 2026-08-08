@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Haruki.MV.Tests
@@ -34,6 +35,37 @@ namespace Haruki.MV.Tests
                 {
                     Object.DestroyImmediate(part);
                 }
+            }
+        }
+
+        [Test]
+        public void CharacterAliasesUseNormalAndInsertTrackDomains()
+        {
+            var character = new GameObject("Character");
+            var bindings = new Dictionary<string, Object>();
+            try
+            {
+                Assert.That(
+                    MvCharacterNode.CharacterTrackName(3, 5, false),
+                    Is.EqualTo("Character3"));
+                Assert.That(
+                    MvCharacterNode.CharacterTrackName(5, 5, true),
+                    Is.EqualTo("Character0_insert"));
+
+                MvCharacterNode.BindCharacterAliases(bindings, "Character0_insert", character);
+
+                Assert.That(bindings["Character0_insert"], Is.SameAs(character));
+                Assert.That(bindings["Character0_insert_MV"], Is.SameAs(character));
+                Assert.That(
+                    MvCharacterNode.HasCharacterTrack(bindings, "Character0_insert"),
+                    Is.True);
+                Assert.That(
+                    MvCharacterNode.HasCharacterTrack(bindings, "Character1"),
+                    Is.False);
+            }
+            finally
+            {
+                Object.DestroyImmediate(character);
             }
         }
 

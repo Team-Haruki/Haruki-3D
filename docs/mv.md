@@ -120,7 +120,7 @@ await bridge.loadMv({
     characterId: member.characterId,
     bodyBundleName: member.bodyBundleName,
     faceBundleName: member.faceBundleName,
-    heightRate: member.heightRate,
+    characterHeight: member.characterHeight,
     heelOffset: member.heelOffset,
   })),
 });
@@ -202,7 +202,18 @@ for slots whose `MusicVideoData` deliberately leaves them blank. Fixed
 `face`/`body` entries resolve from the loaded catalog. CutIn is disabled by
 default; disabled, absent, and unavailable child IDs never block the main
 player. Available children are built as independent inactive players and are
-activated explicitly by CutIn order.
+activated explicitly by CutIn order. Activating one child disables the main
+player and every other child; ending it restores the main player. This is a
+player switch, not a Timeline swap on one character object.
+Normal CutIns may set `reuseMainMember: true`; the child MV's first character
+ID is matched against the main MV declarations and reuses that slot's final
+runtime member; the member's actual character ID may differ from the MV slot
+declaration. Another CutIn selection still needs an explicit `characters` entry,
+because its deck/multi costume override policy is not represented by this host
+API. Each requested CutIn must choose exactly one of those sources; omission is
+rejected instead of silently treating a Normal CutIn as a fixed child model.
+Switching directly between two children first completes the old child's End
+through the main root, then starts the new child's Begin.
 
 The Unity runtime now contains
 the confirmed core of the official `TimelineNode`: it creates the six Stage,
@@ -254,43 +265,69 @@ stand in for those nodes.
 
 Stage override dictionaries follow the recovered precedence as well: entries
 from the current MV are inserted first, then additional MV dictionaries only
-fill absent texture names in their declared order. This pure merge is available
-without pretending that the two still-unknown material property names or the
-unimplemented stage controllers have been recovered.
+fill absent texture names in their declared order.
 
 The directly recoverable player nodes are now wired. `MvCharacterNode` keeps a
 single `Position` hierarchy, grafts missing face/accessory branches into it,
 remaps every attached `SkinnedMeshRenderer` bone, disables Animator root motion,
 applies the official renderer policy, and writes the slot binding into the
-shared Timeline dictionary. Runtime-selected characters must supply their
-body, face, height rate, and heel offset; fixed MVData models can resolve their
-loaded bundles automatically. Standalone multi-clip motion is available only
-when an original Character Timeline is not driving the same Animator.
+shared Timeline dictionary. Normal and insert tracks have separate index
+domains (`Character{n}` and `Character{n}_insert`), and each selected key also
+registers the exact `{key}_MV` alias when the loaded Timeline declares either
+form. Runtime-selected characters must supply
+their body, face, master `characterHeight` in centimetres, and heel offset.
+Standard 3DMV fixes the setup height rate to `1.0`, so final model height is
+`characterHeight * 0.01` metres
+and is retained for the recovered `CharacterModel.Setup` and camera contracts;
+it is not reinterpreted as a direct `Position.localScale`. Fixed MVData models
+can resolve their loaded bundles automatically, but still require the runtime
+member's master height. Gender tracks can be selected explicitly through
+`timelineBindingName`; automatic `MotionType.Gender` dispatch remains outside
+the stable contract until its serialized enum value is recovered.
+Standalone multi-clip motion is available only when an original Character
+Timeline is not driving the same Animator.
 
 `MvStageNode` loads the base stage and ordered decorations, applies parent-stage
 inheritance and current-before-additional texture precedence, clones CutIn
-materials, and replaces only the recovered `_LightMapTex` and
-`_LightTexture_*` property family. It deliberately leaves the two unknown
-property slots untouched. `MvCameraAdjustment` keeps the three official height
+materials, and replaces exactly the recovered `_MainTex`, `_ColorTex`,
+`_LightMapTex`, and `_SubTex` slots. Current decorations remain authored;
+additional inherited decorations receive the optional override. It binds
+`ControlGroupBase`, TextMeshPro typewriter/overwrite targets, indexed
+`StageObjDrawCameraSelectController` targets, and the planar-reflection
+`WaterSurfaceController` when those recovered components are present.
+Every replaced source `Texture2D` is retained by name for the later monitor
+refresh/default-texture contract.
+`MvCameraAdjustment` keeps the three official height
 arrays separate and applies the recovered two-target LateUpdate formula. The
-player assembler owns main/CutIn roots, optional audio, the shared absolute
-clock, and coordinated disposal.
+player assembler constructs main/CutIn roots and optional audio; the playback
+coordinator owns their exclusive activation, shared absolute clock, and
+coordinated disposal.
+
+`MvPenlightNode` loads `live_pv/model/penlight/{id}` at address `penlight`, calls
+the recovered `PenlightParameter.Initialize()` when that component is present,
+then binds the root and every child Transform name to its GameObject. It does
+not synthesize Penlight children or animation constants when the original
+component script is absent.
 
 This is not yet a complete `Background3DPlayer`. `CameraNode`, `LightNode`,
-`PenlightNode`, the game-global `MusicVideoModel` registration layer, and
+the game-global `MusicVideoModel` registration layer, and
 Sekai's custom Timeline Track/Clip runtime remain unimplemented until their
 recovered behavior is landed. Stage feature flags that require the missing
 HeightFog, reflection, distortion, monitor, or water controllers are preserved
 as data but are not replaced with generic Unity effects. The lower-level
 runtime still exposes `sendMessage()` for original project methods that are not
 part of this stable host contract.
+CutIn root/Timeline ordering is implemented; model-state, SpringBone suppression,
+transition color, and sub-camera switching still depend on those original game
+components and are not simulated here.
 
 The remaining hard boundaries are deliberate. The complete Transform hierarchy
-of `Camera/MainCamera_MV` and `Camera/SubCamera` is not present. Stage controller
-types and override precedence are known, but two of the four supported texture
-property names are still unavailable. Penlight constants and update behavior
-are substantially recovered, while its final closed generic binding component
-type is not. Released AssetBundles preserve custom Timeline class, assembly,
+of `Camera/MainCamera_MV` and `Camera/SubCamera` is not present. Stage component
+targets, override precedence, and all four supported texture properties are now
+known. Penlight's binding target is confirmed as `Transform`; its original
+`PenlightParameter` implementation still has to be imported with the recovered
+script rather than replaced by a guessed clone. Released AssetBundles preserve
+custom Timeline class, assembly,
 and bundle-local MonoScript PathID, but not the original Unity project `.meta`
 GUID. Recovered dummy scripts therefore cannot safely be promoted to empty
 Track/Clip implementations: each type still needs its exact serialized fields

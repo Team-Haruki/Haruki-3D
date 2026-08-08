@@ -137,7 +137,7 @@ try {
       const reusableCharacter = {
         bodyBundleName: "live_pv/model/characterv2/body/05/9001/ladies_m",
         faceBundleName: "live_pv/model/characterv2/face/05/9001",
-        heightRate: 1,
+        characterHeight: 158,
       };
       await page.evaluate(
         (request) => {
@@ -155,8 +155,11 @@ try {
             reusableCharacter,
             reusableCharacter,
             reusableCharacter,
-            { heightRate: 1 },
+            { characterHeight: 158 },
           ],
+          cutIns: enableSampleCutIns
+            ? [{ musicId: 101120, reuseMainMember: true }]
+            : [],
         }
       );
       await page.waitForFunction(

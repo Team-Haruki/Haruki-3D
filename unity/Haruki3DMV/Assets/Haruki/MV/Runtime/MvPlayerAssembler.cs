@@ -10,6 +10,7 @@ namespace Haruki.MV
     public sealed class MvCutInLoadSpec
     {
         public int musicId;
+        public bool reuseMainMember;
         public MvCharacterLoadSpec[] characters = Array.Empty<MvCharacterLoadSpec>();
     }
 
@@ -48,24 +49,27 @@ namespace Haruki.MV
             Timeline = new MvTimelineNode();
             Stage = new MvStageNode(bundles, _bindings, Root.transform);
             Character = new MvCharacterNode(bundles, _bindings, Root.transform);
+            Penlight = new MvPenlightNode(bundles, _bindings, Root.transform);
             try
             {
                 Timeline.Initialize(_bindings, Root.transform);
                 Timeline.LoadTimelines(bundles, mvData.id, isCutIn, cutInOrder);
                 Stage.Load(mvData, parentMvData, isCutIn);
                 Character.Load(mvData, characters);
+                Penlight.Load(Stage.StageInfo.PenlightInfo);
                 MvPlayerRenderSettings.Apply(Root);
                 Timeline.BindTimeline();
                 TimelinePlayback = Root.AddComponent<MvTimelinePlaybackParticipant>();
                 TimelinePlayback.Initialize(Timeline);
                 if (isCutIn)
                 {
-                    SetActive(false);
+                    Root.SetActive(false);
                 }
             }
             catch
             {
                 Timeline.Dispose();
+                Penlight.Dispose();
                 Character.Dispose();
                 Stage.Dispose();
                 if (Application.isPlaying)
@@ -87,26 +91,14 @@ namespace Haruki.MV
         public MvTimelineNode Timeline { get; }
         public MvStageNode Stage { get; }
         public MvCharacterNode Character { get; }
+        public MvPenlightNode Penlight { get; }
         public MvTimelinePlaybackParticipant TimelinePlayback { get; }
         public double Duration => Timeline.TimelineDuration;
-
-        public void SetActive(bool active)
-        {
-            if (active)
-            {
-                Root.SetActive(true);
-                TimelinePlayback.ActivateAtCurrentTime();
-            }
-            else
-            {
-                TimelinePlayback.DeactivateAtCurrentTime();
-                Root.SetActive(false);
-            }
-        }
 
         public void Dispose()
         {
             Timeline.Dispose();
+            Penlight.Dispose();
             Character.Dispose();
             Stage.Dispose();
             if (Root != null)
@@ -192,11 +184,17 @@ namespace Haruki.MV
                     try
                     {
                         var childData = LoadMvData(childId, true);
+                        var childCharacters = MvOfficialRuntimeData.ResolveCutInCharacters(
+                            mainData,
+                            childData,
+                            request.characters,
+                            cutInSpec?.reuseMainMember ?? false,
+                            cutInSpec?.characters);
                         _players.Add(new MvPlayerInstance(
                             _bundles,
                             childData,
                             mainData,
-                            cutInSpec?.characters ?? Array.Empty<MvCharacterLoadSpec>(),
+                            childCharacters,
                             true,
                             order,
                             transform));
@@ -250,15 +248,13 @@ namespace Haruki.MV
             }
             if (active)
             {
-                foreach (var candidate in _players)
-                {
-                    if (candidate.IsCutIn && candidate != player)
-                    {
-                        candidate.SetActive(false);
-                    }
-                }
+                _coordinator.SetActiveSceneRoot(player.Root);
+                return;
             }
-            player.SetActive(active);
+            if (player.Root.activeSelf)
+            {
+                _coordinator.SetActiveSceneRoot(MainPlayer.Root);
+            }
         }
 
         public void DisposePlayers()

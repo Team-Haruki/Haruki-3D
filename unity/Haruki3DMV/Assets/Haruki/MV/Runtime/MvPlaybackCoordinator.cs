@@ -135,6 +135,74 @@ namespace Haruki.MV
             SeekInternal(timeSeconds);
         }
 
+        public void SetActiveSceneRoot(GameObject activeRoot)
+        {
+            EnsureBound();
+            if (activeRoot == null || Array.IndexOf(_sceneRoots, activeRoot) < 0)
+            {
+                throw new ArgumentException(
+                    "The active MV root must belong to the bound scene.",
+                    nameof(activeRoot));
+            }
+
+            foreach (var transitionRoot in SceneRootTransitionPath(_sceneRoots, activeRoot))
+            {
+                ApplyActiveSceneRoot(transitionRoot);
+            }
+        }
+
+        public static GameObject[] SceneRootTransitionPath(
+            IReadOnlyList<GameObject> sceneRoots,
+            GameObject activeRoot)
+        {
+            if (sceneRoots == null || sceneRoots.Count == 0)
+            {
+                throw new ArgumentException("At least one MV scene root is required.", nameof(sceneRoots));
+            }
+
+            var mainRoot = sceneRoots[0];
+            if (activeRoot != mainRoot)
+            {
+                for (var index = 1; index < sceneRoots.Count; index++)
+                {
+                    var otherCutIn = sceneRoots[index];
+                    if (otherCutIn != activeRoot && otherCutIn.activeSelf)
+                    {
+                        return new[] { mainRoot, activeRoot };
+                    }
+                }
+            }
+            return new[] { activeRoot };
+        }
+
+        private void ApplyActiveSceneRoot(GameObject activeRoot)
+        {
+            foreach (var root in _sceneRoots)
+            {
+                var active = root == activeRoot;
+                if (root.activeSelf == active)
+                {
+                    continue;
+                }
+
+                foreach (var participant in TimelineParticipantsUnder(root))
+                {
+                    if (!active)
+                    {
+                        participant.DeactivateAtCurrentTime();
+                    }
+                }
+                root.SetActive(active);
+                if (active)
+                {
+                    foreach (var participant in TimelineParticipantsUnder(root))
+                    {
+                        participant.ActivateAtCurrentTime();
+                    }
+                }
+            }
+        }
+
         public void Retry()
         {
             EnsureBound();
@@ -255,6 +323,19 @@ namespace Haruki.MV
             if (_sceneRoots.Length == 0)
             {
                 throw new InvalidOperationException("No MV scene is bound.");
+            }
+        }
+
+        private IEnumerable<MvTimelinePlaybackParticipant> TimelineParticipantsUnder(
+            GameObject root)
+        {
+            foreach (var participant in _timelineParticipants)
+            {
+                if (participant != null &&
+                    (participant.gameObject == root || participant.transform.IsChildOf(root.transform)))
+                {
+                    yield return participant;
+                }
             }
         }
 

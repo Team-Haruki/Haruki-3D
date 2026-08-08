@@ -38,12 +38,15 @@ export type HarukiMvCharacterRequest = {
   timelineBindingName?: string;
   standaloneMotionBundleName?: string;
   standaloneMotionAssetNames?: string[];
-  heightRate?: number;
+  /** Master gameCharacters height in centimetres. */
+  characterHeight: number;
   heelOffset?: number;
 };
 
 export type HarukiMvCutInRequest = {
   musicId: number;
+  /** Normal CutIn: reuse the final main member selected by the child character ID. */
+  reuseMainMember?: boolean;
   characters?: HarukiMvCharacterRequest[];
 };
 

@@ -7,12 +7,23 @@ namespace Haruki.MV
 {
     public sealed class MvStageNode : IDisposable
     {
+        public static readonly IReadOnlyList<string> OverrideTextureProperties =
+            Array.AsReadOnly(new[]
+            {
+                "_MainTex",
+                "_ColorTex",
+                "_LightMapTex",
+                "_SubTex",
+            });
+
         private readonly MvBundleSetLoader _bundles;
         private readonly IDictionary<string, UnityEngine.Object> _bindings;
         private readonly Transform _root;
         private readonly List<GameObject> _instances = new List<GameObject>();
         private readonly List<GameObject> _decorations = new List<GameObject>();
         private readonly List<Material> _clonedMaterials = new List<Material>();
+        private readonly Dictionary<string, Texture2D> _originalTextures =
+            new Dictionary<string, Texture2D>(StringComparer.Ordinal);
 
         public MvStageNode(
             MvBundleSetLoader bundles,
@@ -27,6 +38,7 @@ namespace Haruki.MV
         public MvResolvedStageInfo StageInfo { get; private set; }
         public GameObject BaseStage { get; private set; }
         public IReadOnlyList<GameObject> Decorations => _decorations;
+        public IReadOnlyDictionary<string, Texture2D> OriginalTextures => _originalTextures;
 
         public void Load(
             MusicVideoData mvData,
@@ -63,7 +75,9 @@ namespace Haruki.MV
                     BaseStage,
                     overrideTextures,
                     isCutIn,
-                    _clonedMaterials);
+                    _clonedMaterials,
+                    _originalTextures);
+                MvOfficialObjectBinding.BindControlGroups(BaseStage, _bindings);
             }
 
             var decorationIndex = 0;
@@ -71,12 +85,35 @@ namespace Haruki.MV
                 StageInfo.StageDecorationInfos,
                 decorationIndex,
                 overrideTextures,
-                isCutIn);
+                isCutIn,
+                false);
             LoadDecorations(
                 StageInfo.AdditionalStageDecorationInfos,
                 decorationIndex,
                 overrideTextures,
-                isCutIn);
+                isCutIn,
+                StageInfo.OverrideTexture);
+
+            if (StageInfo.EnablePlanarReflection)
+            {
+                var waterSurface = BaseStage == null
+                    ? null
+                    : MvOfficialObjectBinding.FindFirstComponent(
+                        BaseStage,
+                        "WaterSurfaceController",
+                        true);
+                for (var index = 0; waterSurface == null && index < _decorations.Count; index++)
+                {
+                    waterSurface = MvOfficialObjectBinding.FindFirstComponent(
+                        _decorations[index],
+                        "WaterSurfaceController",
+                        true);
+                }
+                if (waterSurface != null)
+                {
+                    _bindings["WaterSurface"] = waterSurface;
+                }
+            }
         }
 
         public void Dispose()
@@ -114,6 +151,7 @@ namespace Haruki.MV
                 }
             }
             _clonedMaterials.Clear();
+            _originalTextures.Clear();
             BaseStage = null;
             StageInfo = null;
         }
@@ -123,14 +161,29 @@ namespace Haruki.MV
             IReadOnlyDictionary<string, Texture2D> replacements,
             bool cloneMaterials)
         {
-            ApplyKnownTextureOverrides(root, replacements, cloneMaterials, null);
+            ApplyKnownTextureOverrides(root, replacements, cloneMaterials, null, null);
+        }
+
+        public static void ApplyKnownTextureOverrides(
+            GameObject root,
+            IReadOnlyDictionary<string, Texture2D> replacements,
+            bool cloneMaterials,
+            IDictionary<string, Texture2D> originalTextures)
+        {
+            ApplyKnownTextureOverrides(
+                root,
+                replacements,
+                cloneMaterials,
+                null,
+                originalTextures);
         }
 
         private static void ApplyKnownTextureOverrides(
             GameObject root,
             IReadOnlyDictionary<string, Texture2D> replacements,
             bool cloneMaterials,
-            ICollection<Material> clonedMaterials)
+            ICollection<Material> clonedMaterials,
+            IDictionary<string, Texture2D> originalTextures)
         {
             if (root == null)
             {
@@ -159,7 +212,7 @@ namespace Haruki.MV
 
                 foreach (var material in materials)
                 {
-                    ApplyKnownTextureOverrides(material, replacements);
+                    ApplyKnownTextureOverrides(material, replacements, originalTextures);
                 }
             }
         }
@@ -168,7 +221,8 @@ namespace Haruki.MV
             IReadOnlyList<MusicVideoStageDecorationInfo> infos,
             int startIndex,
             IReadOnlyDictionary<string, Texture2D> overrideTextures,
-            bool isCutIn)
+            bool isCutIn,
+            bool applyOverrideTextures)
         {
             if (infos == null)
             {
@@ -194,11 +248,17 @@ namespace Haruki.MV
                 _instances.Add(decoration);
                 _decorations.Add(decoration);
                 _bindings[objectName] = decoration;
-                ApplyKnownTextureOverrides(
-                    decoration,
-                    overrideTextures,
-                    isCutIn,
-                    _clonedMaterials);
+                if (applyOverrideTextures)
+                {
+                    ApplyKnownTextureOverrides(
+                        decoration,
+                        overrideTextures,
+                        isCutIn,
+                        _clonedMaterials,
+                        _originalTextures);
+                }
+                MvOfficialObjectBinding.BindStageDecorationTargets(decoration, _bindings);
+                MvOfficialObjectBinding.BindControlGroups(decoration, _bindings);
             }
             return startIndex;
         }
@@ -239,26 +299,28 @@ namespace Haruki.MV
 
         private static void ApplyKnownTextureOverrides(
             Material material,
-            IReadOnlyDictionary<string, Texture2D> replacements)
+            IReadOnlyDictionary<string, Texture2D> replacements,
+            IDictionary<string, Texture2D> originalTextures)
         {
             if (material == null || material.shader == null)
             {
                 return;
             }
 
-            var shader = material.shader;
-            for (var index = 0; index < shader.GetPropertyCount(); index++)
+            foreach (var propertyName in OverrideTextureProperties)
             {
-                var propertyName = shader.GetPropertyName(index);
-                if (propertyName != "_LightMapTex" &&
-                    !propertyName.StartsWith("_LightTexture_", StringComparison.Ordinal))
+                if (!material.HasProperty(propertyName))
                 {
                     continue;
                 }
-                var original = material.GetTexture(propertyName);
+                var original = material.GetTexture(propertyName) as Texture2D;
                 if (original != null && replacements.TryGetValue(original.name, out var replacement))
                 {
                     material.SetTexture(propertyName, replacement);
+                    if (originalTextures != null && !originalTextures.ContainsKey(original.name))
+                    {
+                        originalTextures.Add(original.name, original);
+                    }
                 }
             }
         }
