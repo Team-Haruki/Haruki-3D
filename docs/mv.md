@@ -336,6 +336,31 @@ project's own script GUID. Until those facts are closed, the player fails
 explicitly instead of silently substituting a generic camera, light rig, stage
 controller, penlight driver, or no-op Timeline track.
 
+### ClauseKai public-build boundary
+
+The ClauseKai WebGL build is useful as a behavioral oracle, but it is not a
+drop-in copy of Sekai's camera/light runtime. Its player data contains only the
+demo bootstrap `Main Camera` and `Directional Light`; it does not contain the
+complete official `Camera/MainCamera_MV` or `Camera/SubCamera` prefab hierarchy.
+Its dependency set contains the original `live_pv/timeline/0110/camera` bundle,
+but no corresponding light Timeline bundle.
+
+For MV 0110 ClauseKai instead ships adapter-specific, 30 fps sampled sidecars:
+
+- `mv_cameras/0110.json` contains main-camera position, Euler rotation, field of
+  view, DOF focus distance, character-height adjustment, and sub-camera samples;
+- `mv/0110_light.json` contains global/fog, ambient, directional, six character
+  rim-light, and six character ambient-light sample streams.
+
+Those files confirm field meaning, update order, shader-global names, degree to
+radian conversion, and six-slot light cardinality. They do not recover the
+official prefab graph, reusable Timeline clips for every MV, original custom
+Track/Clip C# code, or Unity script GUIDs. Consequently the sampled 0110 data is
+kept as research evidence rather than installed as a generic `CameraNode` or
+`LightNode`. A compatibility importer may consume such sidecars explicitly,
+but the official path must continue to require the original per-MV assets and
+real runtime components.
+
 After building, run a real headless-Chromium startup smoke with:
 
 ```bash
