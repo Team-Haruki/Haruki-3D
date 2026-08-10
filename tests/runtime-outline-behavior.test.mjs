@@ -12,7 +12,6 @@ import {
   readRawMaterialFloat,
   sekaiCostumeShopOutlineControllerDefaults,
   sekaiCostumeShopOutlineSettings,
-  sekaiPreviewOutlineCalibration,
 } from "../dist/haruki-3d-engine-internal.js";
 
 function rawMaterial(overrides = {}) {
@@ -49,12 +48,7 @@ test("costume shop outline globals match the captured 6.6.2 runtime", () => {
   );
 });
 
-test("high-resolution preview keeps the official shell thin and dark", () => {
-  assert.deepEqual(sekaiPreviewOutlineCalibration, {
-    widthScale: 0.5,
-    shadedColorBlend: 0.3,
-  });
-
+test("1024 preview uses the official outline width and controller blend", () => {
   const fieldOfView = 25;
   const cameraDistance = 4.5;
   const distanceFactor = Math.min(
@@ -69,13 +63,13 @@ test("high-resolution preview keeps the official shell thin and dark", () => {
     (sekaiCostumeShopOutlineSettings.widthMax -
       sekaiCostumeShopOutlineSettings.widthMin) *
       distanceFactor;
-  const focalPixels = 2048 / (2 * Math.tan(fieldOfView * Math.PI / 360));
+  const focalPixels = 1024 / (2 * Math.tan(fieldOfView * Math.PI / 360));
   const outputPixels =
     worldWidth *
-    sekaiPreviewOutlineCalibration.widthScale *
     focalPixels /
     cameraDistance;
   assert.ok(outputPixels >= 1.15 && outputPixels <= 1.25, outputPixels);
+  assert.equal(sekaiCostumeShopOutlineControllerDefaults.blending, 0.5);
 });
 
 test("raw material lookup preserves unknown exported color properties", () => {
@@ -154,13 +148,11 @@ test("official outline consumes material tint, main texture transform, and alpha
   material.onBeforeCompile(shader, {});
   assert.equal(
     shader.uniforms.uSekaiOutlineWidth.value.x,
-    sekaiCostumeShopOutlineSettings.widthMin *
-      sekaiPreviewOutlineCalibration.widthScale
+    sekaiCostumeShopOutlineSettings.widthMin
   );
   assert.equal(
     shader.uniforms.uSekaiOutlineWidth.value.y,
-    sekaiCostumeShopOutlineSettings.widthMax *
-      sekaiPreviewOutlineCalibration.widthScale
+    sekaiCostumeShopOutlineSettings.widthMax
   );
   assert.deepEqual(
     shader.uniforms.uSekaiMainTexST.value.toArray(),
@@ -245,7 +237,7 @@ test("character outline blends the captured Toon result in gamma space like the 
   assert.match(material.fragmentShader, /uSekaiCharacterOutlineBlending/);
   assert.equal(
     material.uniforms.uSekaiCharacterOutlineBlending.value,
-    sekaiPreviewOutlineCalibration.shadedColorBlend
+    sekaiCostumeShopOutlineControllerDefaults.blending
   );
   // The captured 0090 outline fragment computes
   //   mix(outlineColorArray[i].rgb * a, shadedColor, blendingArray[i])

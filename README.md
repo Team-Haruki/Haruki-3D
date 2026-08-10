@@ -162,7 +162,7 @@ The Docker image runs the capture HTTP service. Mount an exported runtime packag
 docker build -t haruki-3d-engine .
 docker run --rm -p 127.0.0.1:8080:8080 \
   -e HARUKI_ENGINE_CONFIG=/app/haruki-3d-engine.config.json \
-  -e HARUKI_CAPTURE_SCALE=2 \
+  -e HARUKI_CAPTURE_SCALE=1 \
   -v /path/to/haruki-3d-engine.config.json:/app/haruki-3d-engine.config.json:ro \
   -v /path/to/runtime:/data/runtime:ro \
   -v /path/to/captures:/data/captures \
@@ -183,7 +183,7 @@ curl -X POST http://localhost:8080/capture \
     "headCostume3dId": 1001,
     "hairCostume3dId": 1001,
     "headOptionalCostume3dId": null,
-    "scale": 2
+    "scale": 1
   }'
 ```
 
@@ -194,7 +194,7 @@ For a runtime root containing region directories such as `/data/runtime/jp` and
 serves its role registry. Runtime metadata is exclusively Brotli-compressed
 MessagePack; part packages must use core+delta and declare `corePath`.
 
-The service starts one persistent headless Chromium page and keeps the engine loaded. Requests reuse that page, write only the final `/data/captures/<imageId>.png`, and atomically replace an existing file with the same id. The default `1024x1024` CSS viewport at scale `2` writes a `2048x2048` PNG. Explicit `width` and `height` values still control CSS framing, while `scale` controls output DPR; for example, `700x500` with `scale: 2` writes a `1400x1000` PNG. The service-owned Chromium profile/cache directory is removed on shutdown or session restart. Open `http://localhost:8080/capture.html` only when inspecting the harness manually.
+The service starts one persistent headless Chromium page and keeps the engine loaded. Requests reuse that page, write only the final `/data/captures/<imageId>.png`, and atomically replace an existing file with the same id. The default `1024x1024` CSS viewport at scale `1` writes the official `1024x1024` preview target. Explicit `width`, `height`, or `scale` values remain host presentation policy; they do not alter the CostumeShop material or outline constants. The service-owned Chromium profile/cache directory is removed on shutdown or session restart. Open `http://localhost:8080/capture.html` only when inspecting the harness manually.
 
 ## Development Notes
 

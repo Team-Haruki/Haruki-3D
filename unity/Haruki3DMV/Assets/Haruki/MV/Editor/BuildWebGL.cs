@@ -227,6 +227,15 @@ namespace Haruki.MV.Editor
                             "character face prefab");
                         addressableNames = new[] { "face" };
                     }
+                    else if (entry.kind == "character_head_optional")
+                    {
+                        assetNames = RequireSingleAsset<GameObject>(
+                            sourceDirectory,
+                            "optional.prefab",
+                            entry.name,
+                            "character head-optional prefab");
+                        addressableNames = new[] { "head_optional" };
+                    }
 
                     bundleBuilds.Add(new AssetBundleBuild
                     {

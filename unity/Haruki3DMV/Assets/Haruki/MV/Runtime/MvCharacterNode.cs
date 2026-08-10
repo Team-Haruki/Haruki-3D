@@ -173,6 +173,7 @@ namespace Haruki.MV
                     animator,
                     heightMeters,
                     spec.heelOffset);
+                BindReflectionOffAll(_bindings, body);
                 if (spec.standaloneMotionAssetNames != null &&
                     spec.standaloneMotionAssetNames.Length > 0)
                 {
@@ -321,6 +322,22 @@ namespace Haruki.MV
             bindings[characterKey + "_MV"] = character;
         }
 
+        public static void BindReflectionOffAll(
+            IDictionary<string, UnityEngine.Object> bindings,
+            GameObject character)
+        {
+            if (bindings == null)
+            {
+                throw new ArgumentNullException(nameof(bindings));
+            }
+            if (character == null)
+            {
+                throw new ArgumentNullException(nameof(character));
+            }
+
+            bindings["ReflectionOff_All"] = character;
+        }
+
         public static bool HasCharacterTrack(
             IDictionary<string, UnityEngine.Object> bindings,
             string characterKey)
@@ -345,12 +362,23 @@ namespace Haruki.MV
             var spec = input ?? new MvCharacterLoadSpec();
             if (string.IsNullOrWhiteSpace(spec.faceBundleName) && !string.IsNullOrWhiteSpace(info.face))
             {
-                spec.faceBundleName = MvOfficialRuntimeData.CharacterFaceBundleName(info.face);
+                spec.faceBundleName = MvOfficialRuntimeData.ResolveCharacterFaceBundleName(
+                    info.face,
+                    _bundles.ContainsBundle);
             }
             if (string.IsNullOrWhiteSpace(spec.bodyBundleName) && !string.IsNullOrWhiteSpace(info.body))
             {
-                spec.bodyBundleName = _bundles.FindSingleBundleByPrefix(
-                    MvOfficialRuntimeData.CharacterBodyBundlePrefix(info.body));
+                spec.bodyBundleName = MvOfficialRuntimeData.ResolveCharacterBodyBundleName(
+                    info.body,
+                    _bundles.FindSingleBundleByPrefix);
+            }
+            if (string.IsNullOrWhiteSpace(spec.headOptionalBundleName) &&
+                !string.IsNullOrWhiteSpace(info.headOptional))
+            {
+                spec.headOptionalBundleName =
+                    MvOfficialRuntimeData.ResolveCharacterHeadOptionalBundleName(
+                        info.headOptional,
+                        _bundles.ContainsBundle);
             }
             if (string.IsNullOrWhiteSpace(spec.bodyBundleName) ||
                 string.IsNullOrWhiteSpace(spec.faceBundleName))

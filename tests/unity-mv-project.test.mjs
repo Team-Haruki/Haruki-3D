@@ -62,6 +62,7 @@ test("repository contains a Unity 2022.3 WebGL MV project", () => {
   assert.match(build, /addressableNames = new\[\] \{ "penlight" \}/);
   assert.match(build, /addressableNames = new\[\] \{ "body" \}/);
   assert.match(build, /addressableNames = new\[\] \{ "face" \}/);
+  assert.match(build, /addressableNames = new\[\] \{ "head_optional" \}/);
   assert.match(build, /deps = entry\.dependencies/);
   assert.doesNotMatch(build, /new GameObject\("Main Camera"\)/);
   assert.doesNotMatch(build, /new GameObject\("Preview Light"\)/);

@@ -19,6 +19,12 @@ namespace Haruki.MV
         PointLight = 9,
     }
 
+    public enum MvCharacterModelVersion
+    {
+        V1 = 0,
+        V2 = 1,
+    }
+
     public sealed class MvResolvedStageInfo
     {
         public int Id { get; internal set; }
@@ -201,22 +207,77 @@ namespace Haruki.MV
             return "live_pv/model/stage_override_texture/" + CatalogId(mvId);
         }
 
-        public static string CharacterFaceBundleName(string modelId)
+        public static string CharacterFaceBundleName(
+            string modelId,
+            MvCharacterModelVersion version = MvCharacterModelVersion.V2)
         {
-            if (string.IsNullOrWhiteSpace(modelId))
-            {
-                throw new ArgumentException("Character face model ID is required.", nameof(modelId));
-            }
-            return "live_pv/model/characterv2/face/" + modelId.Trim('/');
+            return CharacterBundleName("face", modelId, version);
         }
 
-        public static string CharacterBodyBundlePrefix(string modelId)
+        public static string CharacterBodyBundlePrefix(
+            string modelId,
+            MvCharacterModelVersion version = MvCharacterModelVersion.V2)
         {
-            if (string.IsNullOrWhiteSpace(modelId))
+            return CharacterBundleName("body", modelId, version) + "/";
+        }
+
+        public static string CharacterHeadOptionalBundleName(
+            string modelId,
+            MvCharacterModelVersion version = MvCharacterModelVersion.V2)
+        {
+            return CharacterBundleName("head_optional", modelId, version);
+        }
+
+        public static string CharacterBodyColorBundleName(
+            string modelId,
+            MvCharacterModelVersion version = MvCharacterModelVersion.V2)
+        {
+            return CharacterBundleName("color_variation/body", modelId, version);
+        }
+
+        public static string CharacterHeadOptionalColorBundleName(
+            string modelId,
+            MvCharacterModelVersion version = MvCharacterModelVersion.V2)
+        {
+            return CharacterBundleName(
+                "color_variation/head_optional",
+                modelId,
+                version);
+        }
+
+        public static string ResolveCharacterFaceBundleName(
+            string modelId,
+            Func<string, bool> bundleExists)
+        {
+            return ResolveCharacterBundleName(
+                CharacterFaceBundleName(modelId, MvCharacterModelVersion.V2),
+                CharacterFaceBundleName(modelId, MvCharacterModelVersion.V1),
+                bundleExists);
+        }
+
+        public static string ResolveCharacterBodyBundleName(
+            string modelId,
+            Func<string, string> findBundleByPrefix)
+        {
+            if (findBundleByPrefix == null)
             {
-                throw new ArgumentException("Character body model ID is required.", nameof(modelId));
+                throw new ArgumentNullException(nameof(findBundleByPrefix));
             }
-            return "live_pv/model/characterv2/body/" + modelId.Trim('/') + "/";
+
+            var v2 = findBundleByPrefix(
+                CharacterBodyBundlePrefix(modelId, MvCharacterModelVersion.V2));
+            return v2 ?? findBundleByPrefix(
+                CharacterBodyBundlePrefix(modelId, MvCharacterModelVersion.V1));
+        }
+
+        public static string ResolveCharacterHeadOptionalBundleName(
+            string modelId,
+            Func<string, bool> bundleExists)
+        {
+            return ResolveCharacterBundleName(
+                CharacterHeadOptionalBundleName(modelId, MvCharacterModelVersion.V2),
+                CharacterHeadOptionalBundleName(modelId, MvCharacterModelVersion.V1),
+                bundleExists);
         }
 
         public static string TimelineBundleName(
@@ -438,6 +499,41 @@ namespace Haruki.MV
             return infos == null
                 ? Array.Empty<MusicVideoStageDecorationInfo>()
                 : (MusicVideoStageDecorationInfo[])infos.Clone();
+        }
+
+        private static string CharacterBundleName(
+            string part,
+            string modelId,
+            MvCharacterModelVersion version)
+        {
+            if (string.IsNullOrWhiteSpace(modelId))
+            {
+                throw new ArgumentException(
+                    "Character model ID is required.",
+                    nameof(modelId));
+            }
+            if (version != MvCharacterModelVersion.V1 &&
+                version != MvCharacterModelVersion.V2)
+            {
+                throw new ArgumentOutOfRangeException(nameof(version));
+            }
+
+            var root = version == MvCharacterModelVersion.V2
+                ? "live_pv/model/characterv2/"
+                : "live_pv/model/character/";
+            return root + part + "/" + modelId.Trim('/');
+        }
+
+        private static string ResolveCharacterBundleName(
+            string v2,
+            string v1,
+            Func<string, bool> bundleExists)
+        {
+            if (bundleExists == null)
+            {
+                throw new ArgumentNullException(nameof(bundleExists));
+            }
+            return bundleExists(v2) ? v2 : v1;
         }
 
         private static void ValidateMvId(int mvId)

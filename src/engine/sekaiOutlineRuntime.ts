@@ -67,26 +67,10 @@ export const sekaiCostumeShopOutlineControllerDefaults = {
   blending: 0.5,
 } as const;
 
-/**
- * Presentation calibration for direct high-resolution browser output.
- *
- * CostumeShop renders its preview into a smaller intermediate texture before
- * the UI scales it up. The browser kernel renders directly at the final device
- * resolution, so applying the captured world-space shell unchanged makes it
- * visibly thicker and lets too much shaded material color into the outline.
- * Keep the captured globals above intact and correct only the presentation.
- */
-export const sekaiPreviewOutlineCalibration = {
-  widthScale: 0.5,
-  shadedColorBlend: 0.3,
-} as const;
-
 function createSekaiPreviewOutlineWidth() {
   return new THREE.Vector2(
-    sekaiCostumeShopOutlineSettings.widthMin *
-      sekaiPreviewOutlineCalibration.widthScale,
-    sekaiCostumeShopOutlineSettings.widthMax *
-      sekaiPreviewOutlineCalibration.widthScale
+    sekaiCostumeShopOutlineSettings.widthMin,
+    sekaiCostumeShopOutlineSettings.widthMax
   );
 }
 
@@ -192,7 +176,7 @@ function createSekaiToonOutlineMaterial(
       sekaiCostumeShopOutlineControllerDefaults.color.g,
       sekaiCostumeShopOutlineControllerDefaults.color.b
     ),
-    blending: sekaiPreviewOutlineCalibration.shadedColorBlend,
+    blending: sekaiCostumeShopOutlineControllerDefaults.blending,
   };
   const outlineOffset = readRawMaterialFloat(rawMaterial, "_OutlineOffset") ?? 0;
   const material = source.clone();
@@ -381,7 +365,7 @@ export function createSekaiOutlineMaterial(
       sekaiCostumeShopOutlineControllerDefaults.color.g,
       sekaiCostumeShopOutlineControllerDefaults.color.b
     ),
-    blending: sekaiPreviewOutlineCalibration.shadedColorBlend,
+    blending: sekaiCostumeShopOutlineControllerDefaults.blending,
   };
   const material = new THREE.MeshBasicMaterial({
     color: materialOutlineColor,

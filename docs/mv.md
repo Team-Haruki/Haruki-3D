@@ -158,13 +158,22 @@ asset contract is known:
 | `live_pv/model/stage_decoration/{id}` | `decoration` |
 | `live_pv/model/camera_decoration/{id}` | `decoration` |
 | `live_pv/model/penlight/{id}` | `penlight` |
-| `live_pv/model/characterv2/body/{model}/{figure}` | `body` |
-| `live_pv/model/characterv2/face/{model}` | `face` |
+| `live_pv/model/{character|characterv2}/body/{model}/{figure}` | `body` |
+| `live_pv/model/{character|characterv2}/face/{model}` | `face` |
+| `live_pv/model/{character|characterv2}/head_optional/{model}` | `head_optional` |
 
 These names select the recovered root asset only; Unity still packs the root's
 referenced meshes, materials, textures, and other dependencies into the same
 independent bundle. Other groups retain their recovered asset names until an
 official root-address contract is known.
+
+Character models do not have a song-wide V1/V2 switch. The original runtime
+constructs both candidates for each resolved body, face, head optional, and
+color-variation part, selects the loaded `characterv2` bundle when present,
+and falls back to the matching legacy `character` bundle otherwise. This is a
+per-part decision: an old MV may use a V2 body and face together with a V1-only
+head optional. MVData and Timeline roots themselves are shared and have no V2
+variant.
 
 `state` reports `idle`, `loading`, `ready`, `failed`, `destroying`, or
 `destroyed`. `getMemoryInfo()` exposes Unity's WASM/JS heap counters when the
@@ -280,8 +289,9 @@ Standard 3DMV fixes the setup height rate to `1.0`, so final model height is
 `characterHeight * 0.01` metres
 and is retained for the recovered `CharacterModel.Setup` and camera contracts;
 it is not reinterpreted as a direct `Position.localScale`. Fixed MVData models
-can resolve their loaded bundles automatically, but still require the runtime
-member's master height. Gender tracks can be selected explicitly through
+resolve body, face, and head optional independently with the recovered
+V2-first/V1-fallback rule, but still require the runtime member's master
+height. Gender tracks can be selected explicitly through
 `timelineBindingName`; automatic `MotionType.Gender` dispatch remains outside
 the stable contract until its serialized enum value is recovered.
 Standalone multi-clip motion is available only when an original Character

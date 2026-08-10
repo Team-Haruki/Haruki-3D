@@ -118,7 +118,7 @@ function loadCaptureRequestValidator() {
     },
     defaultWidth: 1024,
     defaultHeight: 1024,
-    defaultScale: 2,
+    defaultScale: 1,
     defaultTimeoutMs: 45000,
     MAX_CAPTURE_DIMENSION: 2048,
     MAX_CAPTURE_TIMEOUT_MS: 300000,

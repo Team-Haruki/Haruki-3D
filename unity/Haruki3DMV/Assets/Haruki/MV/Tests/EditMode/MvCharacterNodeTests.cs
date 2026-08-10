@@ -53,9 +53,11 @@ namespace Haruki.MV.Tests
                     Is.EqualTo("Character0_insert"));
 
                 MvCharacterNode.BindCharacterAliases(bindings, "Character0_insert", character);
+                MvCharacterNode.BindReflectionOffAll(bindings, character);
 
                 Assert.That(bindings["Character0_insert"], Is.SameAs(character));
                 Assert.That(bindings["Character0_insert_MV"], Is.SameAs(character));
+                Assert.That(bindings["ReflectionOff_All"], Is.SameAs(character));
                 Assert.That(
                     MvCharacterNode.HasCharacterTrack(bindings, "Character0_insert"),
                     Is.True);

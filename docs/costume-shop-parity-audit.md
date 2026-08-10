@@ -202,28 +202,23 @@ would create a second, conflicting spring implementation.
 | Official invariant | Implementation |
 | --- | --- |
 | Inverted hull: front-face culling, depth write, no blending, ShaderLab Less (reversed Vulkan Greater). | Outline materials use `BackSide`, depth write, no blending and `LessDepth`. |
-| Distance/FOV width uses captured min/max/near/far and Hermite FOV curve. | `sekaiOutlineRuntime.ts` retains the captured values and applies the direct-resolution presentation scale documented below. |
+| Distance/FOV width uses captured min/max/near/far and Hermite FOV curve. | `sekaiOutlineRuntime.ts` sends the captured values to the shell unchanged. |
 | COLOR.r is a continuous width multiplier. | Vertex expansion multiplies by the unmodified red channel. |
 | second normal is reconstructed from `(UV1.x, UV1.y, UV2.x)` in the tangent basis. | `_OUTLINE_SECOND_NORMAL` runtime branch. |
 | `_OutlineOffset` applies a projected-camera-origin clip term scaled by COLOR.b. | Outline vertex shader implements the driver-final term. |
 | The outline fragment is not a flat-color `MeshBasicMaterial` path. It samples and shades the same character data before outline color blending. | Character outline materials clone/share the source Toon uniforms and fragment path, replacing only the final output-color blend. |
 | The active controller color/blending is applied after Toon shading in the game's Gamma working space (`0090`: `mix(outlineColor.rgb * a, shadedColor, blending)` on gamma-form values). | The browser hook mixes the sRGB-shaped Toon intermediate directly with the controller color — no linear decode/encode. Official reference lines measure ≈ gamma `mix(black, tier, 0.5)`; a linear-light mix renders a full tier brighter (the 2026-07-27 "not black enough" defect). |
-| Global outline defaults are black with blending `0.5`. | The captured default remains explicit. Direct high-resolution Web/capture presentation uses black with shaded-color blend `0.3` so the final contour stays dark after bypassing CostumeShop's 1024px intermediate. |
+| Global outline defaults are black with blending `0.5`. | The captured color and blending are used unchanged. |
 | Eye and eyelight have no Outline pass; face skin, eyebrow and eyelash do. | Outline group filtering excludes only `eye` and `eyelight`. Eyebrow and eyelash receive a Toon-v3 outline source with their own textures/raw material values, while `COLOR.r` remains the continuous per-vertex width scale. |
 
 A `MeshBasicMaterial` fallback remains only for non-character materials that do
 not expose the kernel's Toon output hook. Exported CostumeShop body/face/hair
 materials take the full Toon outline path.
 
-The Web/capture kernel writes the final-resolution canvas directly, whereas
-CostumeShop renders the character into a 1024x1024 intermediate and then lets
-the UI scale it. At the current 2048px capture output, the unchanged
-world-space shell looked substantially thicker and the 50% shaded-color
-contribution read as a dirty purple/brown contour. The presentation calibration
-therefore multiplies both captured width endpoints by `0.5`, preserving the
-1024px intermediate's screen-space contour at a direct 2048px output, and uses
-a shaded-color blend of `0.3`. It does not alter the distance/FOV curve, vertex
-color R mask, second normal, outline offset, or Toon shading path.
+The capture service now defaults to the official 1024x1024 target at device
+scale 1. The shell therefore uses the captured width endpoints and 0.5
+controller blend directly. Browser presentation may scale the completed canvas,
+but it must not rewrite the material kernel's width or color blend.
 
 ## Eye, eyelash and hair stencil
 

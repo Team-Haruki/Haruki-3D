@@ -2,9 +2,9 @@
   "capture": {
     "runtimeRoot": "/data/runtime",
     "outputDir": "/data/captures",
-    "width": 1400,
-    "height": 1000,
-    "scale": 2,
+    "width": 1024,
+    "height": 1024,
+    "scale": 1,
     "timeoutMs": 45000,
     "phase": 0.5,
     "clip": "motion_loop",

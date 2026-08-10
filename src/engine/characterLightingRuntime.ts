@@ -12,7 +12,6 @@ import {
 import {
   applySekaiOutlineController,
   sekaiCostumeShopOutlineControllerDefaults,
-  sekaiPreviewOutlineCalibration,
 } from "./sekaiOutlineRuntime";
 export {
   evaluateSekaiOutlineFovFactor,
@@ -157,7 +156,7 @@ export class CharacterLightingRuntime {
     sekaiCostumeShopOutlineControllerDefaults.color.b
   );
   private controllerOutlineBlending: number =
-    sekaiPreviewOutlineCalibration.shadedColorBlend;
+    sekaiCostumeShopOutlineControllerDefaults.blending;
   private skinColors: RuntimeSkinColors | null = null;
 
   constructor(private readonly options: CharacterLightingRuntimeOptions) {
@@ -794,7 +793,7 @@ export class CharacterLightingRuntime {
           sekaiCostumeShopOutlineControllerDefaults.color.b
         );
     this.controllerOutlineBlending = THREE.MathUtils.clamp(
-      outline.blending ?? sekaiPreviewOutlineCalibration.shadedColorBlend,
+      outline.blending ?? sekaiCostumeShopOutlineControllerDefaults.blending,
       0,
       1
     );

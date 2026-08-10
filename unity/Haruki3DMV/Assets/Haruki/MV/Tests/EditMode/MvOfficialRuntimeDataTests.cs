@@ -24,6 +24,66 @@ namespace Haruki.MV.Tests
             Assert.That(
                 MvOfficialRuntimeData.TimelineBundleName(112, "Character"),
                 Is.EqualTo("live_pv/timeline/112/character"));
+            Assert.That(
+                MvOfficialRuntimeData.CharacterFaceBundleName("05/9001"),
+                Is.EqualTo("live_pv/model/characterv2/face/05/9001"));
+            Assert.That(
+                MvOfficialRuntimeData.CharacterBodyBundlePrefix("05/9001"),
+                Is.EqualTo("live_pv/model/characterv2/body/05/9001/"));
+            Assert.That(
+                MvOfficialRuntimeData.CharacterHeadOptionalBundleName(
+                    "0112/a03",
+                    MvCharacterModelVersion.V1),
+                Is.EqualTo("live_pv/model/character/head_optional/0112/a03"));
+            Assert.That(
+                MvOfficialRuntimeData.CharacterBodyColorBundleName("05/9001/02"),
+                Is.EqualTo(
+                    "live_pv/model/characterv2/color_variation/body/05/9001/02"));
+            Assert.That(
+                MvOfficialRuntimeData.CharacterHeadOptionalColorBundleName("0112/a03/02"),
+                Is.EqualTo(
+                    "live_pv/model/characterv2/color_variation/head_optional/0112/a03/02"));
+        }
+
+        [Test]
+        public void CharacterPartsPreferV2AndFallBackToV1Independently()
+        {
+            var v2Face = "live_pv/model/characterv2/face/05/9001";
+            var v1Face = "live_pv/model/character/face/05/9001";
+            Assert.That(
+                MvOfficialRuntimeData.ResolveCharacterFaceBundleName(
+                    "05/9001",
+                    name => name == v2Face),
+                Is.EqualTo(v2Face));
+            Assert.That(
+                MvOfficialRuntimeData.ResolveCharacterFaceBundleName(
+                    "05/9001",
+                    name => name == v1Face),
+                Is.EqualTo(v1Face));
+
+            Assert.That(
+                MvOfficialRuntimeData.ResolveCharacterBodyBundleName(
+                    "05/9001",
+                    prefix => prefix.Contains("characterv2")
+                        ? prefix + "ladies_m"
+                        : null),
+                Is.EqualTo(
+                    "live_pv/model/characterv2/body/05/9001/ladies_m"));
+            Assert.That(
+                MvOfficialRuntimeData.ResolveCharacterBodyBundleName(
+                    "05/9001",
+                    prefix => prefix.Contains("characterv2")
+                        ? null
+                        : prefix + "ladies_m"),
+                Is.EqualTo(
+                    "live_pv/model/character/body/05/9001/ladies_m"));
+
+            var v1Head = "live_pv/model/character/head_optional/0112/a03";
+            Assert.That(
+                MvOfficialRuntimeData.ResolveCharacterHeadOptionalBundleName(
+                    "0112/a03",
+                    name => name == v1Head),
+                Is.EqualTo(v1Head));
         }
 
         [Test]

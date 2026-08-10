@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test.use({ viewport: { width: 1024, height: 1024 }, deviceScaleFactor: 2 });
+test.use({ viewport: { width: 1024, height: 1024 }, deviceScaleFactor: 1 });
 
 test("capture kernel boots with WebGL and no page errors", async ({ page }) => {
   const pageErrors = [];
@@ -35,7 +35,7 @@ test("capture kernel boots with WebGL and no page errors", async ({ page }) => {
 
   expect(state).toEqual({
     hasCanvas: true,
-    drawingBufferSize: [2048, 2048],
+    drawingBufferSize: [1024, 1024],
     hasRequestHandler: true,
     hasWebGL: true,
     captureError: "",

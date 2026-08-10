@@ -142,7 +142,6 @@ export {
   evaluateSekaiOutlineColor,
   isSekaiOutlinePassEnabled,
   sekaiCostumeShopOutlineControllerDefaults,
-  sekaiPreviewOutlineCalibration,
 } from "./engine/sekaiOutlineRuntime";
 export {
   applyRawMaterialTextureTransform,
