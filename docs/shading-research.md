@@ -110,11 +110,13 @@ formation's global outline color/blending. The Engine therefore reuses the
 source Toon fragment/uniforms for body, face, hair and accessory outline
 passes; a solid purple-gray `MeshBasicMaterial` would be the wrong path.
 
-The capture service renders the official 1024x1024 target at device scale 1.
-The Engine therefore sends the captured width endpoints and controller blend
-unchanged: a fully weighted silhouette is about 1.2 pixels at the fixed
-full-body camera. Optional browser presentation scaling is outside the material
-kernel and must not introduce a second outline calibration.
+The capture service renders the official 1024x1024 backing target. The Engine
+therefore sends the captured width endpoints and controller blend unchanged: a
+fully weighted silhouette is about 1.2 source pixels at the fixed full-body
+camera. The browser then presents that completed canvas at device scale 5/3
+with normal bilinear filtering, matching the captured 3200/1920 Canvas scale;
+this UI step must not introduce a second outline calibration or rerender the
+model at the approximately 1707-pixel presentation size.
 
 The final global-outline blend is a Gamma-space operation. The game runs a
 Unity Gamma pipeline (the CostumeShop preview renders into a 1024x1024

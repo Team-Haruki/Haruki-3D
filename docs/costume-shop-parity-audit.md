@@ -215,10 +215,12 @@ A `MeshBasicMaterial` fallback remains only for non-character materials that do
 not expose the kernel's Toon output hook. Exported CostumeShop body/face/hair
 materials take the full Toon outline path.
 
-The capture service now defaults to the official 1024x1024 target at device
-scale 1. The shell therefore uses the captured width endpoints and 0.5
-controller blend directly. Browser presentation may scale the completed canvas,
-but it must not rewrite the material kernel's width or color blend.
+The capture service renders into the official 1024x1024 backing buffer. Its
+default device scale 5/3 is a later browser-compositor presentation step, so
+the final approximately 1707x1707 PNG receives the same ordinary bilinear
+softening as the captured 3200/1920 in-game Canvas presentation. The shell
+still uses the captured width endpoints and 0.5 controller blend; presentation
+must not rewrite material constants.
 
 ## Eye, eyelash and hair stencil
 

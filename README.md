@@ -89,7 +89,8 @@ Useful capture request fields:
 
 - `--config <json>` loads capture defaults from a JSON config file.
 - `--phase <0..1>` seeks the selected loop phase.
-- `--scale <1..2>` renders with a higher device pixel ratio for sharper PNGs.
+- `--scale <1..2>` controls browser UI presentation density; the CostumeShop
+  WebGL backing buffer remains capped at the official 1024-pixel target.
 - `--warmup-frames <n>` steps the runtime at 60fps before capture.
 - `--warmup-mode animation` advances animation and runtime.
 - `--warmup-mode runtime` freezes animation and only settles runtime systems.
@@ -162,7 +163,7 @@ The Docker image runs the capture HTTP service. Mount an exported runtime packag
 docker build -t haruki-3d-engine .
 docker run --rm -p 127.0.0.1:8080:8080 \
   -e HARUKI_ENGINE_CONFIG=/app/haruki-3d-engine.config.json \
-  -e HARUKI_CAPTURE_SCALE=1 \
+  -e HARUKI_CAPTURE_SCALE=1.6666667 \
   -v /path/to/haruki-3d-engine.config.json:/app/haruki-3d-engine.config.json:ro \
   -v /path/to/runtime:/data/runtime:ro \
   -v /path/to/captures:/data/captures \
@@ -183,7 +184,7 @@ curl -X POST http://localhost:8080/capture \
     "headCostume3dId": 1001,
     "hairCostume3dId": 1001,
     "headOptionalCostume3dId": null,
-    "scale": 1
+    "scale": 1.6666667
   }'
 ```
 
@@ -194,7 +195,7 @@ For a runtime root containing region directories such as `/data/runtime/jp` and
 serves its role registry. Runtime metadata is exclusively Brotli-compressed
 MessagePack; part packages must use core+delta and declare `corePath`.
 
-The service starts one persistent headless Chromium page and keeps the engine loaded. Requests reuse that page, write only the final `/data/captures/<imageId>.png`, and atomically replace an existing file with the same id. The default `1024x1024` CSS viewport at scale `1` writes the official `1024x1024` preview target. Explicit `width`, `height`, or `scale` values remain host presentation policy; they do not alter the CostumeShop material or outline constants. The service-owned Chromium profile/cache directory is removed on shutdown or session restart. Open `http://localhost:8080/capture.html` only when inspecting the harness manually.
+The service starts one persistent headless Chromium page and keeps the engine loaded. Requests reuse that page, write only the final `/data/captures/<imageId>.png`, and atomically replace an existing file with the same id. The default path renders the character into the official `1024x1024` WebGL backing buffer, then lets Chromium present that canvas at device scale `1.6666667` with normal bilinear filtering, producing an approximately `1707x1707` PNG. This matches the captured `3200/1920` CostumeShop Canvas scale; it is not SMAA, FSR, RCAS, or a second 3D render. `scale` changes only presentation density; it does not increase 3D rasterization or alter CostumeShop material and outline constants. The service-owned Chromium profile/cache directory is removed on shutdown or session restart. Open `http://localhost:8080/capture.html` only when inspecting the harness manually.
 
 ## Development Notes
 

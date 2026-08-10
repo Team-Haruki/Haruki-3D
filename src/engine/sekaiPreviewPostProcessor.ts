@@ -1,5 +1,7 @@
 export const sekaiPreviewPostProcessDefaults = {
-  maxOutputSize: 2048,
+  // CostumeShop renders into this fixed intermediate; device pixels belong
+  // to the later UI presentation and must not increase WebGL rasterization.
+  maxOutputSize: 1024,
   enabled: false,
 } as const;
 

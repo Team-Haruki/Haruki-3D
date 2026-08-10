@@ -4,7 +4,7 @@
     "outputDir": "/data/captures",
     "width": 1024,
     "height": 1024,
-    "scale": 1,
+    "scale": 1.6666667,
     "timeoutMs": 45000,
     "phase": 0.5,
     "clip": "motion_loop",

@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 
-test.use({ viewport: { width: 1024, height: 1024 }, deviceScaleFactor: 1 });
+test.use({ viewport: { width: 1024, height: 1024 }, deviceScaleFactor: 5 / 3 });
 
 test("capture kernel boots with WebGL and no page errors", async ({ page }) => {
   const pageErrors = [];
@@ -23,6 +23,7 @@ test("capture kernel boots with WebGL and no page errors", async ({ page }) => {
     return {
       hasCanvas: canvas instanceof HTMLCanvasElement,
       drawingBufferSize: canvas ? [canvas.width, canvas.height] : null,
+      devicePixelRatio: window.devicePixelRatio,
       hasRequestHandler: typeof window.__HARUKI_CAPTURE_REQUEST__ === "function",
       hasWebGL: Boolean(
         canvas?.getContext("webgl2")
@@ -33,13 +34,18 @@ test("capture kernel boots with WebGL and no page errors", async ({ page }) => {
     };
   });
 
-  expect(state).toEqual({
+  expect(state).toMatchObject({
     hasCanvas: true,
     drawingBufferSize: [1024, 1024],
     hasRequestHandler: true,
     hasWebGL: true,
     captureError: "",
   });
+  expect(state.devicePixelRatio).toBeCloseTo(5 / 3, 6);
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
+
+  const screenshot = await page.screenshot();
+  expect(screenshot.readUInt32BE(16)).toBe(1707);
+  expect(screenshot.readUInt32BE(20)).toBe(1707);
 });
