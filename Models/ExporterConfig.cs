@@ -34,5 +34,7 @@ public sealed record ExporterConfig(
     bool? ConvertModelTextures,
     string? PartPackageWorkList,
     string? BundleHashIndex,
-    string? BundleDependencyIndex
+    string? BundleDependencyIndex,
+    bool? EmitMvSourceSet,
+    string? MvManifest
 );

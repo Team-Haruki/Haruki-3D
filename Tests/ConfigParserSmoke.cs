@@ -222,6 +222,91 @@ var catalogOnly = ConversionOptionsParser.Parse(new[]
 Expect(catalogOnly.IsSuccess && catalogOnly.Options?.EmitRuntimeRoleCatalog == true,
     "runtime role catalog refresh requires masterdata but no AssetBundles root");
 
+var mvSourceOnly = ConversionOptionsParser.Parse(new[]
+{
+    "--emit-mv-source-set",
+    "--mv-manifest", "/data/mv-0112.json",
+    "--asset-root", "/data/raw",
+    "--out", "/data/mv-source",
+});
+Expect(
+    mvSourceOnly.IsSuccess &&
+    mvSourceOnly.Options?.EmitMvSourceSet == true &&
+    mvSourceOnly.Options.MvManifestPath == "/data/mv-0112.json",
+    "MV source set mode requires only a manifest, raw asset root, and output"
+);
+
+var mvAssetRoot = Path.Combine(tempDir, "mv-assets");
+var mvOutput = Path.Combine(tempDir, "mv-output");
+var mvManifestPath = Path.Combine(tempDir, "mv-manifest.json");
+var mvDataPath = Path.Combine(mvAssetRoot, "live_pv", "mv_data", "0112.bundle");
+var shaderPath = Path.Combine(mvAssetRoot, "shader", "live.bundle");
+var mvBodyPath = Path.Combine(mvAssetRoot, "live_pv", "model", "characterv2", "body", "05", "9001", "ladies_s.bundle");
+var mvFacePath = Path.Combine(mvAssetRoot, "live_pv", "model", "characterv2", "face", "05", "9001.bundle");
+var mvHeadOptionalPath = Path.Combine(mvAssetRoot, "live_pv", "model", "character", "head_optional", "0112", "a03.bundle");
+var mvBodyColorPath = Path.Combine(mvAssetRoot, "live_pv", "model", "characterv2", "color_variation", "body", "05", "9001", "02.bundle");
+var mvHeadColorPath = Path.Combine(mvAssetRoot, "live_pv", "model", "characterv2", "color_variation", "head_optional", "0112", "a03", "02.bundle");
+Directory.CreateDirectory(Path.GetDirectoryName(mvDataPath)!);
+Directory.CreateDirectory(Path.GetDirectoryName(shaderPath)!);
+Directory.CreateDirectory(Path.GetDirectoryName(mvBodyPath)!);
+Directory.CreateDirectory(Path.GetDirectoryName(mvFacePath)!);
+Directory.CreateDirectory(Path.GetDirectoryName(mvHeadOptionalPath)!);
+Directory.CreateDirectory(Path.GetDirectoryName(mvBodyColorPath)!);
+Directory.CreateDirectory(Path.GetDirectoryName(mvHeadColorPath)!);
+var wrappedMvBundle = new byte[132];
+wrappedMvBundle[0] = 0x10;
+"UnityFS-mv"u8.CopyTo(wrappedMvBundle.AsSpan(4));
+for (var index = 4; index < wrappedMvBundle.Length; index += 8)
+{
+    for (var offset = 0; offset < 5; offset++)
+    {
+        wrappedMvBundle[index + offset] = (byte)~wrappedMvBundle[index + offset];
+    }
+}
+File.WriteAllBytes(mvDataPath, wrappedMvBundle);
+File.WriteAllBytes(shaderPath, "UnityFS-shader"u8.ToArray());
+File.WriteAllBytes(mvBodyPath, "UnityFS-body"u8.ToArray());
+File.WriteAllBytes(mvFacePath, "UnityFS-face"u8.ToArray());
+File.WriteAllBytes(mvHeadOptionalPath, "UnityFS-head"u8.ToArray());
+File.WriteAllBytes(mvBodyColorPath, "UnityFS-body-color"u8.ToArray());
+File.WriteAllBytes(mvHeadColorPath, "UnityFS-head-color"u8.ToArray());
+File.WriteAllText(mvManifestPath, JsonSerializer.Serialize(new
+{
+    music_id = 112,
+    music_title = "天使のクローバー",
+    asset_version = "test",
+    bundles = new object[]
+    {
+        new { bundle = "live_pv/mv_data/0112", dependencies = Array.Empty<string>() },
+        new { bundle = "shader/live", dependencies = Array.Empty<string>() },
+        new { bundle = "live_pv/model/characterv2/body/05/9001/ladies_s", dependencies = Array.Empty<string>() },
+        new { bundle = "live_pv/model/characterv2/face/05/9001", dependencies = Array.Empty<string>() },
+        new { bundle = "live_pv/model/character/head_optional/0112/a03", dependencies = Array.Empty<string>() },
+        new { bundle = "live_pv/model/characterv2/color_variation/body/05/9001/02", dependencies = Array.Empty<string>() },
+        new { bundle = "live_pv/model/characterv2/color_variation/head_optional/0112/a03/02", dependencies = Array.Empty<string>() },
+    },
+}));
+var mvSourceResult = new MvSourceSetExporter().Export(mvManifestPath, mvAssetRoot, mvOutput);
+var mvSourceSet = JsonNode.Parse(File.ReadAllText(Path.Combine(mvOutput, "mv-source-set.json")))!;
+Expect(
+    mvSourceResult.MusicId == 112 &&
+    mvSourceResult.BundleCount == 7 &&
+    File.Exists(Path.Combine(mvOutput, "mv-source-set.json")) &&
+    File.Exists(Path.Combine(mvOutput, "deps.json")) &&
+    File.Exists(Path.Combine(mvOutput, "source_bundles", "live_pv", "mv_data", "0112.bundle")),
+    "MV source exporter validates UnityFS inputs and preserves logical bundle paths"
+);
+Expect(
+    mvSourceSet["bundles"]![0]!["kind"]!.GetValue<string>() == "mv_data" &&
+    mvSourceSet["bundles"]![1]!["kind"]!.GetValue<string>() == "shader" &&
+    mvSourceSet["bundles"]![2]!["kind"]!.GetValue<string>() == "character_body" &&
+    mvSourceSet["bundles"]![3]!["kind"]!.GetValue<string>() == "character_face" &&
+    mvSourceSet["bundles"]![4]!["kind"]!.GetValue<string>() == "character_head_optional" &&
+    mvSourceSet["bundles"]![5]!["kind"]!.GetValue<string>() == "character_body_color" &&
+    mvSourceSet["bundles"]![6]!["kind"]!.GetValue<string>() == "character_head_optional_color",
+    "MV source exporter classifies per-part V2 bundles and V1 fallbacks for the WebGL rebuild"
+);
+
 var hashAssetRoot = Path.Combine(tempDir, "hash-assets");
 var indexedBundle = Path.Combine(hashAssetRoot, "live_pv", "model", "body.bundle");
 Directory.CreateDirectory(Path.GetDirectoryName(indexedBundle)!);

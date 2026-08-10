@@ -31,7 +31,9 @@ public sealed record ConversionOptions(
     bool ConvertModelTextures,
     string? PartPackageWorkList,
     string? BundleHashIndex,
-    string? BundleDependencyIndex
+    string? BundleDependencyIndex,
+    bool EmitMvSourceSet,
+    string? MvManifestPath
 )
 {
     public bool OwnsOutputFinalization =>

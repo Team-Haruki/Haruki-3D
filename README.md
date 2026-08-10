@@ -1,5 +1,23 @@
 # Haruki-3D-Exporter
 
+## Stage a 3DMV source bundle set
+
+Use a dependency-closed MV manifest to validate and stage updater output or the
+game's wrapped source bundles. The known 0x10 wrapper is normalized to UnityFS:
+
+```bash
+dotnet run -- \
+  --emit-mv-source-set \
+  --mv-manifest /path/to/mv-0112-manifest.json \
+  --asset-root /path/to/raw-bundles \
+  --out /path/to/mv-0112-source
+```
+
+The output contains `mv-source-set.json`, ClauseKAI-shaped `deps.json`, and the
+logical bundle tree below `source_bundles/`. These are source-platform bundles,
+not browser bundles. A Unity WebGL rebuild/conversion step is required before
+serving them to `UnityWebRequestAssetBundle` in a browser.
+
 Offline converter for Project SEKAI character bundles.
 
 The converter reads Unity AssetBundles with AssetStudio and writes a browser-friendly runtime package for Haruki 3D Engine.
@@ -30,7 +48,7 @@ dotnet run -- \\
   --out /path/to/output
 ```
 
-The asset root must contain `live_pv/model/characterv2`. Runtime metadata is always emitted as `.msgpack.br`; JSON, gzip, self-contained part runtimes, legacy `character` roots, and direct VRM/GLB full exports are not supported.
+The CostumeShop asset root must contain `live_pv/model/characterv2`. Its runtime metadata is always emitted as `.msgpack.br`; JSON, gzip, self-contained part runtimes, legacy `character` roots, and direct VRM/GLB full exports are not supported by that preview pipeline. `--emit-mv-source-set` is separate and preserves the dependency-closed 3DMV selection, including per-part `characterv2` choices and any legacy `character` fallback selected by the official runtime rule.
 
 ## Build
 

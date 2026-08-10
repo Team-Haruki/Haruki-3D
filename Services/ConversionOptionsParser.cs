@@ -11,6 +11,7 @@ public static class ConversionOptionsParser
         "  Haruki-3D-Exporter --emit-runtime-role-catalog --master <master-directory> --out <directory>\n" +
         "  Haruki-3D-Exporter --emit-part-packages --part-costume3d-id <id> --part-type <body|head|hair|head_optional> --master <master-directory> --asset-root <AssetBundles-root> --out <directory> [--part-unit <unit>]\n\n" +
         "  Haruki-3D-Exporter --emit-role-runtimes [--role-character3d-id <id>] --master <master-directory> --asset-root <AssetBundles-root> --out <directory> [--motion <bundle-or-export-folder>]\n" +
+        "  Haruki-3D-Exporter --emit-mv-source-set --mv-manifest <manifest.json> --asset-root <raw-bundle-root> --out <directory>\n" +
         "  Haruki-3D-Exporter --export-face-motion --motion <bundle-or-decoded-folder-or-json> --out <face_motion.json-or-directory> [--source-path <bundle-path>]\n\n" +
         "  Add --config <json> to load defaults from haruki-3d-exporter.config.json.\n\n" +
         "Notes:\n" +
@@ -29,6 +30,7 @@ public static class ConversionOptionsParser
         "  --shared-content-store hard-links exact texture and part-runtime bytes into a shared cross-region CAS\n" +
         "  --bundle-hash-index reuses updater-provided SHA-256 values when fingerprinting source bundles\n" +
         "  --bundle-dependency-index preserves updater-provided logical bundle dependency closure\n" +
+        "  --emit-mv-source-set validates and stages a manifest-selected MV bundle closure; output remains source-platform data and must be rebuilt for WebGL\n" +
         "  --png-optimize controls lossless PNG optimization during compaction: oxipng or off\n" +
         "  --texture-format selects final runtime textures: png (default) or ktx2\n" +
         "  --texture-compact-workers limits concurrent PNG optimizers; 0 = min(4, CPU count)\n" +
@@ -70,6 +72,8 @@ public static class ConversionOptionsParser
         string? partPackageWorkList = null;
         string? bundleHashIndex = null;
         string? bundleDependencyIndex = null;
+        var emitMvSourceSet = false;
+        string? mvManifestPath = null;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -130,6 +134,8 @@ public static class ConversionOptionsParser
                 partPackageWorkList = config.PartPackageWorkList;
                 bundleHashIndex = config.BundleHashIndex;
                 bundleDependencyIndex = config.BundleDependencyIndex;
+                emitMvSourceSet = config.EmitMvSourceSet ?? false;
+                mvManifestPath = config.MvManifest;
             }
             catch (Exception ex)
             {
@@ -347,6 +353,18 @@ public static class ConversionOptionsParser
                 continue;
             }
 
+            if (arg is "--emit-mv-source-set")
+            {
+                emitMvSourceSet = true;
+                continue;
+            }
+
+            if (arg is "--mv-manifest")
+            {
+                mvManifestPath = ReadValue(args, ref i, arg);
+                continue;
+            }
+
             if (arg is "--help" or "-?")
             {
                 return new ParseResult(false, null, "Help requested.");
@@ -370,6 +388,17 @@ public static class ConversionOptionsParser
             if (string.IsNullOrWhiteSpace(masterDirectory))
             {
                 return new ParseResult(false, null, "Missing --master for --emit-runtime-role-catalog.");
+            }
+        }
+        else if (emitMvSourceSet)
+        {
+            if (string.IsNullOrWhiteSpace(assetRoot))
+            {
+                return new ParseResult(false, null, "Missing --asset-root for --emit-mv-source-set.");
+            }
+            if (string.IsNullOrWhiteSpace(mvManifestPath))
+            {
+                return new ParseResult(false, null, "Missing --mv-manifest for --emit-mv-source-set.");
             }
         }
         else if (emitCostumeRegistries || emitPartPackages || emitRoleRuntimes)
@@ -479,7 +508,9 @@ public static class ConversionOptionsParser
                 convertModelTextures,
                 string.IsNullOrWhiteSpace(partPackageWorkList) ? null : partPackageWorkList,
                 string.IsNullOrWhiteSpace(bundleHashIndex) ? null : bundleHashIndex,
-                string.IsNullOrWhiteSpace(bundleDependencyIndex) ? null : bundleDependencyIndex
+                string.IsNullOrWhiteSpace(bundleDependencyIndex) ? null : bundleDependencyIndex,
+                emitMvSourceSet,
+                string.IsNullOrWhiteSpace(mvManifestPath) ? null : mvManifestPath
             ),
             string.Empty
         );

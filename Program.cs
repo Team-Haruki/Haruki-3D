@@ -19,6 +19,28 @@ if (!parseResult.IsSuccess || parseResult.Options is null)
 
 var options = parseResult.Options;
 Logger.Default = new AssetStudioConsoleLogger(options.AssetStudioLogLevel);
+if (options.EmitMvSourceSet)
+{
+    try
+    {
+        var result = new MvSourceSetExporter().Export(
+            options.MvManifestPath!,
+            options.AssetRoot!,
+            options.OutputDirectory
+        );
+        Console.WriteLine(
+            $"Wrote MV {result.MusicId} source set: {result.BundleCount} bundle(s), " +
+            $"{result.TotalBytes} byte(s)."
+        );
+        Console.WriteLine("These are source-platform Unity bundles; rebuild them for WebGL before browser loading.");
+        return 0;
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"MV source set export failed: {ex.Message}");
+        return 2;
+    }
+}
 if (options.EmitRuntimeRoleCatalog)
 {
     try
@@ -216,7 +238,7 @@ if (options.EmitPartPackages)
     }
 }
 
-Console.Error.WriteLine("Choose one final pipeline operation: --emit-costume-registries, --emit-runtime-role-catalog, --emit-part-packages, --emit-role-runtimes, --export-face-motion, or --optimize-texture-store.");
+Console.Error.WriteLine("Choose one final pipeline operation: --emit-mv-source-set, --emit-costume-registries, --emit-runtime-role-catalog, --emit-part-packages, --emit-role-runtimes, --export-face-motion, or --optimize-texture-store.");
 return 1;
 
 static IReadOnlyDictionary<string, float> LoadCharacterHeightMetersById(string masterDirectory)
