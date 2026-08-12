@@ -46,6 +46,11 @@ test("capture kernel boots with WebGL and no page errors", async ({ page }) => {
   expect(consoleErrors).toEqual([]);
 
   const screenshot = await page.screenshot();
-  expect(screenshot.readUInt32BE(16)).toBe(1707);
-  expect(screenshot.readUInt32BE(20)).toBe(1707);
+  const expectedPhysicalViewport = 1024 * state.devicePixelRatio;
+  const minimumPhysicalViewport = Math.floor(expectedPhysicalViewport);
+  const maximumPhysicalViewport = Math.ceil(expectedPhysicalViewport);
+  for (const size of [screenshot.readUInt32BE(16), screenshot.readUInt32BE(20)]) {
+    expect(size).toBeGreaterThanOrEqual(minimumPhysicalViewport);
+    expect(size).toBeLessThanOrEqual(maximumPhysicalViewport);
+  }
 });
