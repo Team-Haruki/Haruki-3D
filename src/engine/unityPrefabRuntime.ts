@@ -61,6 +61,8 @@ export type PrefabHeadFollowNodeDebug = {
 export type UnityPrefabSourceGraph = {
   root: THREE.Group;
   nodeByPath: Map<string, THREE.Object3D>;
+  nodeByPathId: Map<number, THREE.Object3D>;
+  ambiguousPaths: Set<string>;
   meshCarrierBindings: Array<{
     source: THREE.Object3D;
     target: THREE.Object3D;
@@ -171,8 +173,11 @@ type RuntimeNativeMeshSource = {
   meshPath?: string;
   meshName?: string;
   rendererPathId?: number;
+  rendererTransformPathId?: number | null;
   rendererTransformPath?: string;
+  rootBonePathId?: number | null;
   rootBonePath?: string | null;
+  bonePathIds?: number[];
   bonePaths?: string[];
   boneInverseBindMatrices?: RuntimeNumericArray;
   submeshes?: RuntimeNativeSubmeshSource[];
@@ -293,24 +298,45 @@ function moveFaceRendererTransforms(
 
 function detachRuntimeSubtree(
   node: THREE.Object3D,
-  nodeByPath: Map<string, THREE.Object3D>
+  nodeByPath: Map<string, THREE.Object3D>,
+  nodeByPathId: Map<number, THREE.Object3D>
 ) {
   if (node.parent) {
     node.parent.remove(node);
   }
+  const detached = new Set<THREE.Object3D>();
   node.traverse((child) => {
     child.userData.pjskModelCombineDestroyed = true;
-    for (const [path, candidate] of nodeByPath.entries()) {
-      if (candidate === child) {
-        nodeByPath.delete(path);
-      }
-    }
+    detached.add(child);
   });
+  for (const [path, candidate] of nodeByPath.entries()) {
+    if (detached.has(candidate)) {
+      nodeByPath.delete(path);
+    }
+  }
+  for (const [pathId, candidate] of nodeByPathId.entries()) {
+    if (detached.has(candidate)) {
+      nodeByPathId.delete(pathId);
+    }
+  }
+}
+
+function replacePathIdNodeReferences(
+  nodeByPathId: Map<number, THREE.Object3D>,
+  source: THREE.Object3D,
+  replacement: THREE.Object3D
+) {
+  for (const [pathId, candidate] of nodeByPathId.entries()) {
+    if (candidate === source) {
+      nodeByPathId.set(pathId, replacement);
+    }
+  }
 }
 
 function applyOfficialModelCombineSetup(
   root: THREE.Group,
   nodeByPath: Map<string, THREE.Object3D>,
+  nodeByPathId: Map<number, THREE.Object3D>,
   assembly: RuntimeUnityBodyHeadAssemblySource,
   headRendererPaths: readonly string[]
 ) {
@@ -389,12 +415,19 @@ function applyOfficialModelCombineSetup(
   faceNodeB.node.scale.copy(bodyNodeB.node.scale);
   faceNodeB.node.updateMatrix();
 
-  detachRuntimeSubtree(bodyNodeB.node, nodeByPath);
-  detachRuntimeSubtree(bodyNodeA.node, nodeByPath);
+  // Unity patches the body renderer's Neck/Head bone slots to the retained
+  // face Neck/Head before destroying the body-side duplicates. Keep the
+  // original body PathIDs as aliases to those retained nodes so native mesh
+  // bindings reproduce the same object-reference replacement.
+  replacePathIdNodeReferences(nodeByPathId, bodyNodeA.node, faceNodeA.node);
+  replacePathIdNodeReferences(nodeByPathId, bodyNodeB.node, faceNodeB.node);
+
+  detachRuntimeSubtree(bodyNodeB.node, nodeByPath, nodeByPathId);
+  detachRuntimeSubtree(bodyNodeA.node, nodeByPath, nodeByPathId);
   // The instantiated face prefab is only an assembly input. Its wrapper,
   // control nodes, and duplicate Position -> Chest_const chain do not survive
   // ModelCombineSetup; Face/Neck/Head and every renderer were extracted above.
-  detachRuntimeSubtree(childRoot.node, nodeByPath);
+  detachRuntimeSubtree(childRoot.node, nodeByPath, nodeByPathId);
 
   nodeByPath.set(bodyNodeA.path, faceNodeA.node);
   nodeByPath.set(bodyNodeB.path, faceNodeB.node);
@@ -435,6 +468,61 @@ function resolveOfficialBodyRootBone(
   return bodyMesh?.rootBonePath ?? null;
 }
 
+function resolvePrefabInstanceRoot(
+  source: RuntimePrefabTransformSource,
+  sourceByPathId: ReadonlyMap<number, RuntimePrefabTransformSource>
+) {
+  let current = source;
+  const visited = new Set<number>();
+  while (typeof current.parentPathId === "number") {
+    if (typeof current.pathId === "number" && !visited.add(current.pathId)) {
+      throw new Error(`Runtime prefab graph contains a parent cycle at PathID ${current.pathId}.`);
+    }
+    const parent = sourceByPathId.get(current.parentPathId);
+    if (!parent) {
+      break;
+    }
+    current = parent;
+  }
+  return current;
+}
+
+function prefabInstanceKey(source: RuntimePrefabTransformSource) {
+  const topLevelPath = source.transformPath?.split("/")[0];
+  return topLevelPath
+    ? `${source.runtimePartIndex ?? -1}:${topLevelPath}`
+    : null;
+}
+
+function resolvePreferredPrefabRoots(
+  extension: unknown,
+  sourceByPathId: ReadonlyMap<number, RuntimePrefabTransformSource>
+) {
+  const preferredRootByKey = new Map<string, number>();
+  for (const mesh of readRuntimeNativeMeshSet0414(extension)?.meshes ?? []) {
+    if (typeof mesh.rendererTransformPathId !== "number") {
+      continue;
+    }
+    const renderer = sourceByPathId.get(mesh.rendererTransformPathId);
+    if (!renderer) {
+      continue;
+    }
+    const root = resolvePrefabInstanceRoot(renderer, sourceByPathId);
+    const key = prefabInstanceKey(renderer);
+    if (!key || typeof root.pathId !== "number") {
+      continue;
+    }
+    const previous = preferredRootByKey.get(key);
+    if (previous !== undefined && previous !== root.pathId) {
+      throw new Error(
+        `Runtime native meshes reference multiple Unity prefab instances for '${key}' (${previous}, ${root.pathId}).`
+      );
+    }
+    preferredRootByKey.set(key, root.pathId);
+  }
+  return preferredRootByKey;
+}
+
 export function buildUnityPrefabSourceGraph(
   extension: unknown,
   meshCarrierRoot?: THREE.Object3D | null
@@ -453,6 +541,26 @@ export function buildUnityPrefabSourceGraph(
   const nodeByPathId = new Map<number, THREE.Object3D>();
   const sourceByPathId = new Map<number, RuntimePrefabTransformSource>();
   const nodeByPath = new Map<string, THREE.Object3D>();
+  const pathCounts = new Map<string, number>();
+
+  for (const graph of setup.prefabGraphs) {
+    for (const transform of graph.transforms ?? []) {
+      if (typeof transform.pathId !== "number" || !transform.transformPath) {
+        continue;
+      }
+      sourceByPathId.set(transform.pathId, transform);
+      pathCounts.set(
+        transform.transformPath,
+        (pathCounts.get(transform.transformPath) ?? 0) + 1
+      );
+    }
+  }
+  const ambiguousPaths = new Set(
+    [...pathCounts.entries()]
+      .filter(([, count]) => count > 1)
+      .map(([path]) => path)
+  );
+  const preferredRootByKey = resolvePreferredPrefabRoots(extension, sourceByPathId);
 
   for (const graph of setup.prefabGraphs) {
     for (const transform of graph.transforms ?? []) {
@@ -476,8 +584,15 @@ export function buildUnityPrefabSourceGraph(
       ));
       node.updateMatrix();
       nodeByPathId.set(transform.pathId, node);
-      sourceByPathId.set(transform.pathId, transform);
-      nodeByPath.set(transform.transformPath, node);
+      const rootSource = resolvePrefabInstanceRoot(transform, sourceByPathId);
+      const preferredRoot = preferredRootByKey.get(prefabInstanceKey(transform) ?? "");
+      if (
+        preferredRoot === undefined ||
+        preferredRoot === rootSource.pathId ||
+        !nodeByPath.has(transform.transformPath)
+      ) {
+        nodeByPath.set(transform.transformPath, node);
+      }
     }
   }
 
@@ -509,6 +624,7 @@ export function buildUnityPrefabSourceGraph(
   const modelCombine = applyOfficialModelCombineSetup(
     root,
     nodeByPath,
+    nodeByPathId,
     assembly,
     headRendererPaths
   );
@@ -560,6 +676,8 @@ export function buildUnityPrefabSourceGraph(
   return {
     root,
     nodeByPath,
+    nodeByPathId,
+    ambiguousPaths,
     meshCarrierBindings,
     bodyAttach: modelCombine.faceNodeA.node,
     bodyAttachPath: bodyAttach.path,
@@ -622,13 +740,41 @@ export function installUnityRuntimeNativeMeshes(
   let skinnedMeshCount = 0;
   const skinBindings: NativeMeshSkinBindingDiagnostics[] = [];
   const warnings = [...(nativeMeshes.warnings ?? [])];
+  const fatalErrors: string[] = [];
   graph.root.updateMatrixWorld(true);
 
   for (const source of meshes) {
     const targetPath = source.rendererTransformPath;
-    const parent = targetPath ? graph.nodeByPath.get(targetPath) : null;
+    const bonePaths = source.bonePaths ?? [];
+    const bonePathIds = source.bonePathIds ?? [];
+    const ambiguousLegacyPaths = [
+      ...(typeof source.rendererTransformPathId !== "number" ? [targetPath] : []),
+      ...(bonePathIds.length === 0 ? bonePaths : []),
+      ...(typeof source.rootBonePathId !== "number" ? [source.rootBonePath] : []),
+    ].filter((path): path is string => Boolean(path && graph.ambiguousPaths.has(path)));
+    if (ambiguousLegacyPaths.length > 0) {
+      const error = `Native mesh '${source.meshPath ?? source.meshName ?? "<unnamed>"}' has an ambiguous legacy PathID-less skin binding (${[...new Set(ambiguousLegacyPaths)].join(", ")}); regenerate it with a current Haruki-3D-Exporter.`;
+      warnings.push(error);
+      fatalErrors.push(error);
+      continue;
+    }
+    if (bonePathIds.length > 0 && bonePathIds.length !== bonePaths.length) {
+      const error = `Native mesh '${source.meshPath ?? source.meshName ?? "<unnamed>"}' has ${bonePaths.length} bone paths but ${bonePathIds.length} bone PathIDs; regenerate it with a current Haruki-3D-Exporter.`;
+      warnings.push(error);
+      fatalErrors.push(error);
+      continue;
+    }
+    const parent = typeof source.rendererTransformPathId === "number"
+      ? graph.nodeByPathId.get(source.rendererTransformPathId)
+      : targetPath
+        ? graph.nodeByPath.get(targetPath)
+        : null;
     if (!parent) {
-      warnings.push(`Native mesh '${source.meshPath ?? source.meshName ?? "<unnamed>"}' skipped: renderer transform '${targetPath ?? "<null>"}' was not found.`);
+      const error = `Native mesh '${source.meshPath ?? source.meshName ?? "<unnamed>"}' skipped: renderer transform '${targetPath ?? "<null>"}' was not found.`;
+      warnings.push(error);
+      if (typeof source.rendererTransformPathId === "number") {
+        fatalErrors.push(error);
+      }
       continue;
     }
 
@@ -657,9 +803,10 @@ export function installUnityRuntimeNativeMeshes(
       ? materials
       : [new THREE.MeshBasicMaterial({ color: 0xffffff })];
     const meshName = source.meshName ?? source.meshPath?.split("/").pop() ?? "UnityNativeMesh";
-    const bonePaths = source.bonePaths ?? [];
     const bones = bonePaths
-      .map((path) => graph.nodeByPath.get(path))
+      .map((path, index) => bonePathIds.length > 0
+        ? graph.nodeByPathId.get(bonePathIds[index]!)
+        : graph.nodeByPath.get(path))
       .filter((node): node is THREE.Object3D => Boolean(node));
 
     let mesh: THREE.Mesh | THREE.SkinnedMesh;
@@ -667,7 +814,9 @@ export function installUnityRuntimeNativeMeshes(
     let skeletonBones: THREE.Object3D[] = [];
     if (bonePaths.length > 0) {
       if (bones.length !== bonePaths.length) {
-        warnings.push(`Native mesh '${source.meshPath ?? meshName}' skipped: ${bonePaths.length - bones.length} skin bones were unresolved.`);
+        const error = `Native mesh '${source.meshPath ?? meshName}' skipped: ${bonePaths.length - bones.length} skin bones were unresolved.`;
+        warnings.push(error);
+        fatalErrors.push(error);
         geometry.dispose();
         continue;
       }
@@ -728,17 +877,21 @@ export function installUnityRuntimeNativeMeshes(
         partKind: source.partKind ?? null,
         rendererTransformPath: targetPath ?? null,
         rootBonePath: source.rootBonePath ?? null,
-        rootBoneResolved: source.rootBonePath
-          ? graph.nodeByPath.has(source.rootBonePath)
-          : false,
+        rootBoneResolved: typeof source.rootBonePathId === "number"
+          ? graph.nodeByPathId.has(source.rootBonePathId)
+          : source.rootBonePath
+            ? graph.nodeByPath.has(source.rootBonePath)
+            : false,
         effectiveRootBonePath: targetPath && graph.headRendererPaths.includes(targetPath)
           ? graph.bodyRootBonePath
           : source.rootBonePath ?? null,
         effectiveRootBoneResolved: targetPath && graph.headRendererPaths.includes(targetPath)
           ? Boolean(graph.bodyRootBone)
-          : source.rootBonePath
-            ? graph.nodeByPath.has(source.rootBonePath)
-            : false,
+          : typeof source.rootBonePathId === "number"
+            ? graph.nodeByPathId.has(source.rootBonePathId)
+            : source.rootBonePath
+              ? graph.nodeByPath.has(source.rootBonePath)
+              : false,
         boneCount: skeletonBones.length,
         ...restTransform,
         ...restMatrixSpread,
@@ -753,9 +906,11 @@ export function installUnityRuntimeNativeMeshes(
     boneCount: graph.nodeByPath.size,
     skinnedMeshCount,
     skinBindings,
-    error: meshCount > 0
-      ? null
-      : "Unity runtime nativeMeshes did not produce any renderable mesh.",
+    error: fatalErrors.length > 0
+      ? fatalErrors.join(" ")
+      : meshCount > 0
+        ? null
+        : "Unity runtime nativeMeshes did not produce any renderable mesh.",
     warnings,
   };
 }

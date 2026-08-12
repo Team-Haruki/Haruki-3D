@@ -997,6 +997,9 @@ test("custom composer filters complete-head hair packages instead of stacking du
   assert.match(composerSource, /composeRuntimeExtension\(\s+contributingRuntimes/);
   assert.match(composerSource, /mergeRuntimeSetup\(contributorRuntimes\)/);
   assert.match(composerSource, /mergeNativeMeshes\(contributorRuntimes/);
+  assert.match(composerSource, /const remappedMesh = remapNativeMeshIds\(mesh, runtimeIndex\)/);
+  assert.match(composerSource, /"rendererTransformPathId", "rootBonePathId"/);
+  assert.match(composerSource, /remapped\.bonePathIds = remapped\.bonePathIds\.map/);
   assert.match(composerSource, /characterControllers: composeCharacterControllers\(contributorRuntimes\)/);
   assert.match(composerSource, /return head\?\.characterControllers \?\? \{\}/);
   assert.doesNotMatch(composerSource, /runtimes\.flatMap\(\(runtime\) => runtime\.materialSlots \?\? \[\]\)/);
@@ -1274,9 +1277,11 @@ test("unity prefab source graph applies official ModelCombineSetup graft instead
   assert.match(prefabSource, /child\.name\.endsWith\(childMoveSuffix\)/);
   assert.match(prefabSource, /nodeByPath\.set\(bodyNodeA\.path, faceNodeA\.node\)/);
   assert.match(prefabSource, /nodeByPath\.set\(bodyNodeB\.path, faceNodeB\.node\)/);
-  assert.match(prefabSource, /detachRuntimeSubtree\(bodyNodeB\.node, nodeByPath\)/);
-  assert.match(prefabSource, /detachRuntimeSubtree\(bodyNodeA\.node, nodeByPath\)/);
-  assert.match(prefabSource, /detachRuntimeSubtree\(childRoot\.node, nodeByPath\)/);
+  assert.match(prefabSource, /replacePathIdNodeReferences\(nodeByPathId, bodyNodeA\.node, faceNodeA\.node\)/);
+  assert.match(prefabSource, /replacePathIdNodeReferences\(nodeByPathId, bodyNodeB\.node, faceNodeB\.node\)/);
+  assert.match(prefabSource, /detachRuntimeSubtree\(bodyNodeB\.node, nodeByPath, nodeByPathId\)/);
+  assert.match(prefabSource, /detachRuntimeSubtree\(bodyNodeA\.node, nodeByPath, nodeByPathId\)/);
+  assert.match(prefabSource, /detachRuntimeSubtree\(childRoot\.node, nodeByPath, nodeByPathId\)/);
   assert.match(prefabSource, /Runtime package must provide the official model_combine_setup body\/head assembly/);
   assert.doesNotMatch(prefabSource, /usesModelCombineSetup/);
 });

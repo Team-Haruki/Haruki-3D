@@ -2276,12 +2276,13 @@ function mergeNativeMeshes(runtimes: PartRuntimePackage[], runtimeSetup: Runtime
   for (const [runtimeIndex, runtime] of runtimes.entries()) {
     const partType = runtimePartSlot(runtime.part);
     for (const mesh of readRecordArray(runtime.nativeMeshes?.meshes)) {
+      const remappedMesh = remapNativeMeshIds(mesh, runtimeIndex);
       if (partType !== "head_optional") {
-        meshes.push(mesh);
+        meshes.push(remappedMesh);
         continue;
       }
 
-      const sourceRendererTransformPath = readOptionalString(mesh.rendererTransformPath);
+      const sourceRendererTransformPath = readOptionalString(remappedMesh.rendererTransformPath);
       const mountedGraph = readRecordArray(runtimeSetup.prefabGraphs).find((graph) =>
         readNumber(graph.runtimePartIndex, -1) === runtimeIndex &&
         Boolean(readOptionalString(graph.headOptionalAttachPath))
@@ -2300,7 +2301,7 @@ function mergeNativeMeshes(runtimes: PartRuntimePackage[], runtimeSetup: Runtime
         continue;
       }
       meshes.push({
-        ...mesh,
+        ...remappedMesh,
         sourceRendererTransformPath,
         rendererTransformPath: sourceRendererTransformPath,
       });
@@ -2311,6 +2312,21 @@ function mergeNativeMeshes(runtimes: PartRuntimePackage[], runtimeSetup: Runtime
     meshes,
     warnings,
   };
+}
+
+function remapNativeMeshIds(mesh: Record<string, unknown>, partIndex: number) {
+  const remapped = { ...mesh };
+  for (const key of ["rendererPathId", "rendererTransformPathId", "rootBonePathId"] as const) {
+    if (typeof remapped[key] === "number") {
+      remapped[key] = remapNumericId(remapped[key], partIndex);
+    }
+  }
+  if (Array.isArray(remapped.bonePathIds)) {
+    remapped.bonePathIds = remapped.bonePathIds.map((id) =>
+      typeof id === "number" ? remapNumericId(id, partIndex) : id
+    );
+  }
+  return remapped;
 }
 
 function resolveHeadOptionalFaceId(runtimes: PartRuntimePackage[]) {

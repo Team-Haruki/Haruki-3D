@@ -103,6 +103,8 @@ test("0414 prefab runtime applies official model combine and installs native mes
 
   assert.equal(graph.nodeByPath.get("body/Neck"), faceNeck);
   assert.equal(graph.nodeByPath.get("body/Neck/Head"), faceHead);
+  assert.equal(graph.nodeByPathId.get(2), faceNeck);
+  assert.equal(graph.nodeByPathId.get(3), faceHead);
   assert.equal(graph.bodyAttach, faceNeck);
   assert.equal(graph.headRoot, faceNeck);
   assert.equal(graph.headOrigin, faceNeck);
@@ -203,6 +205,105 @@ test("prefab runtime binds skinned morph meshes and applies exported constraints
   );
   assert.equal(constraints.appliedCount, 1);
   assert.deepEqual(renderer.position.toArray(), [-2, 0, 0]);
+});
+
+test("native meshes bind the exact Unity transform instance when paths collide", () => {
+  const extension = makeRuntimeExtension();
+  extension.runtimeUnitySetup.prefabGraphs[0].transforms.push(
+    transform(112, "face/Neck/Head", 11, [100, 100, 100])
+  );
+  const sourceMesh = extension.nativeMeshes.meshes[0];
+  sourceMesh.rendererTransformPathId = 14;
+  sourceMesh.rootBonePathId = 12;
+  sourceMesh.bonePaths = ["face/Neck/Head"];
+  sourceMesh.bonePathIds = [12];
+  sourceMesh.boneInverseBindMatrices = identityMatrix();
+  sourceMesh.skinIndices = [
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+  ];
+  sourceMesh.skinWeights = [
+    1, 0, 0, 0,
+    1, 0, 0, 0,
+    1, 0, 0, 0,
+  ];
+
+  const graph = buildUnityPrefabSourceGraph(extension);
+  const nativeMeshes = installUnityRuntimeNativeMeshes(graph, extension);
+  const renderer = graph.nodeByPathId.get(14);
+  const expectedBone = graph.nodeByPathId.get(12);
+  const collidingBone = graph.nodeByPath.get("face/Neck/Head");
+  const mesh = renderer.children.find((node) => node instanceof THREE.SkinnedMesh);
+
+  assert.equal(nativeMeshes.error, null);
+  assert.ok(mesh);
+  assert.equal(mesh.parent, renderer);
+  assert.equal(mesh.skeleton.bones[0], expectedBone);
+  assert.notEqual(expectedBone, collidingBone);
+});
+
+test("native meshes reject ambiguous legacy path-only skin bindings", () => {
+  const extension = makeRuntimeExtension();
+  extension.runtimeUnitySetup.prefabGraphs[0].transforms.push(
+    transform(112, "face/Neck/Head", 11, [100, 100, 100])
+  );
+  const sourceMesh = extension.nativeMeshes.meshes[0];
+  sourceMesh.bonePaths = ["face/Neck/Head"];
+  sourceMesh.boneInverseBindMatrices = identityMatrix();
+  sourceMesh.skinIndices = [
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+    0, 0, 0, 0,
+  ];
+  sourceMesh.skinWeights = [
+    1, 0, 0, 0,
+    1, 0, 0, 0,
+    1, 0, 0, 0,
+  ];
+
+  const graph = buildUnityPrefabSourceGraph(extension);
+  const nativeMeshes = installUnityRuntimeNativeMeshes(graph, extension);
+
+  assert.match(nativeMeshes.error, /ambiguous legacy PathID-less skin binding/);
+});
+
+test("model combine follows the same Unity prefab instance as the native body mesh", () => {
+  const extension = makeRuntimeExtension();
+  extension.runtimeUnitySetup.prefabGraphs[0].transforms.push(
+    transform(101, "body", null, [100, 0, 0]),
+    transform(102, "body/Neck", 101),
+    transform(103, "body/Neck/Head", 102)
+  );
+  extension.nativeMeshes.meshes.push({
+    ...extension.nativeMeshes.meshes[0],
+    partKind: "body",
+    meshPath: "body/BodyMesh",
+    meshName: "BodyMesh",
+    rendererPathId: 20,
+    rendererTransformPathId: 1,
+    rendererTransformPath: "body",
+    rootBonePathId: 3,
+    rootBonePath: "body/Neck/Head",
+    bonePathIds: [3],
+    bonePaths: ["body/Neck/Head"],
+    boneInverseBindMatrices: identityMatrix(),
+    skinIndices: [
+      0, 0, 0, 0,
+      0, 0, 0, 0,
+      0, 0, 0, 0,
+    ],
+    skinWeights: [
+      1, 0, 0, 0,
+      1, 0, 0, 0,
+      1, 0, 0, 0,
+    ],
+  });
+
+  const graph = buildUnityPrefabSourceGraph(extension);
+
+  assert.equal(graph.bodyAttach.parent, graph.nodeByPathId.get(1));
+  assert.notEqual(graph.bodyAttach.parent, graph.nodeByPathId.get(101));
 });
 
 test("Unity bind poses do not apply a non-identity renderer transform twice", () => {
