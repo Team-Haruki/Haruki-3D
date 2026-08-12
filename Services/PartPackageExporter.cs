@@ -22,6 +22,7 @@ public sealed class PartPackageExporter
     private readonly BundleInputResolver resolver = new();
     private readonly AssetStudioBundleParser parser = new();
     private readonly AssetStudioImportedModelFactory modelFactory;
+    private readonly OfficialUnityResourceExtractor resourceExtractor = new();
     private readonly SpringBoneExporter springBoneExporter = new();
     private readonly UnityRuntimeNativeMeshExporter nativeMeshExporter = new();
     private readonly UnityRuntimeTextureExporter textureExporter = new();
@@ -247,6 +248,13 @@ public sealed class PartPackageExporter
         return entry.BaseSourceKey ?? entry.SourceKey ?? entry.PackagePath;
     }
 
+    private static string BuildCoreKey(string value)
+    {
+        return Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(value))
+        ).ToLowerInvariant();
+    }
+
     private static bool IsInShard(string shardKey, int shardCount, int shardIndex)
     {
         if (shardCount <= 1)
@@ -387,21 +395,32 @@ public sealed class PartPackageExporter
             !string.Equals(cachedCore.Key, buildKey, StringComparison.Ordinal) ||
             !string.Equals(cachedCore.Input.ResolvedBundlePath, input.ResolvedBundlePath, StringComparison.Ordinal))
         {
-            var inventory = parser.Parse(input, loadedBundle.PrimaryObjects, loadedBundle.Objects, loadedBundle.AssetsFileCount);
-            var imported = modelFactory.CreateImportedModel(
+            var resourceName = normalizedType switch
+            {
+                "body" => "body",
+                "head" or "hair" => "face",
+                "head_optional" => "optional",
+                _ => throw new InvalidOperationException($"Unsupported runtime part type '{normalizedType}'."),
+            };
+            var officialResource = resourceExtractor.Extract(
                 input,
                 loadedBundle.PrimaryObjects,
-                normalizedType is "head" or "hair"
-                    ? SelectHeadRootName(inventory)
-                    : normalizedType == "head_optional" ? SelectAccessoryRootName(inventory) : null
+                resourceName
             );
+            var inventory = parser.Parse(
+                input,
+                officialResource.Objects,
+                loadedBundle.Objects,
+                loadedBundle.AssetsFileCount
+            );
+            var imported = modelFactory.CreateImportedModel(input, officialResource.RootGameObject);
             var baseTextures = textureExporter.ExportPartTextures(
                 packageDirectory,
                 outputDirectory,
                 normalizedType,
                 inventory
             );
-            var springBone = springBoneExporter.Export(input, loadedBundle.PrimaryObjects);
+            var springBone = springBoneExporter.Export(input, officialResource.Objects);
             var runtimeSpringBone = BuildPartSpringBone(normalizedType, springBone);
             var nativeMeshes = ExportNativeMeshes(normalizedType, imported, runtimeSpringBone);
             var builtMaterialSlots = BuildMaterialSlots(
@@ -411,6 +430,9 @@ public sealed class PartPackageExporter
                 imported,
                 nativeMeshes
             );
+            var morphChannelBindings = normalizedType is "head" or "hair"
+                ? ReadHeadMorphBindings(imported)
+                : Array.Empty<HeadMorphChannel>();
             var nativeDeduplication = DeduplicateNativeMeshes(nativeMeshes, builtMaterialSlots.Slots);
             cachedCore = new PartBuildCore(
                 buildKey,
@@ -422,9 +444,7 @@ public sealed class PartPackageExporter
                 builtMaterialSlots,
                 nativeDeduplication.Warnings,
                 baseTextures,
-                normalizedType is "head" or "hair"
-                    ? ReadHeadMorphBindings(imported)
-                    : Array.Empty<HeadMorphChannel>()
+                morphChannelBindings
             );
             rebuiltCore = true;
         }
@@ -446,6 +466,27 @@ public sealed class PartPackageExporter
             overrideTextures,
             textures
         );
+        var partIdentity = new PartRuntimeIdentity(
+            Costume3dId: entry.Costume3dId,
+            PartType: normalizedType,
+            CharacterId: entry.CharacterId,
+            Unit: entry.Unit,
+            Name: entry.Name,
+            ColorId: entry.ColorId,
+            ColorName: entry.ColorName,
+            Costume3dGroupId: entry.Costume3dGroupId,
+            ModelAssetbundleName: entry.ModelAssetbundleName,
+            HeadCostume3dAssetbundleType: entry.HeadCostume3dAssetbundleType
+        );
+        var source = BuildSource(entry, input, assetRoot, normalizedType, core.Inventory);
+        var mount = BuildMount(entry, core.Inventory, normalizedType, core.SpringBone);
+        var runtimeManifest = BuildManifest(
+            entry,
+            input,
+            core.Inventory,
+            normalizedType,
+            characterHeightMetersById
+        );
         var materialSlots = FilterMaterialSlotsForNativeMeshes(
             normalizedType,
             colorVariationSlots,
@@ -461,9 +502,7 @@ public sealed class PartPackageExporter
             .Concat(core.NativeDeduplicationWarnings)
             .Distinct(StringComparer.Ordinal)
             .ToList();
-        var coreKey = Convert.ToHexString(
-            SHA256.HashData(Encoding.UTF8.GetBytes(ShardKey(entry)))
-        ).ToLowerInvariant();
+        var coreKey = BuildCoreKey(ShardKey(entry));
         var coreRuntimeRelativePath = $"parts/_cores/{normalizedType}/{coreKey}/part-runtime-core.msgpack.br";
         var coreRuntimePath = Path.Combine(
             outputDirectory,
@@ -489,21 +528,10 @@ public sealed class PartPackageExporter
         var package = new PartRuntimeDeltaPackage(
             Version: "0415-part-delta-3",
             CorePath: coreRuntimeRelativePath,
-            Part: new PartRuntimeIdentity(
-                Costume3dId: entry.Costume3dId,
-                PartType: normalizedType,
-                CharacterId: entry.CharacterId,
-                Unit: entry.Unit,
-                Name: entry.Name,
-                ColorId: entry.ColorId,
-                ColorName: entry.ColorName,
-                Costume3dGroupId: entry.Costume3dGroupId,
-                ModelAssetbundleName: entry.ModelAssetbundleName,
-                HeadCostume3dAssetbundleType: entry.HeadCostume3dAssetbundleType
-            ),
-            Source: BuildSource(entry, input, assetRoot, normalizedType, core.Inventory),
-            Mount: BuildMount(entry, core.Inventory, normalizedType, core.SpringBone),
-            Manifest: BuildManifest(entry, input, core.Inventory, normalizedType, characterHeightMetersById),
+            Part: partIdentity,
+            Source: source,
+            Mount: mount,
+            Manifest: runtimeManifest,
             MaterialSlots: materialSlots,
             TextureRoles: textureRoles,
             CharacterTextures: textures,
@@ -777,12 +805,69 @@ public sealed class PartPackageExporter
         PartRuntimeSpringBone springBone
     )
     {
-        return nativeMeshExporter.ExportSinglePart(
+        var nativeMeshes = nativeMeshExporter.ExportSinglePart(
             partType == "body" ? "Body" : partType == "head_optional" ? "Accessory" : "Head",
             imported,
             springBone.PrefabGraph,
             springBone.ActiveRootProfile.ActiveRoots
         );
+        ValidateExactSkinBindings(partType, nativeMeshes);
+        return nativeMeshes;
+    }
+
+    private static void ValidateExactSkinBindings(
+        string partType,
+        PjskUnityRuntimeNativeMeshSet nativeMeshes
+    )
+    {
+        if (string.Equals(partType, "head_optional", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+        if (nativeMeshes.Meshes.Count == 0)
+        {
+            throw new InvalidOperationException(
+                $"Official {partType} resource exported no runtime meshes. Refusing to publish an incomplete part package."
+            );
+        }
+        var skippedBindings = nativeMeshes.Warnings
+            .Where(warning => warning.Contains(" skipped:", StringComparison.OrdinalIgnoreCase))
+            .Take(4)
+            .ToList();
+        if (skippedBindings.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Official {partType} resource has rejected renderer or skin bindings. Refusing to publish a partial part package: {string.Join(" ", skippedBindings)}"
+            );
+        }
+
+        foreach (var mesh in nativeMeshes.Meshes)
+        {
+            if (mesh.RendererTransformPathId is null)
+            {
+                throw new InvalidOperationException(
+                    $"Runtime mesh '{mesh.MeshPath}' has no exact renderer Transform PathID. Refusing to publish an ambiguous part package."
+                );
+            }
+            if (mesh.BonePathIds.Count != mesh.BonePaths.Count)
+            {
+                throw new InvalidOperationException(
+                    $"Runtime mesh '{mesh.MeshPath}' has {mesh.BonePaths.Count} bone paths but {mesh.BonePathIds.Count} bone PathIDs. Refusing to publish an incomplete part package."
+                );
+            }
+            if (!string.IsNullOrWhiteSpace(mesh.RootBonePath) && mesh.RootBonePathId is null)
+            {
+                throw new InvalidOperationException(
+                    $"Runtime mesh '{mesh.MeshPath}' has root bone '{mesh.RootBonePath}' without an exact PathID. Refusing to publish an ambiguous part package."
+                );
+            }
+            if (mesh.RootBonePathId is not null && string.IsNullOrWhiteSpace(mesh.RootBonePath))
+            {
+                throw new InvalidOperationException(
+                    $"Runtime mesh '{mesh.MeshPath}' has root bone PathID {mesh.RootBonePathId} without a resolved transform path. Refusing to publish an incomplete part package."
+                );
+            }
+        }
     }
 
     private sealed record BuiltMaterialSlots(

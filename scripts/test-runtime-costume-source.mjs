@@ -27,9 +27,24 @@ test("costume resolver keeps default face and head optional bundle fallbacks", (
 
 test("part exporter preserves official runtime resource names and FaceSDF metadata", () => {
   const exporter = source("Services/PartPackageExporter.cs");
+  const officialExtractor = source("Services/OfficialUnityResourceExtractor.cs");
 
   assert.match(exporter, /var normalizedType = ResolveRuntimePartType\(entry\)/);
-  assert.match(exporter, /normalizedType == "head_optional" \? SelectAccessoryRootName\(inventory\)/);
+  assert.match(exporter, /"body" => "body"/);
+  assert.match(exporter, /"head" or "hair" => "face"/);
+  assert.match(exporter, /"head_optional" => "optional"/);
+  assert.match(exporter, /resourceExtractor\.Extract/);
+  assert.match(officialExtractor, /bundle\.m_Container/);
+  assert.match(officialExtractor, /BuildExpectedContainerSuffix/);
+  assert.match(officialExtractor, /ContainerPath\.EndsWith\(expectedContainerSuffix/);
+  assert.match(officialExtractor, /Where\(candidate => candidate\.IsExact && !candidate\.IsGeneratedInput\)/);
+  assert.match(officialExtractor, /must resolve to exactly one container ending in/);
+  assert.match(officialExtractor, /\/fbx\//);
+  assert.match(exporter, /modelFactory\.CreateImportedModel\(input, officialResource\.RootGameObject\)/);
+  assert.match(exporter, /ValidateExactSkinBindings\(partType, nativeMeshes\)/);
+  assert.match(exporter, /Refusing to publish an incomplete part package/);
+  assert.match(exporter, /Refusing to publish an ambiguous part package/);
+  assert.match(exporter, /Refusing to publish a partial part package/);
   assert.match(exporter, /"_FaceShadowTex"/);
   assert.match(exporter, /FaceShadowTex: RewriteTexturePath\(faceShadowTex, textures\)/);
   assert.match(exporter, /"accessory" => "head_optional"/);

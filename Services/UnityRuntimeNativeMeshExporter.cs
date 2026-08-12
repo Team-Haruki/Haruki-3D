@@ -106,7 +106,7 @@ public sealed class UnityRuntimeNativeMeshExporter
             .Where(mesh => !string.IsNullOrWhiteSpace(mesh.Path))
             .OrderBy(mesh => mesh.Path, StringComparer.OrdinalIgnoreCase))
         {
-            if (!TryResolveSkinBinding(mesh, transformPaths, transformPaths, out var skinBinding, out var skinFailure))
+            if (!TryResolveSkinBinding(mesh, transformPaths, null, transformPaths, out var skinBinding, out var skinFailure))
             {
                 warnings.Add($"Accessory mesh '{mesh.Path}' exported without skin binding: {skinFailure}");
                 skinBinding = EmptySkinBinding;
@@ -205,7 +205,14 @@ public sealed class UnityRuntimeNativeMeshExporter
                 continue;
             }
 
-            if (!TryResolveSkinBinding(mesh, rendererBonePaths, transformPaths, out var skinBinding, out var skinFailure))
+            if (!TryResolveSkinBinding(
+                mesh,
+                rendererBonePaths,
+                renderer.SkinnedMeshBones,
+                transformPaths,
+                out var skinBinding,
+                out var skinFailure
+            ))
             {
                 warnings.Add($"{partKind} mesh '{mesh.Path}' skipped: {skinFailure}");
                 continue;
@@ -404,12 +411,14 @@ public sealed class UnityRuntimeNativeMeshExporter
 
     private sealed record NativeSkinBinding(
         IReadOnlyList<string> BonePaths,
+        IReadOnlyList<long> BonePathIds,
         IReadOnlyDictionary<int, int> BoneIndexRemap,
         IReadOnlyList<float> BoneInverseBindMatrices
     );
 
     private static readonly NativeSkinBinding EmptySkinBinding = new(
         Array.Empty<string>(),
+        Array.Empty<long>(),
         new Dictionary<int, int>(),
         Array.Empty<float>()
     );
@@ -445,6 +454,7 @@ public sealed class UnityRuntimeNativeMeshExporter
         return TryResolveSkinBinding(
             mesh,
             rendererBonePaths.ToList(),
+            null,
             transformPaths,
             out _,
             out _
@@ -454,11 +464,38 @@ public sealed class UnityRuntimeNativeMeshExporter
     private static bool TryResolveSkinBinding(
         ImportedMesh mesh,
         IReadOnlyList<string> rendererBonePaths,
+        IReadOnlyList<long>? rendererBonePathIds,
         IReadOnlyList<string> transformPaths,
         out NativeSkinBinding binding,
         out string failure
     )
     {
+        Dictionary<string, long>? rendererBonePathIdByPath = null;
+        if (rendererBonePathIds is not null)
+        {
+            if (rendererBonePathIds.Count != rendererBonePaths.Count)
+            {
+                binding = EmptySkinBinding;
+                failure = $"renderer has {rendererBonePaths.Count} bone paths but {rendererBonePathIds.Count} bone PathIDs.";
+                return false;
+            }
+
+            rendererBonePathIdByPath = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
+            for (var index = 0; index < rendererBonePaths.Count; index += 1)
+            {
+                var path = rendererBonePaths[index];
+                var pathId = rendererBonePathIds[index];
+                if (rendererBonePathIdByPath.TryGetValue(path, out var previousPathId) &&
+                    previousPathId != pathId)
+                {
+                    binding = EmptySkinBinding;
+                    failure = $"renderer bone path '{path}' is ambiguous between PathIDs {previousPathId} and {pathId}.";
+                    return false;
+                }
+                rendererBonePathIdByPath[path] = pathId;
+            }
+        }
+
         var importedBoneCount = mesh.BoneList?.Count ?? 0;
         if (importedBoneCount == 0)
         {
@@ -467,6 +504,7 @@ public sealed class UnityRuntimeNativeMeshExporter
                 : rendererBonePaths;
             binding = new NativeSkinBinding(
                 rigidBonePaths,
+                rendererBonePathIds ?? Array.Empty<long>(),
                 new Dictionary<int, int>(),
                 Array.Empty<float>()
             );
@@ -510,16 +548,28 @@ public sealed class UnityRuntimeNativeMeshExporter
 
         var remap = new Dictionary<int, int>();
         var bonePaths = new List<string>(orderedUsedBoneIndices.Count);
+        var bonePathIds = new List<long>(orderedUsedBoneIndices.Count);
         var inverseBindMatrices = new List<float>(orderedUsedBoneIndices.Count * 16);
         for (var newIndex = 0; newIndex < orderedUsedBoneIndices.Count; newIndex += 1)
         {
             var oldIndex = orderedUsedBoneIndices[newIndex];
             remap[oldIndex] = newIndex;
-            bonePaths.Add(resolvedBonePathsByImportedIndex[oldIndex]);
+            var bonePath = resolvedBonePathsByImportedIndex[oldIndex];
+            bonePaths.Add(bonePath);
+            if (rendererBonePathIdByPath is not null)
+            {
+                if (!rendererBonePathIdByPath.TryGetValue(bonePath, out var bonePathId))
+                {
+                    binding = EmptySkinBinding;
+                    failure = $"resolved bone '{bonePath}' has no matching renderer PathID.";
+                    return false;
+                }
+                bonePathIds.Add(bonePathId);
+            }
             AddMatrix(inverseBindMatrices, mesh.BoneList![oldIndex].Matrix);
         }
 
-        binding = new NativeSkinBinding(bonePaths, remap, inverseBindMatrices);
+        binding = new NativeSkinBinding(bonePaths, bonePathIds, remap, inverseBindMatrices);
         failure = string.Empty;
         return true;
     }
@@ -795,8 +845,11 @@ public sealed class UnityRuntimeNativeMeshExporter
             MeshPath: mesh.Path,
             MeshName: Path.GetFileName(mesh.Path),
             RendererPathId: renderer.PathId,
+            RendererTransformPathId: renderer.TransformPathId,
             RendererTransformPath: rendererTransformPath,
+            RootBonePathId: renderer.RootBonePathId,
             RootBonePath: rootBonePath,
+            BonePathIds: skinBinding.BonePathIds,
             BonePaths: skinBinding.BonePaths,
             BoneInverseBindMatrices: skinBinding.BoneInverseBindMatrices,
             Submeshes: submeshes,

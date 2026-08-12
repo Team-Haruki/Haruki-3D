@@ -58,6 +58,14 @@ public sealed class AssetStudioImportedModelFactory
         return CreateImportedModel(input, rootGameObjects, preferredRootOverride);
     }
 
+    public IImported CreateImportedModel(
+        ResolvedBundleInput input,
+        GameObject preferredRoot
+    )
+    {
+        return new ModelConverter(preferredRoot, ImageFormat.Png, null, convertModelTextures);
+    }
+
     private IImported CreateImportedModel(
         ResolvedBundleInput input,
         IReadOnlyList<GameObject> rootGameObjects,

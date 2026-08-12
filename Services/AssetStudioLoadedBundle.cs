@@ -72,6 +72,7 @@ public sealed class AssetStudioLoadedBundle : IDisposable
         };
         manager.Options.CustomUnityVersion = new UnityVersion(SekaiUnityVersion);
         manager.SetAssetFilter(
+            ClassIDType.AssetBundle,
             ClassIDType.GameObject,
             ClassIDType.Transform,
             ClassIDType.Animator,
