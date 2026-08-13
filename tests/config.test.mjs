@@ -510,7 +510,7 @@ test("capture camera preset uses official CostumeShop camera parameters and keep
   assert.match(cameraSource, /farZ: 4\.5/);
   assert.match(cameraSource, /fov: 25/);
   assert.match(cameraSource, /profile === "official-default"/);
-  assert.match(cameraSource, /zoomValue: 0, zoomMoveValue: 1/);
+  assert.match(cameraSource, /zoomValue: 0,\s+zoomMoveValue: 1/);
   assert.match(cameraSource, /zoomValue: COSTUME_SHOP_CAMERA\.zoomDuration/);
   assert.match(cameraSource, /zoomMoveValue: 0/);
   assert.match(cameraSource, /localCameraRotationYDegrees: 180/);

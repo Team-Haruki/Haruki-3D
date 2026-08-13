@@ -7,6 +7,7 @@ export type HarukiBaseCharacterRuntime = {
   pause(): void;
   resize(width: number, height: number): void;
   setCharacterYawDegrees(degrees: number): void;
+  setViewYawDegrees(degrees: number): void;
   destroy(): Promise<void>;
 };
 
@@ -15,6 +16,7 @@ export type HarukiBaseRuntimeEngine = {
   loadRenderRecipe(recipe: HarukiRenderRecipe & { baseUrl: string }): Promise<unknown>;
   renderFrame(): void;
   setCharacterYawDegrees(degrees: number): void;
+  setViewYawDegrees(degrees: number): void;
   setViewportSize(width: number, height: number): void;
   stepRuntimeFrame(
     deltaSeconds: number,
@@ -135,6 +137,13 @@ export function createHarukiBaseCharacterRuntime(
     setCharacterYawDegrees(degrees) {
       assertActive();
       engine.setCharacterYawDegrees(degrees);
+      if (!running) {
+        engine.renderFrame();
+      }
+    },
+    setViewYawDegrees(degrees) {
+      assertActive();
+      engine.setViewYawDegrees(degrees);
       if (!running) {
         engine.renderFrame();
       }

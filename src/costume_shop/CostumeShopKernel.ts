@@ -37,7 +37,13 @@ export function createCostumeShopKernelRuntime(
   engine: HarukiBaseRuntimeEngine,
   assetBaseUrl: string
 ): CostumeShopKernel {
-  return createHarukiBaseCharacterRuntime(engine, assetBaseUrl);
+  const runtime = createHarukiBaseCharacterRuntime(engine, assetBaseUrl);
+  return {
+    ...runtime,
+    // Older CostumeShop hosts used this name for horizontal view drag. Keep
+    // their API stable while applying the official CameraRoot behaviour.
+    setCharacterYawDegrees: runtime.setViewYawDegrees,
+  };
 }
 
 // Backward-compatible names. The default package entry remains CostumeShop.

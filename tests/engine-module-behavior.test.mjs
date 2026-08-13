@@ -28,6 +28,11 @@ test("camera poses retain the official default and full-body framing", () => {
   assert.deepEqual(vector(fullBody.position), [0, 0.765, 4.5]);
   assert.equal(fullBody.costumeShopState.zoomRatio, 1);
 
+  const side = getCostumeShopCameraPose("full-body", 90);
+  assert.deepEqual(vector(side.target), [0, 0.765, 0]);
+  assert.deepEqual(vector(side.position), [4.5, 0.765, 0]);
+  assert.equal(side.costumeShopState.cameraRootYawDegrees, 90);
+
   const shifted = shiftCameraPoseRight(fullBody.position, fullBody.target, 1, 1);
   assert.deepEqual(
     vector(shifted.position.clone().sub(fullBody.position)),

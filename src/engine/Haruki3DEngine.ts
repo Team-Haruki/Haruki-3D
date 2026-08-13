@@ -167,6 +167,7 @@ const COSTUME_SHOP_FACE_SHADOW_LIGHT_DIRECTION = new THREE.Vector3(
   sekaiCostumeShopDirectionalLightDirection.y,
   sekaiCostumeShopDirectionalLightDirection.z
 ).normalize();
+const COSTUME_SHOP_CAMERA_ROOT_AXIS = new THREE.Vector3(0, 1, 0);
 const COSTUME_SHOP_USE_FACE_SHADOW_LIMITER = true;
 const COSTUME_SHOP_FACE_SHADOW_LIMIT_RANGE = 0;
 const FACE_SHADOW_HORIZONTAL_EPSILON = 0.00001;
@@ -786,6 +787,7 @@ export class Haruki3DEngine {
   private readonly clock = new THREE.Clock();
   private readonly directionalLight: THREE.DirectionalLight;
   private readonly fillLight: THREE.AmbientLight;
+  private previewLightBase: PreviewLightState;
   private readonly textureLoader: RuntimeTextureLoader;
   private readonly bodyMaterial: THREE.ShaderMaterial;
   private readonly hairMaterial: THREE.ShaderMaterial;
@@ -852,6 +854,7 @@ export class Haruki3DEngine {
   private currentHairHeadTransform: THREE.Object3D | null = null;
   private currentCameraPreset: PjskCameraPreset = "default";
   private currentCameraProfile: PjskCameraProfile | null = null;
+  private cameraRootYawDegrees = 0;
   private cameraDebugChangeCallback: (() => void) | null = null;
   private currentLoadedRuntimePackage: RuntimePackageLoadResult | null = null;
   private lastNativeMeshInstallDiagnostics: NativeMeshInstallDiagnostics | null = null;
@@ -881,6 +884,7 @@ export class Haruki3DEngine {
       throw new Error("Missing initial light state for Haruki 3D engine.");
     }
     const light = options.initialLight;
+    this.previewLightBase = { ...light };
     if (!options.container && !options.canvas) {
       throw new Error("Haruki 3D engine requires a container or canvas.");
     }
@@ -1204,7 +1208,42 @@ export class Haruki3DEngine {
     this.characterRoot.updateMatrixWorld(true);
     this.syncOfficialModelCombineSetup();
     this.characterRoot.updateMatrixWorld(true);
+    // This API is an explicit model teleport, not a view drag. Drop the old
+    // spring history so a caller cannot turn a static pose into fake inertia.
+    this.resetCurrentSpringRuntimeState();
     this.updateShaderFaceBasis();
+  }
+
+  /**
+   * CostumeShop view drag. The game rotates CameraRoot while the assembled
+   * character remains in place; rotating characterRoot here makes authored
+   * spring chains lag behind and looks like static hair/skirt bones are alive.
+   */
+  setViewYawDegrees(degrees: number) {
+    this.cameraRootYawDegrees = Number.isFinite(degrees) ? degrees : 0;
+    if (this.currentCameraPreset === "capture") {
+      const pose = getCostumeShopCameraPose(
+        this.currentCameraProfile ?? "full-body",
+        this.cameraRootYawDegrees
+      );
+      this.setCameraTarget(pose.target);
+      this.camera.position.copy(pose.position);
+      this.camera.fov = pose.fov;
+    } else {
+      const pose = getDefaultCameraPose(this.characterModelScaleMeters);
+      const offset = pose.position.clone().sub(pose.target).applyAxisAngle(
+        COSTUME_SHOP_CAMERA_ROOT_AXIS,
+        THREE.MathUtils.degToRad(this.cameraRootYawDegrees)
+      );
+      this.setCameraTarget(pose.target);
+      this.camera.position.copy(pose.target).add(offset);
+      this.camera.fov = pose.fov;
+    }
+    this.camera.updateProjectionMatrix();
+    this.syncCameraTarget();
+    this.applyPreviewLightForCameraRoot();
+    this.updateShaderFaceBasis();
+    this.cameraDebugChangeCallback?.();
   }
 
   faceCharacterTowardCamera() {
@@ -1245,6 +1284,7 @@ export class Haruki3DEngine {
     this.characterRoot.updateMatrixWorld(true);
     this.syncOfficialModelCombineSetup();
     this.characterRoot.updateMatrixWorld(true);
+    this.resetCurrentSpringRuntimeState();
     this.updateShaderFaceBasis();
   }
 
@@ -1276,7 +1316,7 @@ export class Haruki3DEngine {
   getFaceLightDebugSnapshot(): RuntimeFaceLightDebug {
     const previewLightDirection = this.directionalLight.position.clone().normalize();
     const lightDirection = this.characterLighting.resolveFaceShadowLightDirection(
-      COSTUME_SHOP_FACE_SHADOW_LIGHT_DIRECTION,
+      this.getCameraRootFaceShadowLightDirection(),
       this.faceRightWorld,
       this.faceForwardWorld
     );
@@ -1385,12 +1425,18 @@ export class Haruki3DEngine {
     const offset = position.clone().sub(target);
     const spherical = new THREE.Spherical().setFromVector3(offset);
     const costumeShopPose = this.currentCameraPreset === "capture"
-      ? getCostumeShopCameraPose(this.currentCameraProfile ?? "full-body")
+      ? getCostumeShopCameraPose(
+          this.currentCameraProfile ?? "full-body",
+          this.cameraRootYawDegrees
+        )
       : null;
     const costumeShopState = costumeShopPose?.costumeShopState ?? null;
     return {
       preset: this.currentCameraPreset,
       profile: this.currentCameraProfile,
+      characterRootYawDegrees: Number(
+        THREE.MathUtils.radToDeg(this.characterRoot.rotation.y).toFixed(3)
+      ),
       costumeShopState: costumeShopState === null
         ? null
         : {
@@ -1976,12 +2022,38 @@ export class Haruki3DEngine {
   }
 
   updatePreviewLight(next: PreviewLightState) {
+    this.previewLightBase = { ...next };
+    this.applyPreviewLightForCameraRoot();
+  }
+
+  private applyPreviewLightForCameraRoot() {
+    const yaw = THREE.MathUtils.degToRad(this.cameraRootYawDegrees);
+    const directional = new THREE.Vector3(
+      this.previewLightBase.x,
+      this.previewLightBase.y,
+      this.previewLightBase.z
+    ).applyAxisAngle(COSTUME_SHOP_CAMERA_ROOT_AXIS, yaw);
+    const rimDirection = getSekaiPreviewRimDirection()
+      .applyAxisAngle(COSTUME_SHOP_CAMERA_ROOT_AXIS, yaw);
     this.characterLighting.updatePreviewLight(
-      next,
+      {
+        ...this.previewLightBase,
+        x: directional.x,
+        y: directional.y,
+        z: directional.z,
+      },
       this.currentBodyAsset,
       this.currentHeadAsset,
       this.headDotDirectionalLight,
-      COSTUME_SHOP_FACE_SHADOW_LIGHT_DIRECTION
+      this.getCameraRootFaceShadowLightDirection(),
+      rimDirection
+    );
+  }
+
+  private getCameraRootFaceShadowLightDirection() {
+    return COSTUME_SHOP_FACE_SHADOW_LIGHT_DIRECTION.clone().applyAxisAngle(
+      COSTUME_SHOP_CAMERA_ROOT_AXIS,
+      THREE.MathUtils.degToRad(this.cameraRootYawDegrees)
     );
   }
 
@@ -2065,8 +2137,12 @@ export class Haruki3DEngine {
       return;
     }
     const pose = getDefaultCameraPose(nextModelScale);
+    const offset = pose.position.clone().sub(pose.target).applyAxisAngle(
+      COSTUME_SHOP_CAMERA_ROOT_AXIS,
+      THREE.MathUtils.degToRad(this.cameraRootYawDegrees)
+    );
     this.setCameraTarget(pose.target);
-    this.camera.position.copy(pose.position);
+    this.camera.position.copy(pose.target).add(offset);
     this.syncCameraTarget();
   }
 
@@ -2074,19 +2150,25 @@ export class Haruki3DEngine {
     this.currentCameraPreset = preset;
     if (preset === "capture") {
       this.currentCameraProfile = profile;
-      const pose = getCostumeShopCameraPose(profile);
+      const pose = getCostumeShopCameraPose(profile, this.cameraRootYawDegrees);
       this.setCameraTarget(pose.target);
       this.camera.position.copy(pose.position);
       this.camera.fov = pose.fov;
     } else {
       this.currentCameraProfile = null;
       const pose = getDefaultCameraPose(this.characterModelScaleMeters);
+      const offset = pose.position.clone().sub(pose.target).applyAxisAngle(
+        COSTUME_SHOP_CAMERA_ROOT_AXIS,
+        THREE.MathUtils.degToRad(this.cameraRootYawDegrees)
+      );
       this.setCameraTarget(pose.target);
-      this.camera.position.copy(pose.position);
+      this.camera.position.copy(pose.target).add(offset);
       this.camera.fov = pose.fov;
     }
     this.camera.updateProjectionMatrix();
     this.syncCameraTarget();
+    this.applyPreviewLightForCameraRoot();
+    this.updateShaderFaceBasis();
     this.cameraDebugChangeCallback?.();
   }
 
@@ -2538,7 +2620,7 @@ export class Haruki3DEngine {
     this.faceRightWorld.crossVectors(this.faceUpWorld, this.faceForwardWorld).normalize();
     this.faceUpWorld.crossVectors(this.faceForwardWorld, this.faceRightWorld).normalize();
     const faceShadowLightDirection = this.characterLighting.resolveFaceShadowLightDirection(
-      COSTUME_SHOP_FACE_SHADOW_LIGHT_DIRECTION,
+      this.getCameraRootFaceShadowLightDirection(),
       this.faceRightWorld,
       this.faceForwardWorld
     );

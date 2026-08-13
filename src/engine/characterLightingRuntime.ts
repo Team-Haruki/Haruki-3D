@@ -516,7 +516,8 @@ export class CharacterLightingRuntime {
     bodyAsset: BodyAssetManifest | null,
     headAsset: HeadAssetManifest | null,
     headDotDirectionalLight: THREE.Vector2,
-    faceShadowLightDirection: THREE.Vector3
+    faceShadowLightDirection: THREE.Vector3,
+    rimDirection = getSekaiPreviewRimDirection()
   ) {
     const view = this.getBindingView();
     const { bodyMaterial, hairMaterial, faceMaterial, directionalLight, fillLight } = this.options;
@@ -540,7 +541,7 @@ export class CharacterLightingRuntime {
       controllerRimEdgeSmoothness: next.rimEdgeSmoothness,
       controllerRimEmission: next.rimEmission,
       controllerRimLightInfluence: next.rimLightInfluence,
-      rimDirection: getSekaiPreviewRimDirection(),
+      rimDirection,
       specularPower: bodyMaterial.uniforms.uSpecularPower.value,
       rimThreshold: bodyMaterial.uniforms.uRimThreshold.value,
       shadowTexWeight: bodyMaterial.uniforms.uShadowTexWeight.value,
@@ -576,7 +577,7 @@ export class CharacterLightingRuntime {
       controllerRimEdgeSmoothness: next.rimEdgeSmoothness,
       controllerRimEmission: next.rimEmission,
       controllerRimLightInfluence: next.rimLightInfluence,
-      rimDirection: getSekaiPreviewRimDirection(),
+      rimDirection,
       specularPower: hairMaterial.uniforms.uSpecularPower.value,
       rimThreshold: hairMaterial.uniforms.uRimThreshold.value,
       shadowTexWeight: hairMaterial.uniforms.uShadowTexWeight.value,
@@ -634,19 +635,22 @@ export class CharacterLightingRuntime {
       controllerRimLightInfluence: next.rimLightInfluence,
       controllerRimShadowSharpness: next.rimShadowSharpness,
       rimColorAlpha: next.rimColorAlpha,
-      rimDirection: getSekaiPreviewRimDirection(),
+      rimDirection,
       specularPower: faceMaterial.uniforms.uSpecularPower.value,
       rimThreshold: faceMaterial.uniforms.uRimThreshold.value,
       globalShadowColor: faceMaterial.uniforms.uGlobalShadowColor.value.clone(),
       globalShadowAlpha: faceMaterial.uniforms.uGlobalShadowAlpha.value,
     });
-    this.updateLoadedMaterialLight(next, faceShadowLightDirection);
+    this.updateLoadedMaterialLight(next, faceShadowLightDirection, rimDirection);
     this.applyCharacterSkinColors();
   }
 
-  updateLoadedMaterialLight(next: PreviewLightState, faceShadowLightDirection: THREE.Vector3) {
+  updateLoadedMaterialLight(
+    next: PreviewLightState,
+    faceShadowLightDirection: THREE.Vector3,
+    rimDirection = getSekaiPreviewRimDirection()
+  ) {
     const lightDirection = this.options.directionalLight.position.clone().normalize();
-    const rimDirection = getSekaiPreviewRimDirection();
     this.forEachShaderMaterial((material) => {
       const uniforms = material.uniforms;
       const lighting = material.userData.pjskLighting as MaterialLightingSettings | undefined;

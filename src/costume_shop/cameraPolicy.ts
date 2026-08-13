@@ -22,6 +22,7 @@ export type PjskCameraProfile = "official-default" | "full-body";
 export type RuntimeCameraDebug = {
   preset: PjskCameraPreset;
   profile: PjskCameraProfile | null;
+  characterRootYawDegrees: number;
   costumeShopState: {
     cameraRootYawDegrees: number;
     zoomValue: number;
@@ -72,12 +73,20 @@ export function getDefaultCameraPose(
 }
 
 export function getCostumeShopCameraPose(
-  profile: PjskCameraProfile
+  profile: PjskCameraProfile,
+  cameraRootYawDegrees = 0
 ): CostumeShopCameraPose {
+  const finiteCameraRootYawDegrees = Number.isFinite(cameraRootYawDegrees)
+    ? cameraRootYawDegrees
+    : 0;
   const state = profile === "official-default"
-    ? { cameraRootYawDegrees: 0, zoomValue: 0, zoomMoveValue: 1 }
+    ? {
+        cameraRootYawDegrees: finiteCameraRootYawDegrees,
+        zoomValue: 0,
+        zoomMoveValue: 1,
+      }
     : {
-        cameraRootYawDegrees: 0,
+        cameraRootYawDegrees: finiteCameraRootYawDegrees,
         zoomValue: COSTUME_SHOP_CAMERA.zoomDuration,
         zoomMoveValue: 0,
       };

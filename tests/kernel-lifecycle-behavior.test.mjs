@@ -43,6 +43,17 @@ test("a completed load prepares and renders exactly one initial frame", async ()
   await Promise.resolve();
 });
 
+test("CostumeShop compatibility yaw rotates the view, never the character", () => {
+  const calls = [];
+  const engine = fakeEngine(calls, async () => {});
+  installAnimationFrameStubs();
+  const kernel = createHaruki3DKernelRuntime(engine, "/runtime/jp/");
+
+  kernel.setCharacterYawDegrees(90);
+
+  assert.deepEqual(calls, [["view-yaw", 90], ["render"]]);
+});
+
 test("prepare loads a recipe without rendering and the matching load reuses it", async () => {
   const calls = [];
   const engine = fakeEngine(calls, async () => {});
@@ -136,6 +147,12 @@ function fakeEngine(calls, load) {
     },
     setViewportSize(width, height) {
       calls.push(["resize", width, height]);
+    },
+    setCharacterYawDegrees(degrees) {
+      calls.push(["character-yaw", degrees]);
+    },
+    setViewYawDegrees(degrees) {
+      calls.push(["view-yaw", degrees]);
     },
     destroy() {
       calls.push(["destroy"]);
