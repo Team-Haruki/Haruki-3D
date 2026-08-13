@@ -541,21 +541,25 @@ public sealed class UnityRuntimeNativeMeshExporter
             return false;
         }
 
-        var orderedUsedBoneIndices = usedBoneIndices
-            .OrderBy(index => index)
-            .ToList();
-        if (orderedUsedBoneIndices.Count == 0)
+        // Once the imported bind poses are proven to match Unity's renderer slots,
+        // preserve that entire ordered array. Compacting it to only the currently
+        // weighted slots rewrites Unity skin indices and loses the exact binding
+        // contract used by some legacy costume meshes.
+        var orderedBoneIndices = hasExactOrderedBinding
+            ? Enumerable.Range(0, importedBoneCount).ToList()
+            : usedBoneIndices.OrderBy(index => index).ToList();
+        if (orderedBoneIndices.Count == 0)
         {
-            orderedUsedBoneIndices.Add(0);
+            orderedBoneIndices.Add(0);
         }
 
         var remap = new Dictionary<int, int>();
-        var bonePaths = new List<string>(orderedUsedBoneIndices.Count);
-        var bonePathIds = new List<long>(orderedUsedBoneIndices.Count);
-        var inverseBindMatrices = new List<float>(orderedUsedBoneIndices.Count * 16);
-        for (var newIndex = 0; newIndex < orderedUsedBoneIndices.Count; newIndex += 1)
+        var bonePaths = new List<string>(orderedBoneIndices.Count);
+        var bonePathIds = new List<long>(orderedBoneIndices.Count);
+        var inverseBindMatrices = new List<float>(orderedBoneIndices.Count * 16);
+        for (var newIndex = 0; newIndex < orderedBoneIndices.Count; newIndex += 1)
         {
-            var oldIndex = orderedUsedBoneIndices[newIndex];
+            var oldIndex = orderedBoneIndices[newIndex];
             remap[oldIndex] = newIndex;
             var bonePath = resolvedBonePathsByImportedIndex[oldIndex];
             bonePaths.Add(bonePath);

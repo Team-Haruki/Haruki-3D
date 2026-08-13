@@ -1998,15 +1998,16 @@ Expect(nativeMeshExporterSource.Contains("if (hasUv1)"), "native mesh export lea
 Expect(nativeMeshExporterSource.Contains("if (hasUv2)"), "native mesh export leaves UV2 absent when the source channel is absent");
 Expect(
     nativeMeshExporterSource.Contains("hasExactOrderedBinding") &&
+    nativeMeshExporterSource.Contains("Enumerable.Range(0, importedBoneCount)") &&
     nativeMeshExporterSource.Contains("rendererBonePathIds[oldIndex]"),
-    "native mesh export preserves exact ordered PathIDs when official skin arrays repeat a Transform path"
+    "native mesh export preserves every exact ordered Unity skin slot, including unused and repeated Transform paths"
 );
 Expect(runtimeModelsSource.Contains("JsonPropertyName(\"tangents\")"), "runtime native mesh schema publishes tangents");
 Expect(runtimeModelsSource.Contains("JsonPropertyName(\"uv2\")"), "runtime native mesh schema publishes UV2");
 Expect(runtimeWriterSource.Contains("\"nativeMeshes.meshes.tangents\""), "runtime binary codec stores tangents as float32");
 Expect(runtimeWriterSource.Contains("\"nativeMeshes.meshes.uv2\""), "runtime binary codec stores UV2 as float32");
 Expect(compiledPartCacheSource.Contains("delta[\"version\"] = \"0415-part-delta-3\""), "compiled part cache keeps the stable part delta schema version");
-Expect(compiledPartCacheSource.Contains("0415-compiled-part-8"), "compiled part cache keeps the stable cache schema");
+Expect(compiledPartCacheSource.Contains("0415-compiled-part-9"), "compiled part cache invalidates compacted Unity skin bindings");
 Expect(compiledPartCacheSource.Contains("resolved-eyelash-mask-v1"), "compiled part cache invalidates only head and hair entries without dependency masks");
 Expect(compiledPartCacheSource.Contains("ResolveExistingBundlePaths"), "compiled part fingerprints include dependency bundles");
 Expect(compiledPartCacheSource.Contains("PropertyNamingPolicy = JsonNamingPolicy.CamelCase"), "compiled part cache patches runtime metadata with camelCase keys");
