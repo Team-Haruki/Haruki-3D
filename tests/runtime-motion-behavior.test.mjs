@@ -176,6 +176,46 @@ test("prefab retargeting binds decoded node keys to loaded objects", () => {
   );
 });
 
+test("prefab retargeting ignores tracks for optional bones absent from an outfit", () => {
+  const root = new THREE.Group();
+  const hip = addNamedPath(root, "body/Hip");
+  const clip = new THREE.AnimationClip("motion", 1, [
+    vectorTrack("hip_key.position", [0, 0, 0], [1, 2, 3]),
+    vectorTrack("optional_key.position", [0, 0, 0], [4, 5, 6]),
+  ]);
+  const result = retargetUnityPrefabAnimationClip(clip, root, {
+    motionPackage: {
+      bodyMotionBindings: {
+        version: "0414",
+        bindingMode: "prefab_path",
+        bindings: [
+          {
+            pathCrc: 1,
+            nodeKey: "hip_key",
+            leafName: "Hip",
+            targets: [{ poseRoot: "body", transformPath: "body/Hip", pathId: 2 }],
+          },
+          {
+            pathCrc: 2,
+            nodeKey: "optional_key",
+            leafName: "Optional",
+            targets: [{
+              poseRoot: "body",
+              transformPath: "body/Hip/Optional",
+              pathId: 3,
+            }],
+          },
+        ],
+      },
+    },
+  });
+
+  assert.equal(result.error, null);
+  assert.deepEqual(result.clip.tracks.map((track) => track.name), [`${hip.uuid}.position`]);
+  assert.equal(result.debug.emittedTrackCount, 1);
+  assert.equal(result.debug.unresolvedTrackCount, 1);
+});
+
 test("official body-head assembly suppresses only face bridge targets", () => {
   const root = new THREE.Group();
   const bodyHip = addNamedPath(root, "body/Hip");

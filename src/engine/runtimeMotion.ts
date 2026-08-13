@@ -790,7 +790,7 @@ export function retargetUnityPrefabAnimationClip(
   baseDebug.resolvedBodyTargetCount = resolvedBodyTargetPaths.size;
   baseDebug.resolvedFaceTargetCount = resolvedFaceTargetPaths.size;
   baseDebug.sampleResolvedHeadTargets = [...sampleResolvedHeadTargets];
-  if (tracks.length === 0 || baseDebug.unresolvedTrackCount > 0) {
+  if (tracks.length === 0) {
     return {
       clip: null,
       debug: baseDebug,
