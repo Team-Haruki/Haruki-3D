@@ -360,7 +360,7 @@ public sealed class UnityRuntimeNativeMeshExporter
             })
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Take(8);
-        failure = $"imported mesh candidates matched by path/name but their skin bones did not resolve to the renderer prefab bones; renderer bones={renderer.SkinnedMeshBones.Count}; candidates={string.Join(", ", candidateSummary)}.";
+        failure = $"imported mesh candidates matched by path/name but their skin bones did not resolve to the renderer prefab bones; renderer bones={renderer.SkinnedMeshBones.Count}, unique paths={rendererBonePaths.Count}; candidates={string.Join(", ", candidateSummary)}.";
         return false;
     }
 
@@ -445,15 +445,16 @@ public sealed class UnityRuntimeNativeMeshExporter
             .Select(pathId => transformPathByPathId.TryGetValue(pathId, out var path) ? path : null)
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(path => path!)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+            .ToList();
         if (rendererBonePaths.Count != renderer.SkinnedMeshBones.Count)
         {
             return false;
         }
-
+        // Unity skin arrays may intentionally reference the same Transform more than once.
+        // Keep their ordered slots here: uniqueness is not a validity requirement.
         return TryResolveSkinBinding(
             mesh,
-            rendererBonePaths.ToList(),
+            rendererBonePaths,
             null,
             transformPaths,
             out _,
@@ -470,7 +471,7 @@ public sealed class UnityRuntimeNativeMeshExporter
         out string failure
     )
     {
-        Dictionary<string, long>? rendererBonePathIdByPath = null;
+        Dictionary<string, IReadOnlyList<long>>? rendererBonePathIdsByPath = null;
         if (rendererBonePathIds is not null)
         {
             if (rendererBonePathIds.Count != rendererBonePaths.Count)
@@ -480,20 +481,17 @@ public sealed class UnityRuntimeNativeMeshExporter
                 return false;
             }
 
-            rendererBonePathIdByPath = new Dictionary<string, long>(StringComparer.OrdinalIgnoreCase);
-            for (var index = 0; index < rendererBonePaths.Count; index += 1)
-            {
-                var path = rendererBonePaths[index];
-                var pathId = rendererBonePathIds[index];
-                if (rendererBonePathIdByPath.TryGetValue(path, out var previousPathId) &&
-                    previousPathId != pathId)
-                {
-                    binding = EmptySkinBinding;
-                    failure = $"renderer bone path '{path}' is ambiguous between PathIDs {previousPathId} and {pathId}.";
-                    return false;
-                }
-                rendererBonePathIdByPath[path] = pathId;
-            }
+            rendererBonePathIdsByPath = rendererBonePaths
+                .Select((path, index) => new { Path = path, PathId = rendererBonePathIds[index] })
+                .GroupBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(
+                    group => group.Key,
+                    group => (IReadOnlyList<long>)group
+                        .Select(item => item.PathId)
+                        .Distinct()
+                        .ToList(),
+                    StringComparer.OrdinalIgnoreCase
+                );
         }
 
         var importedBoneCount = mesh.BoneList?.Count ?? 0;
@@ -522,6 +520,11 @@ public sealed class UnityRuntimeNativeMeshExporter
 
         var rendererBonePathSet = rendererBonePaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
         var resolvedBonePathsByImportedIndex = ResolveImportedBonePathsByIndex(mesh, transformPaths, rendererBonePathSet);
+        var hasExactOrderedBinding = rendererBonePathIds is not null &&
+            rendererBonePaths.Count == importedBoneCount &&
+            Enumerable.Range(0, importedBoneCount).All(index =>
+                resolvedBonePathsByImportedIndex.TryGetValue(index, out var resolvedPath) &&
+                string.Equals(resolvedPath, rendererBonePaths[index], StringComparison.OrdinalIgnoreCase));
         var usedBoneIndices = CollectUsedBoneIndices(mesh);
         var unresolvedUsedBoneIndices = usedBoneIndices
             .Where(index => !resolvedBonePathsByImportedIndex.TryGetValue(index, out var path) ||
@@ -556,15 +559,30 @@ public sealed class UnityRuntimeNativeMeshExporter
             remap[oldIndex] = newIndex;
             var bonePath = resolvedBonePathsByImportedIndex[oldIndex];
             bonePaths.Add(bonePath);
-            if (rendererBonePathIdByPath is not null)
+            if (rendererBonePathIds is not null)
             {
-                if (!rendererBonePathIdByPath.TryGetValue(bonePath, out var bonePathId))
+                if (hasExactOrderedBinding)
+                {
+                    bonePathIds.Add(rendererBonePathIds[oldIndex]);
+                }
+                else if (rendererBonePathIdsByPath is null ||
+                    !rendererBonePathIdsByPath.TryGetValue(bonePath, out var matchingPathIds) ||
+                    matchingPathIds.Count == 0)
                 {
                     binding = EmptySkinBinding;
                     failure = $"resolved bone '{bonePath}' has no matching renderer PathID.";
                     return false;
                 }
-                bonePathIds.Add(bonePathId);
+                else if (matchingPathIds.Count > 1)
+                {
+                    binding = EmptySkinBinding;
+                    failure = $"resolved bone '{bonePath}' has {matchingPathIds.Count} possible renderer PathIDs and no exact ordered binding.";
+                    return false;
+                }
+                else
+                {
+                    bonePathIds.Add(matchingPathIds[0]);
+                }
             }
             AddMatrix(inverseBindMatrices, mesh.BoneList![oldIndex].Matrix);
         }

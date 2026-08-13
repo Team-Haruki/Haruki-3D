@@ -826,8 +826,11 @@ public sealed class PartPackageExporter
         }
         if (nativeMeshes.Meshes.Count == 0)
         {
+            var diagnostics = nativeMeshes.Warnings.Count == 0
+                ? "no renderer diagnostics were emitted"
+                : string.Join(" ", nativeMeshes.Warnings.Take(8));
             throw new InvalidOperationException(
-                $"Official {partType} resource exported no runtime meshes. Refusing to publish an incomplete part package."
+                $"Official {partType} resource exported no runtime meshes. Refusing to publish an incomplete part package. Diagnostics: {diagnostics}"
             );
         }
         var skippedBindings = nativeMeshes.Warnings

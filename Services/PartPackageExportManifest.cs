@@ -87,6 +87,7 @@ public sealed class PartPackageExportManifest
         var registryEntries = entries.ToList();
         var rebuilt = new Dictionary<string, PartPackageInputStamp>(StringComparer.Ordinal);
         var missingSparseRuntimes = new List<string>();
+        var missingSparseBundles = new HashSet<string>(StringComparer.Ordinal);
 
         foreach (var group in registryEntries
             .Where(entry => entry.BundlePath is not null && entry.Status != "missing")
@@ -107,6 +108,13 @@ public sealed class PartPackageExportManifest
                 if (hasSparsePlaceholder)
                 {
                     missingSparseRuntimes.Add(packagePath);
+                    foreach (var path in group
+                        .SelectMany(entry => new[] { entry.BundlePath, entry.ColorVariationBundlePath })
+                        .Where(path => IsEmptyExistingFile(path))
+                        .Select(path => ToLogicalBundlePath(path!)))
+                    {
+                        missingSparseBundles.Add(path);
+                    }
                 }
                 continue;
             }
@@ -158,7 +166,14 @@ public sealed class PartPackageExportManifest
                 $"{examples}" +
                 (missingSparseRuntimes.Count > 10
                     ? $" (+{missingSparseRuntimes.Count - 10} more)"
-                    : string.Empty)
+                    : string.Empty) +
+                Environment.NewLine +
+                string.Join(
+                    Environment.NewLine,
+                    missingSparseBundles
+                        .OrderBy(path => path, StringComparer.Ordinal)
+                        .Select(path => $"HARUKI_3D_MISSING_BUNDLE={path}")
+                )
             );
         }
         if (rebuilt.Count == 0 && (registryEntries.Count > 0 || previous.packages.Count > 0))
@@ -184,6 +199,24 @@ public sealed class PartPackageExportManifest
             File.Delete(temporaryPath);
         }
     }
+
+    private static string ToLogicalBundlePath(string path)
+    {
+        var normalized = path.Replace('\\', '/');
+        const string marker = "/AssetBundles/";
+        var markerIndex = normalized.LastIndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        var logical = markerIndex >= 0
+            ? normalized[(markerIndex + marker.Length)..]
+            : Path.GetFileName(normalized);
+        return logical.EndsWith(".bundle", StringComparison.OrdinalIgnoreCase)
+            ? logical[..^".bundle".Length]
+            : logical;
+    }
+
+    private static bool IsEmptyExistingFile(string? path) =>
+        path is not null &&
+        File.Exists(path) &&
+        new FileInfo(path).Length == 0;
 }
 
 public sealed record PartPackageInputStamp(

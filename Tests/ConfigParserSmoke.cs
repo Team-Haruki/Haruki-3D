@@ -1996,6 +1996,11 @@ Expect(nativeMeshExporterSource.Contains("values.Add(-tangent.W)"), "native mesh
 Expect(nativeMeshExporterSource.Contains("AddUv(uv2, vertex, 2)"), "native mesh export preserves packed second-normal UV2 data");
 Expect(nativeMeshExporterSource.Contains("if (hasUv1)"), "native mesh export leaves UV1 absent when the source channel is absent");
 Expect(nativeMeshExporterSource.Contains("if (hasUv2)"), "native mesh export leaves UV2 absent when the source channel is absent");
+Expect(
+    nativeMeshExporterSource.Contains("hasExactOrderedBinding") &&
+    nativeMeshExporterSource.Contains("rendererBonePathIds[oldIndex]"),
+    "native mesh export preserves exact ordered PathIDs when official skin arrays repeat a Transform path"
+);
 Expect(runtimeModelsSource.Contains("JsonPropertyName(\"tangents\")"), "runtime native mesh schema publishes tangents");
 Expect(runtimeModelsSource.Contains("JsonPropertyName(\"uv2\")"), "runtime native mesh schema publishes UV2");
 Expect(runtimeWriterSource.Contains("\"nativeMeshes.meshes.tangents\""), "runtime binary codec stores tangents as float32");
@@ -2202,6 +2207,7 @@ Expect(partPackageExporterSource.Contains("Part package export skipped"), "part 
 Expect(partPackageExporterSource.Contains("DeletePartExportError"), "part package exporter removes stale per-package errors after success");
 Expect(partPackageExporterSource.Contains("IsInShard"), "part package exporter can filter deterministic shards");
 Expect(partPackageManifestSource.Contains("public static void Rebuild"), "part package exporter rebuilds one canonical worker manifest");
+Expect(partPackageManifestSource.Contains("HARUKI_3D_MISSING_BUNDLE="), "sparse export reports exact missing bundle keys for targeted updater recovery");
 Expect(!partPackageExporterSource.Contains("bundle-open-summary.json"), "part package exporter omits per-package debug summaries from production output");
 Expect(partPackageExporterSource.Contains("missing_after_fallback"), "part package exporter marks material failures after full-directory fallback");
 Expect(assetStudioLoadedBundleSource.Contains("ResolveLoadBundlePaths"), "loaded bundle uses shared dependency resolver");
