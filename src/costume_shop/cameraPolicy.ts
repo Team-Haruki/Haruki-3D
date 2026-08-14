@@ -3,6 +3,16 @@ import * as THREE from "three";
 const DEFAULT_TARGET_SCALE = new THREE.Vector3(0.04835, 0.48222, 0.07241);
 const DEFAULT_OFFSET_SCALE = new THREE.Vector3(-0.08532, 0.12848, 1.93551);
 const DEFAULT_FOV = 35;
+const LEGACY_CLOUD_TARGET_SCALE = new THREE.Vector3(
+  -0.032911392405063286,
+  0.4893037974683544,
+  0.06841772151898734
+);
+const LEGACY_CLOUD_OFFSET_SCALE = new THREE.Vector3(
+  -0.08468354430379746,
+  0.270253164556962,
+  1.920886075949367
+);
 const CAPTURE_LATERAL_SHIFT_SCALE = -0.0245;
 const FULL_BODY_CAPTURE_CENTER_Y = 0.765;
 const COSTUME_SHOP_CAMERA = {
@@ -17,7 +27,7 @@ const COSTUME_SHOP_CAMERA = {
 } as const;
 
 export type PjskCameraPreset = "default" | "capture";
-export type PjskCameraProfile = "official-default" | "full-body";
+export type PjskCameraProfile = "official-default" | "full-body" | "legacy-cloud";
 
 export type RuntimeCameraDebug = {
   preset: PjskCameraPreset;
@@ -74,11 +84,28 @@ export function getDefaultCameraPose(
 
 export function getCostumeShopCameraPose(
   profile: PjskCameraProfile,
-  cameraRootYawDegrees = 0
+  cameraRootYawDegrees = 0,
+  characterHeightMeters = 1.6
 ): CostumeShopCameraPose {
   const finiteCameraRootYawDegrees = Number.isFinite(cameraRootYawDegrees)
     ? cameraRootYawDegrees
     : 0;
+  if (profile === "legacy-cloud") {
+    const height = THREE.MathUtils.clamp(characterHeightMeters || 1.6, 0.5, 2);
+    const target = LEGACY_CLOUD_TARGET_SCALE.clone().multiplyScalar(height);
+    const offset = LEGACY_CLOUD_OFFSET_SCALE.clone()
+      .multiplyScalar(height)
+      .applyAxisAngle(
+        new THREE.Vector3(0, 1, 0),
+        THREE.MathUtils.degToRad(finiteCameraRootYawDegrees)
+      );
+    return {
+      target,
+      position: target.clone().add(offset),
+      fov: DEFAULT_FOV,
+      costumeShopState: null,
+    };
+  }
   const state = profile === "official-default"
     ? {
         cameraRootYawDegrees: finiteCameraRootYawDegrees,

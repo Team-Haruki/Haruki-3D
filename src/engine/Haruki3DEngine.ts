@@ -1224,7 +1224,8 @@ export class Haruki3DEngine {
     if (this.currentCameraPreset === "capture") {
       const pose = getCostumeShopCameraPose(
         this.currentCameraProfile ?? "full-body",
-        this.cameraRootYawDegrees
+        this.cameraRootYawDegrees,
+        this.masterCharacterHeightMeters
       );
       this.setCameraTarget(pose.target);
       this.camera.position.copy(pose.position);
@@ -1427,7 +1428,8 @@ export class Haruki3DEngine {
     const costumeShopPose = this.currentCameraPreset === "capture"
       ? getCostumeShopCameraPose(
           this.currentCameraProfile ?? "full-body",
-          this.cameraRootYawDegrees
+          this.cameraRootYawDegrees,
+          this.masterCharacterHeightMeters
         )
       : null;
     const costumeShopState = costumeShopPose?.costumeShopState ?? null;
@@ -2133,13 +2135,24 @@ export class Haruki3DEngine {
     if (this.currentPrefabSourceGraph) {
       applyUnityCharacterModelScale(this.currentPrefabSourceGraph, nextModelScale);
     }
-    if (!changed || this.currentCameraPreset !== "default") {
+    if (!changed || (
+      this.currentCameraPreset !== "default" &&
+      this.currentCameraProfile !== "legacy-cloud"
+    )) {
       return;
     }
-    const pose = getDefaultCameraPose(nextModelScale);
+    const pose = this.currentCameraProfile === "legacy-cloud"
+      ? getCostumeShopCameraPose(
+          "legacy-cloud",
+          this.cameraRootYawDegrees,
+          nextMasterHeight
+        )
+      : getDefaultCameraPose(nextModelScale);
     const offset = pose.position.clone().sub(pose.target).applyAxisAngle(
       COSTUME_SHOP_CAMERA_ROOT_AXIS,
-      THREE.MathUtils.degToRad(this.cameraRootYawDegrees)
+      this.currentCameraProfile === "legacy-cloud"
+        ? 0
+        : THREE.MathUtils.degToRad(this.cameraRootYawDegrees)
     );
     this.setCameraTarget(pose.target);
     this.camera.position.copy(pose.target).add(offset);
@@ -2150,7 +2163,11 @@ export class Haruki3DEngine {
     this.currentCameraPreset = preset;
     if (preset === "capture") {
       this.currentCameraProfile = profile;
-      const pose = getCostumeShopCameraPose(profile, this.cameraRootYawDegrees);
+      const pose = getCostumeShopCameraPose(
+        profile,
+        this.cameraRootYawDegrees,
+        this.masterCharacterHeightMeters
+      );
       this.setCameraTarget(pose.target);
       this.camera.position.copy(pose.position);
       this.camera.fov = pose.fov;

@@ -409,7 +409,10 @@ function normalizeCameraProfile(value, fallback) {
   if (value === undefined || value === null || value === "") {
     return fallback;
   }
-  return value === "official-default" ? "official-default" : "full-body";
+  const normalized = String(value);
+  return ["official-default", "legacy-cloud"].includes(normalized)
+    ? normalized
+    : "full-body";
 }
 
 function normalizeCharacterYawMode(value, fallback) {

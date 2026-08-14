@@ -11,7 +11,7 @@ import {
 
 const vector = (value) => [value.x, value.y, value.z].map((entry) => Number(entry.toFixed(5)));
 
-test("camera poses retain the official default and full-body framing", () => {
+test("camera poses retain official profiles and the historical Cloud framing", () => {
   const defaultPose = getDefaultCameraPose(1);
   assert.deepEqual(vector(defaultPose.target), [0.04835, 0.48222, 0.07241]);
   assert.deepEqual(vector(defaultPose.position), [-0.03697, 0.6107, 2.00792]);
@@ -32,6 +32,16 @@ test("camera poses retain the official default and full-body framing", () => {
   assert.deepEqual(vector(side.target), [0, 0.765, 0]);
   assert.deepEqual(vector(side.position), [4.5, 0.765, 0]);
   assert.equal(side.costumeShopState.cameraRootYawDegrees, 90);
+
+  const legacyCloud = getCostumeShopCameraPose("legacy-cloud", 0, 1.6);
+  assert.deepEqual(vector(legacyCloud.target), [-0.05266, 0.78289, 0.10947]);
+  assert.deepEqual(vector(legacyCloud.position), [-0.18815, 1.21529, 3.18289]);
+  assert.equal(legacyCloud.fov, 35);
+  assert.equal(legacyCloud.costumeShopState, null);
+
+  const legacyCloudSide = getCostumeShopCameraPose("legacy-cloud", 90, 1.6);
+  assert.deepEqual(vector(legacyCloudSide.target), vector(legacyCloud.target));
+  assert.deepEqual(vector(legacyCloudSide.position), [3.02076, 1.21529, 0.24496]);
 
   const shifted = shiftCameraPoseRight(fullBody.position, fullBody.target, 1, 1);
   assert.deepEqual(

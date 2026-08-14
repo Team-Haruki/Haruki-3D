@@ -29,6 +29,7 @@ test("loads engine config JSON and applies capture runtime CLI overrides", () =>
       clip: "motion_loop",
       springRuntimeMode: "unity-prefab",
       cameraPreset: "capture",
+      cameraProfile: "legacy-cloud",
       faceSdfEnabled: true,
       projectedShadow: {
         width: 0.88,
@@ -80,6 +81,7 @@ test("loads engine config JSON and applies capture runtime CLI overrides", () =>
   assert.equal(server.defaultClip, "motion_loop");
   assert.equal(server.defaultSpringRuntimeMode, "unity-prefab");
   assert.equal(server.defaultCameraPreset, "capture");
+  assert.equal(server.defaultCameraProfile, "legacy-cloud");
   assert.equal(server.defaultFaceSdfEnabled, true);
   assert.deepEqual(server.defaultProjectedShadow, {
     width: 0.88,
@@ -115,10 +117,13 @@ test("capture server accepts documented HARUKI_CAPTURE camera and spring env nam
     HARUKI_SPRING_RUNTIME_MODE: "unity-prefab",
     HARUKI_CAPTURE_CAMERA_PRESET: "default",
     HARUKI_CAMERA_PRESET: "capture",
+    HARUKI_CAPTURE_CAMERA_PROFILE: "legacy-cloud",
+    HARUKI_CAMERA_PROFILE: "full-body",
   });
 
   assert.equal(server.defaultSpringRuntimeMode, "off");
   assert.equal(server.defaultCameraPreset, "default");
+  assert.equal(server.defaultCameraProfile, "legacy-cloud");
 });
 
 test("capture server accepts projected shadow env overrides", () => {
@@ -499,7 +504,7 @@ test("capture camera preset uses official CostumeShop camera parameters and keep
   assert.equal(configOptions.cameraPreset, "capture");
   assert.equal(configOptions.cameraProfile, "official-default");
   assert.match(cameraSource, /export type PjskCameraPreset = "default" \| "capture";/);
-  assert.match(cameraSource, /export type PjskCameraProfile = "official-default" \| "full-body";/);
+  assert.match(cameraSource, /export type PjskCameraProfile = "official-default" \| "full-body" \| "legacy-cloud";/);
   assert.match(cameraSource, /const COSTUME_SHOP_CAMERA = \{/);
   assert.match(cameraSource, /zoomDuration: 0\.35/);
   assert.match(cameraSource, /bottomLowerLimitPosition: 0\.4/);
@@ -514,6 +519,8 @@ test("capture camera preset uses official CostumeShop camera parameters and keep
   assert.match(cameraSource, /zoomValue: COSTUME_SHOP_CAMERA\.zoomDuration/);
   assert.match(cameraSource, /zoomMoveValue: 0/);
   assert.match(cameraSource, /localCameraRotationYDegrees: 180/);
+  assert.match(cameraSource, /const LEGACY_CLOUD_TARGET_SCALE = new THREE\.Vector3/);
+  assert.match(cameraSource, /const LEGACY_CLOUD_OFFSET_SCALE = new THREE\.Vector3/);
   assert.match(engineSource, /costumeShopState:/);
   assert.match(engineSource, /getCostumeShopCameraPose/);
   assert.doesNotMatch(engineSource, /ID5_DEBUG_CAMERA_/);

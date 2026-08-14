@@ -269,7 +269,10 @@ function readCameraProfile(params: URLSearchParams): PjskCameraProfile {
 }
 
 function normalizeCameraProfile(value: string | null): PjskCameraProfile {
-  return value === "official-default" ? "official-default" : "full-body";
+  if (value === "official-default" || value === "legacy-cloud") {
+    return value;
+  }
+  return "full-body";
 }
 
 function isCharacterYawMode(value: string | null): value is CharacterYawMode {

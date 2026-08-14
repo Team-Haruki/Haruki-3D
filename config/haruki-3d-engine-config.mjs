@@ -289,5 +289,5 @@ function cameraProfile(primary, secondary, tertiary) {
 }
 
 function normalizeCameraProfile(value) {
-  return value === "official-default" ? "official-default" : "full-body";
+  return ["official-default", "legacy-cloud"].includes(value) ? value : "full-body";
 }
