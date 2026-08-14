@@ -97,7 +97,7 @@ before model mutation.
 | Perspective camera, FOV 25. | `cameraRuntime.ts` CostumeShop profile. |
 | Startup target `(0, 1.25, 0)` and camera `(0, 1.25, 2.3)`. | `getCostumeShopCameraPose("official-default")`. |
 | The full-body captured profile uses the same FOV and official z endpoint `4.5`. | `getCostumeShopCameraPose("full-body")` uses a fixed presentation center Y of `0.765`; it does not move character bones or follow per-frame bounds. |
-| Historical Cloud previews used a medium shot before the CostumeShop profiles were introduced. | `getCostumeShopCameraPose("legacy-cloud")` preserves the exact height-scaled target, offset, and FOV from that capture path without changing either official profile. |
+| Historical Cloud previews used a larger full-character composition before model-height normalization changed their apparent size. | `getCostumeShopCameraPose("legacy-cloud")` uses the pixel-calibrated center `0.46`, distance `2.74`, and FOV `25` recovered from production captures, without changing either official profile. |
 | Horizontal drag rotates CameraRoot around world up; vertical input does not pitch the camera. | Documented host input contract; the kernel does not own pointer/pinch handlers. |
 | A part change does not reset camera rotation/zoom. | Host state is outside character import and therefore remains stable. |
 | Directional and rim lights are children of `CameraRoot`. | Stored light vectors are the yaw-zero local directions; a host rotation must rotate camera and lights together. The captured round-9 world vector already included about `-2.447°` of CameraRoot yaw and is not a yaw-zero default. |

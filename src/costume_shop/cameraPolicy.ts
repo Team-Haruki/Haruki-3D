@@ -3,16 +3,8 @@ import * as THREE from "three";
 const DEFAULT_TARGET_SCALE = new THREE.Vector3(0.04835, 0.48222, 0.07241);
 const DEFAULT_OFFSET_SCALE = new THREE.Vector3(-0.08532, 0.12848, 1.93551);
 const DEFAULT_FOV = 35;
-const LEGACY_CLOUD_TARGET_SCALE = new THREE.Vector3(
-  -0.032911392405063286,
-  0.4893037974683544,
-  0.06841772151898734
-);
-const LEGACY_CLOUD_OFFSET_SCALE = new THREE.Vector3(
-  -0.08468354430379746,
-  0.270253164556962,
-  1.920886075949367
-);
+const LEGACY_CLOUD_CAPTURE_CENTER_Y = 0.46;
+const LEGACY_CLOUD_CAPTURE_DISTANCE = 2.74;
 const CAPTURE_LATERAL_SHIFT_SCALE = -0.0245;
 const FULL_BODY_CAPTURE_CENTER_Y = 0.765;
 const COSTUME_SHOP_CAMERA = {
@@ -91,10 +83,8 @@ export function getCostumeShopCameraPose(
     ? cameraRootYawDegrees
     : 0;
   if (profile === "legacy-cloud") {
-    const height = THREE.MathUtils.clamp(characterHeightMeters || 1.6, 0.5, 2);
-    const target = LEGACY_CLOUD_TARGET_SCALE.clone().multiplyScalar(height);
-    const offset = LEGACY_CLOUD_OFFSET_SCALE.clone()
-      .multiplyScalar(height)
+    const target = new THREE.Vector3(0, LEGACY_CLOUD_CAPTURE_CENTER_Y, 0);
+    const offset = new THREE.Vector3(0, 0, LEGACY_CLOUD_CAPTURE_DISTANCE)
       .applyAxisAngle(
         new THREE.Vector3(0, 1, 0),
         THREE.MathUtils.degToRad(finiteCameraRootYawDegrees)
@@ -102,7 +92,7 @@ export function getCostumeShopCameraPose(
     return {
       target,
       position: target.clone().add(offset),
-      fov: DEFAULT_FOV,
+      fov: COSTUME_SHOP_CAMERA.fov,
       costumeShopState: null,
     };
   }

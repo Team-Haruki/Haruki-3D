@@ -519,8 +519,8 @@ test("capture camera preset uses official CostumeShop camera parameters and keep
   assert.match(cameraSource, /zoomValue: COSTUME_SHOP_CAMERA\.zoomDuration/);
   assert.match(cameraSource, /zoomMoveValue: 0/);
   assert.match(cameraSource, /localCameraRotationYDegrees: 180/);
-  assert.match(cameraSource, /const LEGACY_CLOUD_TARGET_SCALE = new THREE\.Vector3/);
-  assert.match(cameraSource, /const LEGACY_CLOUD_OFFSET_SCALE = new THREE\.Vector3/);
+  assert.match(cameraSource, /const LEGACY_CLOUD_CAPTURE_CENTER_Y = 0\.46/);
+  assert.match(cameraSource, /const LEGACY_CLOUD_CAPTURE_DISTANCE = 2\.74/);
   assert.match(engineSource, /costumeShopState:/);
   assert.match(engineSource, /getCostumeShopCameraPose/);
   assert.doesNotMatch(engineSource, /ID5_DEBUG_CAMERA_/);
