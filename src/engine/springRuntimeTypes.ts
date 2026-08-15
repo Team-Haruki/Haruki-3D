@@ -171,6 +171,8 @@ export type UtjSpringBoneRuntimeSnapshot = {
     colliderSourceCount: number;
     bindingDecisionCount: number;
     managerColliderCacheCount: number;
+    officialSpringComponentCount: number;
+    rejectedUnverifiedBoneSourceCount: number;
     activeRootCount: number;
     activeRoots: string[];
   };

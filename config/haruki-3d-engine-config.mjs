@@ -41,7 +41,7 @@ export function resolveCaptureRuntimeOptions(config, cliOptions) {
     timeoutMs: intAtLeast(cliOptions.timeoutMs, capture.timeoutMs, 45000, 5000),
     warmupMs: intAtLeast(cliOptions.warmupMs, capture.warmupMs, 0, 0),
     warmupFrames: intAtLeast(cliOptions.warmupFrames, capture.warmupFrames, 0, 0),
-    warmupMode: stringValue(cliOptions.warmupMode, capture.warmupMode, "animation"),
+    warmupMode: stringValue(cliOptions.warmupMode, capture.warmupMode, "runtime"),
     bodyDebugMode: stringValue(cliOptions.bodyDebugMode, capture.bodyDebugMode, "off"),
     renderIsolation: stringValue(cliOptions.renderIsolation, capture.renderIsolation, "normal"),
     springRuntimeMode: springRuntimeMode(cliOptions.springRuntimeMode, capture.springRuntimeMode),
@@ -71,7 +71,7 @@ export function resolveCaptureServerOptions(config, env = process.env) {
     defaultClip: stringValue(env.HARUKI_CAPTURE_CLIP, capture.clip, "motion_loop"),
     defaultWarmupMs: intAtLeast(env.HARUKI_CAPTURE_WARMUP_MS, capture.warmupMs, 0, 0),
     defaultWarmupFrames: intAtLeast(env.HARUKI_CAPTURE_WARMUP_FRAMES, capture.warmupFrames, 0, 0),
-    defaultWarmupMode: stringValue(env.HARUKI_CAPTURE_WARMUP_MODE, capture.warmupMode, "animation"),
+    defaultWarmupMode: stringValue(env.HARUKI_CAPTURE_WARMUP_MODE, capture.warmupMode, "runtime"),
     defaultSpringRuntimeMode: springRuntimeMode(
       env.HARUKI_CAPTURE_SPRING_RUNTIME_MODE,
       env.HARUKI_SPRING_RUNTIME_MODE,

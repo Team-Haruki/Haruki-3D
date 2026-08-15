@@ -1,6 +1,7 @@
 export {
   createHarukiMvBridge,
   HARUKI_MV_BRIDGE_OBJECT,
+  HARUKI_MV_RENDER_PRESETS,
   type HarukiMvBridge,
   type HarukiMvAssetRequest,
   type HarukiMvBundleSetRequest,
@@ -8,6 +9,9 @@ export {
   type HarukiMvCutInRequest,
   type HarukiMvPlayerRequest,
   type HarukiMvPrefabRequest,
+  type HarukiMvRenderProfile,
+  type HarukiMvRenderProfileRequest,
+  type HarukiMvFixedRenderResolution,
 } from "./HarukiMvBridge";
 export {
   createHarukiMvRuntime,

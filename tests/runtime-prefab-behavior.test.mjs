@@ -2,21 +2,180 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as THREE from "three";
 import {
+  applyUtjLengthLimits,
   applyUnityCharacterModelScale,
   buildUnityPrefabSourceGraph,
+  computeUtjLocalRotation,
+  computeUtjAverageChildTailPosition,
+  constrainUtjAngleLimit,
   createUnityPrefabConstraintRuntime,
   installUnityRuntimeNativeMeshes,
   makeUnityPrefabHeadFollowDebugSnapshot,
   resolveCostumeShopHeightRate,
   resolveCostumeShopModelScale,
+  SekaiExtraBoneRuntime,
   syncUnityPrefabSourceGraph,
 } from "../dist/haruki-3d-engine-internal.js";
 
+test("UTJ spring rotation composes the authored local rotation before the direction delta", () => {
+  const initialLocalRotation = new THREE.Quaternion()
+    .setFromEuler(new THREE.Euler(0.37, -0.52, 0.21, "ZXY"))
+    .normalize();
+  const parentRotation = new THREE.Quaternion()
+    .setFromEuler(new THREE.Euler(-0.16, 0.43, -0.29, "ZXY"))
+    .normalize();
+  const boneAxis = new THREE.Vector3(0.8, 0.3, -0.2).normalize();
+  const targetDirection = new THREE.Vector3(-0.25, 0.71, 0.66).normalize();
+  const headPosition = new THREE.Vector3(1.2, -0.4, 0.8);
+  const tailPosition = headPosition.clone().addScaledVector(targetDirection, 0.42);
+
+  const actualLocalRotation = computeUtjLocalRotation(
+    headPosition,
+    tailPosition,
+    parentRotation,
+    initialLocalRotation,
+    boneAxis
+  );
+  const actualDirection = boneAxis
+    .clone()
+    .applyQuaternion(parentRotation.clone().multiply(actualLocalRotation))
+    .normalize();
+
+  assert.ok(actualDirection.distanceTo(targetDirection) < 1e-12);
+
+  const baseRotation = parentRotation.clone().multiply(initialLocalRotation);
+  const localTarget = targetDirection.clone().applyQuaternion(baseRotation.clone().invert());
+  const delta = new THREE.Quaternion().setFromUnitVectors(boneAxis, localTarget.normalize());
+  const reversedLocalRotation = delta.clone().multiply(initialLocalRotation);
+  const reversedDirection = boneAxis
+    .clone()
+    .applyQuaternion(parentRotation.clone().multiply(reversedLocalRotation))
+    .normalize();
+
+  assert.ok(reversedDirection.distanceTo(targetDirection) > 1e-3);
+});
+
+test("UTJ spring degenerate normalization follows Unity zero-vector semantics", () => {
+  const lengthLimitedTip = new THREE.Vector3(1, 2, 3);
+  applyUtjLengthLimits({
+    currTipPos: lengthLimitedTip,
+    springConstant: 100,
+    deltaTime: 1 / 60,
+    targets: [{ position: lengthLimitedTip.clone(), initialLength: 0.25 }],
+  });
+  assert.deepEqual(lengthLimitedTip.toArray(), [1, 2, 3]);
+
+  const axisAlignedTip = new THREE.Vector3(0, 2, 0);
+  constrainUtjAngleLimit({
+    basisSide: new THREE.Vector3(1, 0, 0),
+    basisUp: new THREE.Vector3(0, 1, 0),
+    basisForward: new THREE.Vector3(0, 0, 1),
+    springStrength: 100,
+    deltaTime: 1 / 60,
+    limit: { active: true, min: -30, max: 30 },
+    vector: axisAlignedTip,
+  });
+  assert.deepEqual(axisAlignedTip.toArray(), [0, 2, 0]);
+
+  const initial = new THREE.Quaternion().setFromEuler(new THREE.Euler(0.1, 0.2, 0.3));
+  const zeroDirectionRotation = computeUtjLocalRotation(
+    new THREE.Vector3(4, 5, 6),
+    new THREE.Vector3(4, 5, 6),
+    new THREE.Quaternion(),
+    initial,
+    new THREE.Vector3(1, 0, 0)
+  );
+  assert.ok(Math.abs(zeroDirectionRotation.dot(initial)) > 1 - 1e-12);
+
+  const head = new THREE.Vector3(3, 4, 5);
+  const averageChild = head.clone();
+  const symmetricTail = computeUtjAverageChildTailPosition(head, averageChild, 0.25);
+  assert.deepEqual(symmetricTail.toArray(), [2.75, 4, 5]);
+  assert.equal(symmetricTail.distanceTo(head), 0.25);
+});
+
+test("ExtraBone uses Unity positive ZXY input, reversed coefficient sign, and authored output order", () => {
+  const root = new THREE.Group();
+  const body = new THREE.Group();
+  body.name = "body";
+  const reference = new THREE.Bone();
+  reference.name = "Left_Arm";
+  const driven = new THREE.Bone();
+  driven.name = "Left_ArmRoll";
+  body.add(reference, driven);
+  root.add(body);
+
+  const unityReference = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(350 * Math.PI / 180, 20 * Math.PI / 180, 15 * Math.PI / 180, "ZXY")
+  );
+  reference.quaternion.set(
+    unityReference.x,
+    -unityReference.y,
+    -unityReference.z,
+    unityReference.w
+  );
+
+  const extension = {
+    pjskSpringBone: {
+      raw: {
+        body: {
+          extraBones: [{
+            GameObject: { TransformPath: "body/Left_ArmRoll" },
+            ReferenceBone: { TransformPath: "body/Left_Arm" },
+            RotationOrder: 5,
+            Coefficient: -0.6,
+            DefaultEulerAngles: { X: 4, Y: 7, Z: 11 },
+            AxisX: 1,
+            AxisY: 0,
+            AxisZ: 0,
+          }],
+        },
+      },
+    },
+  };
+
+  const runtime = SekaiExtraBoneRuntime.fromPjskRuntimeExtension(extension, root);
+  assert.ok(runtime);
+  runtime.update();
+
+  const positiveUnityEuler = new THREE.Euler().setFromQuaternion(unityReference, "ZXY");
+  positiveUnityEuler.x = ((positiveUnityEuler.x % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  const unityDriven = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(positiveUnityEuler.x, 0, 0, "ZYX")
+  );
+  const engineDriven = new THREE.Quaternion(
+    unityDriven.x,
+    -unityDriven.y,
+    -unityDriven.z,
+    unityDriven.w
+  );
+  const unityDefault = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(4 * Math.PI / 180, 7 * Math.PI / 180, 11 * Math.PI / 180, "ZXY")
+  );
+  const engineDefault = new THREE.Quaternion(
+    unityDefault.x,
+    -unityDefault.y,
+    -unityDefault.z,
+    unityDefault.w
+  );
+  if (engineDefault.dot(engineDriven) < 0) {
+    engineDriven.set(-engineDriven.x, -engineDriven.y, -engineDriven.z, -engineDriven.w);
+  }
+  const expected = new THREE.Quaternion(
+    THREE.MathUtils.lerp(engineDefault.x, engineDriven.x, 0.6),
+    THREE.MathUtils.lerp(engineDefault.y, engineDriven.y, 0.6),
+    THREE.MathUtils.lerp(engineDefault.z, engineDriven.z, 0.6),
+    THREE.MathUtils.lerp(engineDefault.w, engineDriven.w, 0.6)
+  ).normalize();
+
+  assert.ok(driven.quaternion.angleTo(expected) < 1e-12);
+});
+
 test("CostumeShop height rate differentiates characters inside one body-size bundle", () => {
   assert.ok(Math.abs(resolveCostumeShopHeightRate(1.68) - 0.9761904762) < 1e-9);
-  assert.ok(Math.abs(resolveCostumeShopModelScale(1.52) - 1.56) < 1e-9);
-  assert.ok(Math.abs(resolveCostumeShopModelScale(1.6) - 1.6) < 1e-9);
-  assert.ok(Math.abs(resolveCostumeShopModelScale(1.68) - 1.64) < 1e-9);
+  assert.ok(Math.abs(resolveCostumeShopModelScale(1.52) - 1.0263157895) < 1e-9);
+  assert.ok(Math.abs(resolveCostumeShopModelScale(1.6) - 1) < 1e-9);
+  assert.ok(Math.abs(resolveCostumeShopModelScale(1.68) - 0.9761904762) < 1e-9);
 
   const extension = makeRuntimeExtension();
   extension.runtimeUnitySetup.prefabGraphs[0].transforms.push(
@@ -29,9 +188,10 @@ test("CostumeShop height rate differentiates characters inside one body-size bun
   applyUnityCharacterModelScale(graph, resolveCostumeShopModelScale(1.68));
 
   assert.deepEqual(graph.root.scale.toArray(), [1, 1, 1]);
-  assert.deepEqual(
-    graph.nodeByPath.get("body/Position").scale.toArray(),
-    [1.6400000000000001, 1.6400000000000001, 1.6400000000000001]
+  const expectedHeightRate = resolveCostumeShopHeightRate(1.68);
+  assert.ok(
+    graph.nodeByPath.get("body/Position").scale
+      .distanceTo(new THREE.Vector3(expectedHeightRate, expectedHeightRate, expectedHeightRate)) < 1e-12
   );
   assert.deepEqual(
     graph.nodeByPath.get("body/Body").scale.toArray(),

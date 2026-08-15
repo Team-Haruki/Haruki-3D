@@ -32,6 +32,28 @@ HARUKI_MV_SOURCE_SET_MANIFEST=/path/to/mv-source-set.json \
 npm run build:mv:unity
 ```
 
+AssetRipper cannot recover portable ShaderLab source from the Android shader
+programs. The default recovered build therefore rejects every
+`DummyShaderTextExporter` placeholder. To rebuild a local evidence bundle while
+working only on object assembly, Timeline, or lifecycle code, opt in explicitly:
+
+```bash
+HARUKI_MV_ALLOW_DUMMY_SHADERS=1 \
+HARUKI_MV_RECOVERED_PROJECT=/path/to/ExportedProject \
+HARUKI_MV_SOURCE_SET_MANIFEST=/path/to/mv-source-set.json \
+npm run build:mv:unity
+```
+
+That switch is development-only. It does not make the placeholder shaders
+correct, and builds made with it must not be published. Leaving the variable
+unset retains the strict release gate.
+
+The browser smoke test likewise fails on invalid WebGL draw-buffer output and
+missing float/range material properties. When exercising an old evidence build
+that is already known to contain placeholder shaders, that renderer-only gate
+may be bypassed explicitly with `HARUKI_MV_ALLOW_RENDER_ERRORS=1`. This flag is
+also development-only and must never be used to qualify a release artifact.
+
 The source-set catalog lists the independent AssetBundles needed by one launch,
 so neither the music ID nor stage ID is compiled into the viewer. It is not a
 new monolithic MV package. Every source bundle remains a separately requested
@@ -43,12 +65,12 @@ not strip missing game scripts, replace materials, synthesize a camera, or
 invent a light rig.
 
 Built-in Unity Timeline script references recovered by AssetRipper are remapped
-to the matching Unity Timeline 1.7.6 types before rebuilding. The remap is
-limited to `timeline.playable` YAML; binary textures and other recovered assets
-are copied byte-for-byte into the Unity import tree. Sekai-specific Track and
-Clip classes are not substitutes for built-in Timeline types. Until their
-original behavior is recovered and implemented, Unity reports those scripts as
-missing and the corresponding effects remain unsupported.
+to the matching Unity Timeline 1.7.6 types before rebuilding. Sekai-specific
+Track/Clip and recovered component GUIDs are separately remapped to the matching
+runtime classes in this project; they are never substituted for built-in
+Timeline types. Binary textures and other recovered assets are copied without
+content rewriting. The build then scans every imported YAML object and fails
+with the recovered type name when a referenced game script is still unresolved.
 
 Pushes that touch the MV project also run `.github/workflows/unity-mv.yml`.
 The workflow runs EditMode tests, compiles the real WebGL player, validates its
@@ -67,9 +89,9 @@ dependency loading, additive scene loading, and one playback coordinator for
 every scene root. Its exact recovered Timeline binding uses
 `PlayableBinding.streamName` to select the shared target and passes
 `PlayableBinding.sourceObject` to `PlayableDirector.SetGenericBinding`, then
-sets time to zero and evaluates. Original Sekai scripts and custom Timeline
-types remain inputs; the bridge does not pretend to reproduce missing game
-behavior.
+sets time to zero and evaluates. Recovered Sekai component and custom Timeline
+contracts are explicit runtime inputs; the bridge does not pretend that a
+serialized state holder replaces a missing renderer pass or shader.
 
 `loadBundleSet()` accepts the `deps.json` format used by ClauseKAI. It validates
 the requested dependency closure, rejects missing/cyclic entries, and loads
@@ -113,6 +135,11 @@ const mvData = await bridge.readMvData({
   bundleName: "live_pv/mv_data/0112",
   assetName: "data",
 });
+const renderProfile = await bridge.applyRenderProfile({
+  resolution: "1080p",
+  refreshRate: 120,
+  use120Fps: false,
+});
 await bridge.loadMv({
   musicId: 112,
   enableCutIns: false,
@@ -146,6 +173,24 @@ and emits `mv-data-ready`. The compatible Unity type uses the original script
 GUID and serialized field names, so stage selection, character slots, heel
 offsets, decorations, penlight, camera flags, post-effect flags, and cut-in IDs
 come from the bundle rather than a parallel host-side copy.
+
+`getRenderProfile()` and `applyRenderProfile()` support explicit landscape
+video outputs: `720p`
+(1280×720), `1080p` (1920×1080), `1440p` (2560×1440), and `4k-uhd`
+(3840×2160). `custom` accepts an explicit width and height. These modes are
+pixel contracts and deliberately ignore DPI. `device` retains the recovered
+6.7.0 `ScreenConfig` calculation: for the captured 3200×2136, 440-DPI device,
+High MusicVideo returns 3200×2136 while Default returns 1617×1080.
+
+All modes return the internal render size, the aspect-derived post-effect work
+surface (`height=256`), and the feasible target frame rate. The getter is a
+side-effect-free query. The applying form writes `Application.targetFrameRate`,
+resets scalable buffers to 1:1, and calls Unity `Screen.SetResolution`; CSS
+presentation remains outside the engine. `resolveUnityWebGLBuild()` disables
+Unity's CSS-to-backing-buffer synchronization and fixes WebGL device pixel ratio
+to one, so the selected pixel dimensions are not silently replaced by element
+size or browser DPI. `4k-uhd` is named explicitly because
+DCI 4K (4096×2160) is a different standard.
 
 Recovered bundle roots now have stable runtime addresses where the original
 asset contract is known:
@@ -241,6 +286,16 @@ Effect director's `MvLiveEffectTimelineManager` state. Its setup stores the
 main/CutIn flag and order, initializes playing to `!isCutIn`, and initializes
 switch execution to false; the same values are retained for retry.
 
+Reference Blend parameters follow the recovered `Sekai.Timeline.Common`
+runtime rather than normalizing each input playable independently. When a
+Timeline is loaded, every float, Vector2, Vector3, and Color blend receives its
+own `TimelineClip.start` and `TimelineClip.end`. Mixers then pass the shared
+absolute Director timestamp to `CalcBlend`. `Const` returns `beginValue`;
+`Blend` evaluates the serialized curve over that clip interval and uses the
+same clamped Unity `Lerp` implementation confirmed in the 6.7.0 ARM64 code.
+This shared setup covers post effects, MeshFlare, HeightFog, and WaterSurface,
+including seeks into a clip that does not begin at zero.
+
 Absolute seek assigns one requested time to all six directors and immediately
 evaluates them. Character body motions split across multiple clips use a nested
 `AnimationMixerPlayable`: cumulative clip start times select exactly one active
@@ -319,39 +374,95 @@ then binds the root and every child Transform name to its GameObject. It does
 not synthesize Penlight children or animation constants when the original
 component script is absent.
 
-This is not yet a complete `Background3DPlayer`. `CameraNode`, `LightNode`,
-the game-global `MusicVideoModel` registration layer, and
-Sekai's custom Timeline Track/Clip runtime remain unimplemented until their
-recovered behavior is landed. Stage feature flags that require the missing
-HeightFog, reflection, distortion, monitor, or water controllers are preserved
-as data but are not replaced with generic Unity effects. The lower-level
-runtime still exposes `sendMessage()` for original project methods that are not
-part of this stable host contract.
-CutIn root/Timeline ordering is implemented; model-state, SpringBone suppression,
-transition color, and sub-camera switching still depend on those original game
-components and are not simulated here.
+The evidence-closed object runtime is now present rather than represented by
+generic placeholders. It includes `CameraNode`, the seven-category `LightNode`,
+the main/CutIn `MusicVideoModel` registry, the recovered custom Timeline
+Track/Clip field layouts and mixers, HeightFog/WaterSurface state, LiveEffect,
+LiveMonitor, Penlight parameter packing, ExtraBone, both Sekai and UTJ spring
+components, character hair/eye setup, and the official Neck/Head face-skeleton
+graft. `MotionType.Gender` selects the recovered
+`Character{formationIndex}_Male/Female` key from the member's master figure;
+the other motion types retain the normal or insert key, as the original
+`GetCharacterKey` does. Camera decorations are loaded from their original
+bundle and their root/TextMeshPro bindings are registered. These components
+preserve serialized state and Timeline behavior, but state alone cannot produce
+the final pixels without the renderer artifacts listed below.
 
-The remaining hard boundaries are deliberate. The complete Transform hierarchy
-of `Camera/MainCamera_MV` and `Camera/SubCamera` is not present. Stage component
-targets, override precedence, and all four supported texture properties are now
-known. Penlight's binding target is confirmed as `Transform`; its original
-`PenlightParameter` implementation still has to be imported with the recovered
-script rather than replaced by a guessed clone. Released AssetBundles preserve
-custom Timeline class, assembly,
-and bundle-local MonoScript PathID, but not the original Unity project `.meta`
-GUID. Recovered dummy scripts therefore cannot safely be promoted to empty
-Track/Clip implementations: each type still needs its exact serialized fields
-and runtime behavior, after which the rebuild may deliberately remap it to this
-project's own script GUID. Until those facts are closed, the player fails
-explicitly instead of silently substituting a generic camera, light rig, stage
-controller, penlight driver, or no-op Timeline track.
+### 0112 reconstruction audit (2026-08-15)
+
+The source-set manifest now contains the complete known 0112 launch closure:
+34 independently cacheable bundles totalling 46,423,867 bytes. It includes the
+previously omitted MeshFlare common controller, WaterCaustics, and WaterEye
+preset bundles. No raw mobile bundle is merged into a song-wide package.
+
+The current strict build does not set `HARUKI_MV_ALLOW_DUMMY_SHADERS` or
+`HARUKI_MV_ALLOW_RENDER_ERRORS`. Unity EditMode reports 190/190 tests passed,
+the recovered-source WebGL build reports `Build Finished, Result: Success`,
+and headless Chromium passes Unity startup plus the 4K-query/1080p-backing-
+buffer render-profile smoke. An earlier full 0112 browser exercise also loaded
+the stage and five characters, assembled the main MV and one CutIn, reported
+the authored duration as 181.216666666666 seconds, and passed
+play/pause/seek/retry/dispose. The 2026-08-15 smoke proves the newly built player
+starts; it does not repeat that expensive full-song visual comparison.
+
+The active character shader path now covers the captured Toon-v3 lighting,
+FaceSDF controller values, eyelash clipping, hair shadow, outline, rim branch,
+eye distortion/flipbook/highlight, fog, spotlight, CoC, and three MRT outputs.
+The runtime also drives the captured per-frame eye clock, face/light vectors,
+formation light arrays, main/CutIn global ownership, WaterEye presets, and the
+IL2CPP-confirmed MeshFlare position/scale/theta formulas. The recovered old
+Stage ColorMap, Texture, LightMap, LightMap-Transparent, LightMap-Cutout and
+LightMap-Emission aliases use their exact formulas; unrelated families retain
+the bounded WebGL-compatible fallback until a selected MV proves they are
+needed.
+
+Browser audio deliberately ends at a conventional Unity `AudioClip` boundary.
+The publishing side decodes the selected CRI cue, writes a lossless PCM
+intermediate, encodes a browser-supported Ogg Vorbis stream, imports it with the
+same Unity 2022.3 editor used for the WebGL build, and publishes the resulting
+auxiliary WebGL AssetBundle. `loadMv.audioBundleName` and
+`loadMv.audioAssetName` are an atomic pair and address that clip. The runtime
+does not ship a second CRI implementation in WebAssembly: the `AudioSource`
+clock remains authoritative and Timeline applies the recovered ±63 ms follower
+window. A release gate must compare decoded duration/sample rate/channel count
+with the selected cue and measure start, seek, and ten-minute drift before the
+audio bundle is promoted.
+
+That successful build closes compilation and startup, not pixel identity. The
+2026-08-15 static evidence additionally closes the WaterCaustics projection and
+blend, both MeshFlare fragment modes, RenderCanvas prefab, modern stage program
+catalog, character MRT variant boundary, three MusicItem assets, and the
+audio-synchronized clock. WaterCaustics and MeshFlare are now implemented;
+RenderCanvas is intentionally absent from ordinary 3DMV because four runtime
+captures confirm that path is not invoked there. The remaining matrix mixes
+implementation work with the few evidence gaps that genuinely remain.
+
+| Artifact / behavior | Evidence boundary | Runtime impact | Current behavior | Required next action or evidence |
+| --- | --- | --- | --- | --- |
+| Per-family stage shader implementation | All 111 modern Shader objects, 1084 Vulkan programs, keyword tables, exact old LightMap-family formulas and the new RP Stage-family formulas are now available. | Aliased monitor, reflection, particle and RP families can still differ visually. | Old ColorMap, Texture, LightMap, LightMap-Transparent, LightMap-Cutout and LightMap-Emission use their recovered formulas. Reflection and unrelated generic families retain bounded compatibility shaders. | Port the remaining material families only when a selected MV uses them; Reflection must consume the real planar-reflection inputs rather than a visual approximation. |
+| Character brightness MRT implementation | Variant counts and attachment layouts are closed, including the pre-fog rim/specular plus material contribution formula and the two-output Pearl/Eye exceptions. | Bloom can still differ on uncommon Accessory/CollaboE variants. | Active Toon-v3 Base now writes the recovered pre-fog `rim * formationBrightness + surface * ValueTex.g` Target2; Outline/Eyelash preserve their corresponding contribution. | Port an uncommon material family only when encountered; never emit a third target for the confirmed two-output Pearl/Eye families. |
+| Proprietary `SekaiRenderer` and LensFlare | Renderer allocation/swap/release RVAs, SekaiBuffer attachments, pass ordering, final CoreBlit and LensFlare call chain are closed. No sampled MV enables LensFlare. | Ordinary output is covered; an enabled LensFlare may have wrong blend/depth/material state. | Stock `UniversalRenderer` hosts the recovered Sekai feature graph and shared attachments. | Obtain one `enableLensFlare=1` draw capture before claiming lens-flare pixels; no change is needed for MV0112 where the feature is disabled. |
+| Character finishing edge cases | Color-variation paths, skin colors, accessory transform lookup/application, and final MotionType binding names are closed. | Unique/GenderUnique member selection still lacks a real upstream sample. | Body/head C/S/H variation textures, optional master skin-color triples and the serialized face-key accessory transform controller are wired into the load path; missing accessory keys preserve the official zero-scale result. | Obtain a real Unique/GenderUnique MV only for the earlier member selector. |
+| Music items | Bundles `0003`, `0007`, and `0010`, prefab structure, controller call chain, padded bundle path and exact binding-name format are recovered. MV0112 contains none. | The implementation has no positive song-level opacity/UV binding sample yet. | The player loads `item`, applies official height/heel targets, formation/shader/visibility state, and binds animation, opacity and UV tracks. | Validate the closed implementation against one Timeline that actually declares the recovered MusicItem track names. |
+| CRI/BGM decode | Cue-sheet load and selection, prepare/start sequence, abnormal-length fallback, and the official ±63 ms audio-synchronized visual clock are closed. | Browser publishing still needs measured drift limits. | The documented server contract converts a selected cue to an Ogg-backed Unity WebGL `AudioClip`; the recovered clock drives Timeline and the request requires an atomic bundle/address pair. | Build one production audio bundle and record start, seek and ten-minute A/V drift. Reimplementing CRI in WebAssembly is not required. |
+| Fixed-timestamp visual identity | One complete ordinary 0112 lifecycle and non-black render are known. There is no authoritative game-vs-WebGL frame corpus. | Pixel regressions cannot be measured automatically. | Startup, lifecycle, buffers, resolution contracts, and non-black output are testable; visual identity is a manual boundary. | Matched game/WebGL frames plus camera, light, material, MRT, and post-effect dumps at selected timestamps. |
+| Feature coverage corpus | 0112 covers five characters and one CutIn family, but not every engine feature. | Untested features may compile yet fail when first encountered. | Unknown effects are disabled or rejected instead of silently replaced. | Small source sets with music items, fog, reflection, active distortion, active caustics, modern V2-only parts, and multiple CutIns; special 26-character mode remains separate. |
+| Reproducible exporter source build | The released exporter emitted the verified 34-bundle manifest. | Reproduction still depends on the sibling AssetStudio-Haruki checkout being built. | The project now resolves `../AssetStudio-Haruki` portably instead of a developer-specific Windows mount. | Rebuild the same manifest and compare bundle names, sizes and hashes. |
+
+The Unity build performs a hard preflight over recovered YAML. It names every
+unresolved MonoBehaviour, rejects referenced dummy shaders, requires an assigned
+SRP, and checks that renderer indices 5 and 10 contain the captured feature
+names and component types in order. Missing base-APK camera Resources use the
+bounded reconstruction above; that does not waive the remaining matrix.
 
 ### ClauseKai public-build boundary
 
 The ClauseKai WebGL build is useful as a behavioral oracle, but it is not a
 drop-in copy of Sekai's camera/light runtime. Its player data contains only the
 demo bootstrap `Main Camera` and `Directional Light`; it does not contain the
-complete official `Camera/MainCamera_MV` or `Camera/SubCamera` prefab hierarchy.
+complete official `Core/Common/Camera/MainCamera_MV` or
+`Core/Common/Camera/SubCamera` prefab hierarchy. The 6.7.0 runtime dump is the
+authoritative source for reconstructing these resources; ClauseKai is not.
 Its dependency set contains the original `live_pv/timeline/0110/camera` bundle,
 but no corresponding light Timeline bundle.
 

@@ -1548,30 +1548,29 @@ export class Haruki3DEngine {
   }
 
   setSpringRuntimeMode(mode: SpringRuntimeMode) {
-    const wasEnabled = this.isSpringRuntimeEnabled();
     const previousMode = this.springRuntimeMode;
+    if (previousMode === mode) {
+      return;
+    }
+
+    // A runtime owns the authored local rotations captured when it is built.
+    // Restore those rotations before changing implementation or disabling it;
+    // otherwise a simulated pose can become the next runtime's bind pose.
+    this.currentSpringRuntime?.resetPose();
     this.springRuntimeMode = mode;
-    if (previousMode !== mode && this.currentBodyAnimationRoot) {
-      this.currentSpringRuntime?.resetPose();
-      this.currentSpringRuntime = this.createSpringRuntime(
-        this.currentPrefabSourceGraph?.root ?? this.currentBodyAnimationRoot
-      );
-    }
-    const isEnabled = this.isSpringRuntimeEnabled();
-    if (isEnabled && !wasEnabled) {
-      this.resetAndSettleCurrentSpringRuntime(60);
-    } else if (!isEnabled && wasEnabled) {
-      this.currentSpringRuntime?.resetPose();
-    }
+
+    // Do not settle here. CostumeShop's explicit capture preparation seeks the
+    // target pose and performs the master-configured CalmDown frame count once.
+    // Settling during mode selection both doubled that work and captured its
+    // result as the next runtime's initial pose after an off/on transition.
+    // Keep the assembled runtime alive while disabled as well: rebuilding it
+    // after motion seek would recapture springLength/boneAxis from an animated
+    // pose instead of the official post-combine setup pose.
+    this.resetCurrentSpringRuntimeState();
   }
 
   private resetCurrentSpringRuntimeState() {
     this.currentSpringRuntime?.resetStateToCurrentPose();
-  }
-
-  private resetAndSettleCurrentSpringRuntime(frameCount: number) {
-    this.resetCurrentSpringRuntimeState();
-    this.currentSpringRuntime?.settleCurrentPose(frameCount);
   }
 
   private isSpringRuntimeEnabled(): boolean {
@@ -1579,18 +1578,17 @@ export class Haruki3DEngine {
   }
 
   private createSpringRuntime(root: THREE.Object3D): SpringRuntimeController | null {
-    if (this.springRuntimeMode === "unity-prefab") {
-      const runtime = UnityPrefabSpringRuntime.fromPjskRuntimeExtension(
-        this.currentRuntimeExtension,
-        root
-      );
-      if (runtime && this.currentSpringTimelineControl) {
-        runtime.setTimelineControl(this.currentSpringTimelineControl);
-      }
-      return runtime;
+    // Runtime ownership follows the assembled character, not the UI on/off
+    // toggle. This preserves the setup-time initial rotations, axes and lengths
+    // exactly as CharacterModel.SetupSpringBone does in Unity.
+    const runtime = UnityPrefabSpringRuntime.fromPjskRuntimeExtension(
+      this.currentRuntimeExtension,
+      root
+    );
+    if (runtime && this.currentSpringTimelineControl) {
+      runtime.setTimelineControl(this.currentSpringTimelineControl);
     }
-
-    return null;
+    return runtime;
   }
 
   setSpringTimelineControl(control: SpringTimelineControlState | null) {
@@ -1603,17 +1601,29 @@ export class Haruki3DEngine {
   }
 
   seekAnimation(time: number) {
+    this.prepareSpringRuntimeForAnimationSeek();
     this.applyAnimationSeekResult(this.animationPlayback.seek(time));
   }
 
   seekAnimationPhase(phase: number) {
+    this.prepareSpringRuntimeForAnimationSeek();
     this.applyAnimationSeekResult(this.animationPlayback.seekPhase(phase));
     return this.getAnimationSnapshot();
   }
 
   seekAnimationLoopPhase(phase: number) {
+    this.prepareSpringRuntimeForAnimationSeek();
     this.applyAnimationSeekResult(this.animationPlayback.seekLoopPhase(phase));
     return this.getAnimationSnapshot();
+  }
+
+  private prepareSpringRuntimeForAnimationSeek() {
+    // Spring writes local rotations into nodes that the idle CostumeShop motion
+    // normally does not key. Restore setup-time rotations before sampling a new
+    // pose, or the previous capture becomes the next capture's animated base.
+    // Doing this before AnimationPlayback.seek also lets any genuinely animated
+    // spring-bone track overwrite the authored rest rotation as Unity does.
+    this.currentSpringRuntime?.resetPose();
   }
 
   private applyAnimationSeekResult(nextTime: number) {

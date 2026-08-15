@@ -84,6 +84,31 @@ namespace Haruki.MV
         }
 
         [Serializable]
+        private sealed class RenderProfileRequest
+        {
+            public string requestId;
+            public int width;
+            public int height;
+            public float dpi;
+            public int refreshRate;
+            public MvQualityType quality;
+            public MvLivePlayMode playMode;
+            public MvOutputResolution outputResolution;
+            public bool use120Fps;
+        }
+
+        [Serializable]
+        private sealed class RenderProfileReadyPayload
+        {
+            public string requestId;
+            public int renderWidth;
+            public int renderHeight;
+            public int postEffectWidth;
+            public int postEffectHeight;
+            public int targetFrameRate;
+        }
+
+        [Serializable]
         private sealed class DisposeRequest
         {
             public string requestId;
@@ -122,7 +147,8 @@ namespace Haruki.MV
 
         public void SetPaused(string json)
         {
-            InvokeSafely(() => _coordinator.SetPaused(JsonUtility.FromJson<PauseRequest>(json).paused));
+            InvokeSafely(() => _coordinator.SetPlaybackPaused(
+                JsonUtility.FromJson<PauseRequest>(json).paused));
         }
 
         public void LoadScene(string json)
@@ -163,12 +189,13 @@ namespace Haruki.MV
 
         public void Seek(string json)
         {
-            InvokeSafely(() => _coordinator.Seek(JsonUtility.FromJson<SeekRequest>(json).timeSeconds));
+            InvokeSafely(() => _coordinator.SeekTo(
+                JsonUtility.FromJson<SeekRequest>(json).timeSeconds));
         }
 
         public void Retry(string unused)
         {
-            InvokeSafely(_coordinator.Retry);
+            InvokeSafely(_coordinator.RetryPlayback);
         }
 
         public void LoadBundleSet(string json)
@@ -243,7 +270,7 @@ namespace Haruki.MV
             InvokeSafely(() =>
             {
                 var request = JsonUtility.FromJson<CutInActiveRequest>(json);
-                _playerAssembler.SetCutInActive(request.cutInOrder, request.active);
+                _playerAssembler.SetCutInSceneActive(request.cutInOrder, request.active);
             });
         }
 
@@ -261,7 +288,7 @@ namespace Haruki.MV
             }
             InvokeSafely(() =>
             {
-                var instance = _bundleSetLoader.InstantiatePrefab(request);
+                var instance = _bundleSetLoader.CreatePrefabInstance(request);
                 Emit("prefab-ready", JsonUtility.ToJson(new PrefabReadyPayload
                 {
                     requestId = request.requestId,
@@ -302,6 +329,88 @@ namespace Haruki.MV
             }, request.requestId);
         }
 
+        public void GetRenderProfile(string json)
+        {
+            RenderProfileRequest request;
+            try
+            {
+                request = ParseRequest<RenderProfileRequest>(json);
+            }
+            catch (Exception exception)
+            {
+                EmitError(exception);
+                return;
+            }
+            InvokeSafely(() =>
+            {
+                EmitRenderProfile(
+                    "render-profile-ready",
+                    request.requestId,
+                    CalculateRenderProfile(request));
+            }, request.requestId);
+        }
+
+        public void ApplyRenderProfile(string json)
+        {
+            RenderProfileRequest request;
+            try
+            {
+                request = ParseRequest<RenderProfileRequest>(json);
+            }
+            catch (Exception exception)
+            {
+                EmitError(exception);
+                return;
+            }
+            InvokeSafely(() =>
+            {
+                var profile = CalculateRenderProfile(request);
+                Application.targetFrameRate = profile.TargetFrameRate;
+                ScalableBufferManager.ResizeBuffers(1f, 1f);
+                Screen.SetResolution(
+                    profile.RenderSize.x,
+                    profile.RenderSize.y,
+                    Screen.fullScreenMode);
+                _playerAssembler.ApplyOutputProfile(profile);
+                EmitRenderProfile("render-profile-applied", request.requestId, profile);
+            }, request.requestId);
+        }
+
+        private static MvRenderProfile CalculateRenderProfile(RenderProfileRequest request)
+        {
+            return request.outputResolution == MvOutputResolution.Device
+                ? MvRenderProfile.Calculate(
+                    request.width,
+                    request.height,
+                    request.dpi,
+                    request.quality,
+                    request.playMode,
+                    request.refreshRate,
+                    request.use120Fps)
+                : MvRenderProfile.ForVideoOutput(
+                    request.outputResolution,
+                    request.width,
+                    request.height,
+                    request.refreshRate,
+                    request.use120Fps);
+        }
+
+        private static void EmitRenderProfile(
+            string eventName,
+            string requestId,
+            MvRenderProfile profile)
+        {
+            Emit(eventName, JsonUtility.ToJson(new RenderProfileReadyPayload
+            {
+                requestId = requestId,
+                renderWidth = profile.RenderSize.x,
+                renderHeight = profile.RenderSize.y,
+                postEffectWidth = profile.PostEffectSize.x,
+                postEffectHeight = profile.PostEffectSize.y,
+                targetFrameRate = profile.TargetFrameRate,
+            }));
+        }
+
         public void GetState(string unused)
         {
             EmitState();
@@ -327,7 +436,7 @@ namespace Haruki.MV
             }
             _playerAssembler.DisposePlayers();
             _bundleSetLoader.DisposeLoadedBundles();
-            StartCoroutine(_loader.Dispose(
+            StartCoroutine(_loader.DisposeLoadedScene(
                 () =>
                 {
                     Emit("disposed", JsonUtility.ToJson(new DisposedPayload

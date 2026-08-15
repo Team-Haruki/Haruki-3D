@@ -255,6 +255,12 @@ type RuntimeColliderBinding = {
 
 type RuntimeSetupDiagnostics = NonNullable<UtjSpringBoneRuntimeSnapshot["setupDiagnostics"]>;
 
+type RuntimeSpringComponentIndex = {
+  hasComponentMetadata: boolean;
+  pathIds: ReadonlySet<number>;
+  partPaths: ReadonlySet<string>;
+};
+
 type RuntimeTailBindingDiagnostic = {
   mode: "fallback" | "singleChild" | "averageChildren";
   childCount: number;
@@ -446,7 +452,8 @@ export class UnityPrefabSpringRuntime {
     const decisionByBonePathId = buildBindingDecisionMap(setup);
     const managerCacheByPathId = buildManagerColliderCacheMap(setup, colliderByIndex);
     const boneByPathId = buildBoneMap(setup);
-    const setupDiagnostics = buildSetupDiagnostics(setup, activeRoots);
+    const springComponents = buildRuntimeSpringComponentIndex(setup);
+    const setupDiagnostics = buildSetupDiagnostics(setup, activeRoots, springComponents);
     const controlledNodes = new Set<THREE.Object3D>();
     const forceProviderCache = new Map<string, RuntimeForceProvider>();
     const bones: RuntimeBone[] = [];
@@ -459,6 +466,10 @@ export class UnityPrefabSpringRuntime {
       for (const bonePathId of manager.bonePathIds ?? []) {
         const sourceBone = boneByPathId.get(bonePathId);
         if (!sourceBone || !isRuntimePathActive(sourceBone.nodePath, activeRoots)) {
+          continue;
+        }
+        if (!isVerifiedRuntimeSpringBone(sourceBone, springComponents)) {
+          setupDiagnostics.rejectedUnverifiedBoneSourceCount += 1;
           continue;
         }
         const node = resolveNodeForPart(resolution, sourceBone.nodePath, sourceBone.runtimePartIndex);
@@ -1650,7 +1661,8 @@ function buildRuntimeColliders(
 
 function buildSetupDiagnostics(
   setup: RuntimeUnitySetup0414,
-  activeRoots: ReadonlySet<string>
+  activeRoots: ReadonlySet<string>,
+  springComponents: RuntimeSpringComponentIndex
 ): RuntimeSetupDiagnostics {
   return {
     managerCount: setup.managers?.length ?? 0,
@@ -1658,9 +1670,61 @@ function buildSetupDiagnostics(
     colliderSourceCount: setup.colliders?.length ?? 0,
     bindingDecisionCount: setup.bindingDecisions?.length ?? 0,
     managerColliderCacheCount: setup.managerColliderCaches?.length ?? 0,
+    officialSpringComponentCount: springComponents.pathIds.size,
+    rejectedUnverifiedBoneSourceCount: 0,
     activeRootCount: activeRoots.size,
     activeRoots: [...activeRoots].sort(),
   };
+}
+
+function buildRuntimeSpringComponentIndex(
+  setup: RuntimeUnitySetup0414
+): RuntimeSpringComponentIndex {
+  const pathIds = new Set<number>();
+  const partPaths = new Set<string>();
+  let hasComponentMetadata = false;
+  for (const graph of setup.prefabGraphs ?? []) {
+    if (Array.isArray(graph.monoBehaviours)) {
+      hasComponentMetadata = true;
+    }
+    for (const component of graph.monoBehaviours ?? []) {
+      if (!isOfficialRuntimeSpringComponent(component.scriptName)) {
+        continue;
+      }
+      if (typeof component.pathId === "number") {
+        pathIds.add(component.pathId);
+      }
+      if (component.transformPath) {
+        partPaths.add(partPathKey(component.runtimePartIndex ?? -1, component.transformPath));
+      }
+    }
+  }
+  return { hasComponentMetadata, pathIds, partPaths };
+}
+
+function isOfficialRuntimeSpringComponent(scriptName?: string | null) {
+  const normalized = scriptName?.trim().toLowerCase();
+  return normalized === "springbone" || normalized === "sekaispringbone";
+}
+
+function isVerifiedRuntimeSpringBone(
+  bone: RuntimeBoneSource,
+  index: RuntimeSpringComponentIndex
+) {
+  // Legacy runtime packages did not carry prefab MonoBehaviour metadata. New
+  // packages do, so never allow an arbitrary transform in their `bones` table
+  // to become dynamic unless the prefab graph proves it owns the official
+  // SpringBone component.
+  if (!index.hasComponentMetadata) {
+    return true;
+  }
+  if (typeof bone.pathId === "number" && index.pathIds.has(bone.pathId)) {
+    return true;
+  }
+  return Boolean(
+    bone.nodePath &&
+    index.partPaths.has(partPathKey(bone.runtimePartIndex ?? -1, bone.nodePath))
+  );
 }
 
 function resolveColliderBinding(
@@ -1790,17 +1854,37 @@ function computeUnityPrefabChildPosition(
   }
   averagePosition.multiplyScalar(1 / validChildren.length);
   averageDistance /= validChildren.length;
-  const direction = averagePosition.sub(headPosition);
+  const tailPosition = computeUtjAverageChildTailPosition(
+    headPosition,
+    averagePosition,
+    averageDistance
+  );
   return {
     mode: "averageChildren",
     childCount: validChildren.length,
     childNames,
     childPaths,
     childSources: validChildren.map((child) => child.source),
-    tailPosition: direction.lengthSq() <= 0.00000001
-      ? headPosition.clone()
-      : headPosition.clone().addScaledVector(direction.normalize(), averageDistance),
+    tailPosition,
   };
+}
+
+export function computeUtjAverageChildTailPosition(
+  headPosition: THREE.Vector3,
+  averageChildPosition: THREE.Vector3,
+  averageDistance: number
+): THREE.Vector3 {
+  const direction = averageChildPosition.clone().sub(headPosition);
+  if (direction.lengthSq() <= 0.00001 * 0.00001) {
+    // ComputeChildPosition preserves the average child distance and falls back
+    // to Unity Vector3.right when symmetric children cancel each other out.
+    // Returning the head here collapses springLength to zero and disables the
+    // whole branch visually.
+    direction.copy(UNITY_RIGHT_LOCAL);
+  } else {
+    direction.normalize();
+  }
+  return headPosition.clone().addScaledVector(direction, averageDistance);
 }
 
 function collectUnityPrefabTailChildren(

@@ -1,7 +1,13 @@
 {
   "name": "Haruki.MV.Runtime",
   "rootNamespace": "Haruki.MV",
-  "references": ["Unity.Timeline"],
+  "references": [
+    "Unity.Mathematics",
+    "Unity.Timeline",
+    "Unity.UGUI",
+    "Unity.RenderPipelines.Core.Runtime",
+    "Unity.RenderPipelines.Universal.Runtime"
+  ],
   "includePlatforms": [],
   "excludePlatforms": [],
   "allowUnsafeCode": false,

@@ -105,6 +105,35 @@ test("official includeInactive spring discovery retains serialized inactive chil
   assert.equal(runtime.getSnapshot().boneCount, 2);
 });
 
+test("prefab component identity prevents a static transform from becoming a spring bone", () => {
+  const root = new THREE.Group();
+  addNode(root, "wind");
+  addNode(root, "boneA");
+  addNode(root, "boneB");
+  const extension = makeWindRuntimeExtension();
+  extension.pjskSpringBone.runtimeUnitySetup.prefabGraphs[0].monoBehaviours = [
+    {
+      pathId: 10,
+      scriptName: "ExtraBone",
+      transformPath: "boneA",
+    },
+    {
+      pathId: 20,
+      scriptName: "SekaiSpringBone",
+      transformPath: "boneB",
+    },
+  ];
+
+  const runtime = UnityPrefabSpringRuntime.fromPjskRuntimeExtension(extension, root);
+
+  assert.ok(runtime);
+  const snapshot = runtime.getSnapshot();
+  assert.equal(snapshot.boneCount, 1);
+  assert.equal(snapshot.topOffsets[0].name, "boneB");
+  assert.equal(snapshot.setupDiagnostics.officialSpringComponentCount, 1);
+  assert.equal(snapshot.setupDiagnostics.rejectedUnverifiedBoneSourceCount, 1);
+});
+
 test("serialized Unity spring force crosses into Three space exactly once", () => {
   const root = new THREE.Group();
   addNode(root, "wind");

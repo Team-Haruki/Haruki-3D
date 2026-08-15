@@ -316,7 +316,9 @@ function validateCaptureRequest(input) {
       0,
       MAX_CAPTURE_WARMUP_FRAMES
     ),
-    warmupMode: input.warmupMode === "runtime" ? "runtime" : defaultWarmupMode === "runtime" ? "runtime" : "animation",
+    warmupMode: input.warmupMode === "animation" || input.warmupMode === "runtime"
+      ? input.warmupMode
+      : defaultWarmupMode === "animation" ? "animation" : "runtime",
     bodyDebugMode: normalizeBodyDebugMode(input.bodyDebugMode),
     faceSdfEnabled: input.faceSdfEnabled === undefined
       ? defaultFaceSdfEnabled
@@ -338,6 +340,10 @@ function validateCaptureRequest(input) {
     ),
     springDebugBones: readStringList(input.springDebugBones, input.springDebugBone),
     springDebugAllOffsets: readBoolean(input.springDebugAllOffsets),
+    springRuntimeMode:
+      input.springRuntimeMode === "off" || input.springRuntimeMode === "unity-prefab"
+        ? input.springRuntimeMode
+        : defaultSpringRuntimeMode,
     includeDebugSnapshots: readBoolean(input.includeDebugSnapshots),
   };
 }

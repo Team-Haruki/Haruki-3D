@@ -4,6 +4,7 @@ import test from "node:test";
 import * as base from "../dist/haruki-3d-engine-base.js";
 import * as costumeShop from "../dist/haruki-3d-engine-costume-shop.js";
 import {
+  HARUKI_MV_RENDER_PRESETS,
   createHarukiMvBridge,
   createHarukiMvRuntime,
   resolveUnityWebGLBuild,
@@ -27,6 +28,8 @@ test("MV bridge sends the Unity project's typed command contract", async () => {
     LoadBundleSet: "bundle-set-ready",
     InstantiatePrefab: "prefab-ready",
     ReadMvData: "mv-data-ready",
+    GetRenderProfile: "render-profile-ready",
+    ApplyRenderProfile: "render-profile-applied",
     LoadMv: "mv-ready",
     LoadScene: "scene-ready",
     Dispose: "disposed",
@@ -72,6 +75,25 @@ test("MV bridge sends the Unity project's typed command contract", async () => {
     bundleName: "live_pv/mv_data/0112",
     assetName: "data",
   });
+  await bridge.getRenderProfile({
+    width: 3200,
+    height: 2136,
+    dpi: 440,
+    refreshRate: 120,
+    quality: "high",
+    playMode: "music-video",
+    use120Fps: true,
+  });
+  await bridge.getRenderProfile({
+    resolution: "4k-uhd",
+    refreshRate: 60,
+    use120Fps: false,
+  });
+  await bridge.applyRenderProfile({
+    resolution: "1080p",
+    refreshRate: 120,
+    use120Fps: true,
+  });
   await bridge.loadMv({
     musicId: 112,
     enableCutIns: false,
@@ -99,7 +121,11 @@ test("MV bridge sends the Unity project's typed command contract", async () => {
     delete payload.requestId;
     call[2] = JSON.stringify(payload);
   }
-  assert.equal(new Set(requestIds).size, 6);
+  assert.equal(new Set(requestIds).size, 9);
+  assert.deepEqual(HARUKI_MV_RENDER_PRESETS["4k-uhd"], {
+    width: 3840,
+    height: 2160,
+  });
 
   assert.deepEqual(calls, [
     ["HarukiMvBridge", "LoadBundleSet", '{"baseUrl":"/mv-bundles"}'],
@@ -112,6 +138,21 @@ test("MV bridge sends the Unity project's typed command contract", async () => {
       "HarukiMvBridge",
       "ReadMvData",
       '{"bundleName":"live_pv/mv_data/0112","assetName":"data"}',
+    ],
+    [
+      "HarukiMvBridge",
+      "GetRenderProfile",
+      '{"width":3200,"height":2136,"dpi":440,"refreshRate":120,"quality":1,"playMode":4,"outputResolution":0,"use120Fps":true}',
+    ],
+    [
+      "HarukiMvBridge",
+      "GetRenderProfile",
+      '{"width":3840,"height":2160,"dpi":0,"refreshRate":60,"quality":0,"playMode":4,"outputResolution":4,"use120Fps":false}',
+    ],
+    [
+      "HarukiMvBridge",
+      "ApplyRenderProfile",
+      '{"width":1920,"height":1080,"dpi":0,"refreshRate":120,"quality":0,"playMode":4,"outputResolution":2,"use120Fps":true}',
     ],
     [
       "HarukiMvBridge",
@@ -304,6 +345,8 @@ test("MV build resolver produces one deployable Unity WebGL build contract", () 
       companyName: "Team Haruki",
       productName: "Haruki 3DMV",
       productVersion: "1.0.0",
+      devicePixelRatio: 1,
+      matchWebGLToCanvasSize: false,
     },
   });
 });

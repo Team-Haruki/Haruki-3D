@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.Playables;
+using Sekai.Core;
+using Sekai.Rendering;
 
 namespace Haruki.MV
 {
@@ -23,6 +25,9 @@ namespace Haruki.MV
         private double _durationSeconds;
         private double _timeSeconds;
         private bool _audioStarted;
+        private bool _audioClockInitialized;
+        private long _referenceAudioMilliseconds;
+        private double _referenceUnityTime;
 
         public MvPlaybackState State { get; private set; } = MvPlaybackState.Empty;
         public double CurrentTimeSeconds => _timeSeconds;
@@ -39,6 +44,15 @@ namespace Haruki.MV
         }
 
         public void BindScene(GameObject[] sceneRoots, AudioSource audioSource, double durationSeconds)
+        {
+            BindScene(sceneRoots, audioSource, durationSeconds, null);
+        }
+
+        public void BindScene(
+            GameObject[] sceneRoots,
+            AudioSource audioSource,
+            double durationSeconds,
+            IReadOnlyList<IMvPlaybackParticipant> externalParticipants)
         {
             if (sceneRoots == null || sceneRoots.Length == 0)
             {
@@ -74,6 +88,16 @@ namespace Haruki.MV
                     participants.Add(participant);
                 }
             }
+            if (externalParticipants != null)
+            {
+                foreach (var participant in externalParticipants)
+                {
+                    if (participant != null && !participants.Contains(participant))
+                    {
+                        participants.Add(participant);
+                    }
+                }
+            }
             _participants = participants.ToArray();
             _timelineParticipants = CollectComponents<MvTimelinePlaybackParticipant>(_sceneRoots);
 
@@ -88,10 +112,10 @@ namespace Haruki.MV
             }
 
             SeekInternal(0);
-            SetPaused(true);
+            SetPlaybackPaused(true);
         }
 
-        public void SetPaused(bool paused)
+        public void SetPlaybackPaused(bool paused)
         {
             EnsureBound();
             State = paused ? MvPlaybackState.Paused : MvPlaybackState.Playing;
@@ -122,9 +146,10 @@ namespace Haruki.MV
                 _audioSource.Play();
                 _audioStarted = true;
             }
+            ResetAudioClock();
         }
 
-        public void Seek(double timeSeconds)
+        public void SeekTo(double timeSeconds)
         {
             EnsureBound();
             if (double.IsNaN(timeSeconds) || double.IsInfinity(timeSeconds))
@@ -201,9 +226,23 @@ namespace Haruki.MV
                     }
                 }
             }
+
+            // These official systems are shader-global. Re-assert the final
+            // active player's owner after all roots have toggled so an inactive
+            // CutIn cannot win through its OnDisable ordering.
+            var spotLight = activeRoot.GetComponentInChildren<Sekai.SekaiGlobalSpotLight>(true);
+            if (spotLight != null)
+            {
+                spotLight.ApplyShaderGlobals();
+                spotLight.SetEnabled(true);
+            }
+            var waterCaustics =
+                activeRoot.GetComponentInChildren<SekaiGlobalFlipBookProjector>(true);
+            if (waterCaustics != null) waterCaustics.Setup();
+            else SekaiGlobalFlipBookProjector.SetFlipBookActive(false);
         }
 
-        public void Retry()
+        public void RetryPlayback()
         {
             EnsureBound();
             foreach (var participant in _timelineParticipants)
@@ -215,8 +254,9 @@ namespace Haruki.MV
                 _audioSource.Stop();
             }
             _audioStarted = false;
+            _audioClockInitialized = false;
             SeekInternal(0);
-            SetPaused(true);
+            SetPlaybackPaused(true);
         }
 
         public void DisposeScene()
@@ -247,6 +287,7 @@ namespace Haruki.MV
             _durationSeconds = 0;
             _timeSeconds = 0;
             _audioStarted = false;
+            _audioClockInitialized = false;
             State = MvPlaybackState.Empty;
         }
 
@@ -263,10 +304,27 @@ namespace Haruki.MV
                 {
                     SeekVisuals(_durationSeconds);
                     _audioStarted = false;
-                    SetPaused(true);
+                    SetPlaybackPaused(true);
                     return;
                 }
-                SeekVisuals(_audioSource.time);
+                var unityNow = Time.unscaledTimeAsDouble;
+                var audioMilliseconds = (long)(_audioSource.time * 1000.0f);
+                if (!_audioClockInitialized)
+                {
+                    ResetAudioClock();
+                }
+                var predicted = _referenceAudioMilliseconds
+                    + (long)((unityNow - _referenceUnityTime)
+                        * _audioSource.pitch * 1000.0);
+                var synced = ResolveAudioSyncedTimeMilliseconds(
+                    predicted,
+                    audioMilliseconds);
+                if (audioMilliseconds - predicted >= 63)
+                {
+                    _referenceAudioMilliseconds = audioMilliseconds;
+                    _referenceUnityTime = unityNow;
+                }
+                SeekVisuals(synced / 1000.0);
                 return;
             }
 
@@ -274,7 +332,7 @@ namespace Haruki.MV
             SeekVisuals(nextTime);
             if (_timeSeconds >= _durationSeconds)
             {
-                SetPaused(true);
+                SetPlaybackPaused(true);
             }
         }
 
@@ -289,11 +347,40 @@ namespace Haruki.MV
 
             var audioTime = Math.Min(_timeSeconds, Math.Max(0, _audioSource.clip.length - 0.001));
             _audioSource.time = (float)audioTime;
+            ResetAudioClock();
+        }
+
+        private static long ResolveAudioSyncedTimeMilliseconds(
+            long predicted,
+            long audioMilliseconds)
+        {
+            if (predicted - audioMilliseconds >= 63)
+            {
+                return audioMilliseconds + 62;
+            }
+            return audioMilliseconds - predicted >= 63
+                ? audioMilliseconds
+                : predicted;
+        }
+
+        private void ResetAudioClock()
+        {
+            if (_audioSource == null || _audioSource.clip == null)
+            {
+                _audioClockInitialized = false;
+                return;
+            }
+            _referenceAudioMilliseconds = (long)(_audioSource.time * 1000.0f);
+            _referenceUnityTime = Time.unscaledTimeAsDouble;
+            _audioClockInitialized = true;
         }
 
         private void SeekVisuals(double timeSeconds)
         {
             _timeSeconds = Math.Max(0, Math.Min(timeSeconds, _durationSeconds));
+            LiveMonitorRuntime.SetTime(_timeSeconds);
+            Shader.SetGlobalFloat("_SekaiGlobalEyeTime", (float)_timeSeconds);
+            SekaiGlobalFlipBookProjector.SetTime((float)_timeSeconds);
 
             foreach (var director in _directors)
             {

@@ -164,12 +164,12 @@ namespace Haruki.MV
             onReady(_loadedBundles.Count);
         }
 
-        public GameObject InstantiatePrefab(MvPrefabLoadRequest request)
+        public GameObject CreatePrefabInstance(MvPrefabLoadRequest request)
         {
-            return InstantiatePrefab(request, null, null);
+            return CreatePrefabInstance(request, null, null);
         }
 
-        public GameObject InstantiatePrefab(
+        public GameObject CreatePrefabInstance(
             MvPrefabLoadRequest request,
             Transform parent,
             string instanceName)
@@ -197,6 +197,29 @@ namespace Haruki.MV
             var instance = Instantiate(prefab, parent, false);
             instance.name = string.IsNullOrWhiteSpace(instanceName)
                 ? prefab.name
+                : instanceName;
+            _instances.Add(instance);
+            return instance;
+        }
+
+        public GameObject InstantiateSinglePrefab(
+            string bundleName,
+            Transform parent,
+            string instanceName = null)
+        {
+            if (!_loadedBundles.TryGetValue(bundleName, out var bundle) || bundle == null)
+            {
+                throw new InvalidOperationException($"MV bundle '{bundleName}' is not loaded.");
+            }
+            var prefabs = bundle.LoadAllAssets<GameObject>();
+            if (prefabs.Length != 1 || prefabs[0] == null)
+            {
+                throw new InvalidOperationException(
+                    $"MV bundle '{bundleName}' must contain exactly one GameObject prefab.");
+            }
+            var instance = Instantiate(prefabs[0], parent, false);
+            instance.name = string.IsNullOrWhiteSpace(instanceName)
+                ? prefabs[0].name
                 : instanceName;
             _instances.Add(instance);
             return instance;

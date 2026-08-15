@@ -38,15 +38,22 @@ namespace Haruki.MV
             IReadOnlyList<MvCharacterLoadSpec> characters,
             bool isCutIn,
             int cutInOrder,
+            MvMusicVideoModel musicVideoModel,
             Transform parent)
         {
             MvData = mvData ?? throw new ArgumentNullException(nameof(mvData));
+            if (musicVideoModel == null)
+            {
+                throw new ArgumentNullException(nameof(musicVideoModel));
+            }
             IsCutIn = isCutIn;
             CutInOrder = cutInOrder;
             Root = new GameObject($"Background3DPlayer_ID{mvData.id}");
             Root.transform.SetParent(parent, false);
 
             Timeline = new MvTimelineNode();
+            Camera = new MvCameraNode(_bindings, Root.transform, bundles: bundles);
+            Light = new MvLightNode(_bindings, Root.transform);
             Stage = new MvStageNode(bundles, _bindings, Root.transform);
             Character = new MvCharacterNode(bundles, _bindings, Root.transform);
             Penlight = new MvPenlightNode(bundles, _bindings, Root.transform);
@@ -54,9 +61,52 @@ namespace Haruki.MV
             {
                 Timeline.Initialize(_bindings, Root.transform);
                 Timeline.LoadTimelines(bundles, mvData.id, isCutIn, cutInOrder);
-                Stage.Load(mvData, parentMvData, isCutIn);
-                Character.Load(mvData, characters);
+                Register(
+                    musicVideoModel,
+                    new MvTimelineModel(Timeline.Directors),
+                    isCutIn,
+                    cutInOrder);
+                Camera.Load(mvData);
+                Register(
+                    musicVideoModel,
+                    new MvCameraModel(
+                        Camera.MainCameraRoot,
+                        Camera.SubCameraRoot,
+                        Camera.MainAdjustment,
+                        Camera.SubAdjustment),
+                    isCutIn,
+                    cutInOrder);
+                Light.Load(mvData, Camera.MainCamera);
+                Register(
+                    musicVideoModel,
+                    new MvLightModel(Light.DirectionalLight, Light.ShadowLight),
+                    isCutIn,
+                    cutInOrder);
+                Stage.Load(
+                    mvData,
+                    parentMvData,
+                    isCutIn,
+                    characters,
+                    Camera.MainCamera,
+                    Light.DirectionalLight.transform);
+                Register(
+                    musicVideoModel,
+                    new MvStageModel(Stage.BaseStage, Stage.Decorations),
+                    isCutIn,
+                    cutInOrder);
+                Character.Load(mvData, characters, Light.DirectionalLight.transform);
+                Register(
+                    musicVideoModel,
+                    new MvCharacterModel(Character.Characters),
+                    isCutIn,
+                    cutInOrder);
+                Camera.SetCharacterHeight(Character.CreateCameraHeightData(mvData));
                 Penlight.Load(Stage.StageInfo.PenlightInfo);
+                Register(
+                    musicVideoModel,
+                    new MvPenlightModel(Penlight.Penlight),
+                    isCutIn,
+                    cutInOrder);
                 MvPlayerRenderSettings.Apply(Root);
                 Timeline.BindTimeline();
                 TimelinePlayback = Root.AddComponent<MvTimelinePlaybackParticipant>();
@@ -72,6 +122,8 @@ namespace Haruki.MV
                 Penlight.Dispose();
                 Character.Dispose();
                 Stage.Dispose();
+                Light.Dispose();
+                Camera.Dispose();
                 if (Application.isPlaying)
                 {
                     UnityEngine.Object.Destroy(Root);
@@ -89,6 +141,8 @@ namespace Haruki.MV
         public bool IsCutIn { get; }
         public int CutInOrder { get; }
         public MvTimelineNode Timeline { get; }
+        public MvCameraNode Camera { get; }
+        public MvLightNode Light { get; }
         public MvStageNode Stage { get; }
         public MvCharacterNode Character { get; }
         public MvPenlightNode Penlight { get; }
@@ -101,6 +155,8 @@ namespace Haruki.MV
             Penlight.Dispose();
             Character.Dispose();
             Stage.Dispose();
+            Light.Dispose();
+            Camera.Dispose();
             if (Root != null)
             {
                 if (Application.isPlaying)
@@ -113,6 +169,66 @@ namespace Haruki.MV
                 }
             }
         }
+
+        private static void Register(
+            MvMusicVideoModel registry,
+            MvTimelineModel model,
+            bool isCutIn,
+            int cutInOrder)
+        {
+            if (isCutIn) registry.RegisterCutInTimeline(model, cutInOrder);
+            else registry.RegisterMainTimeline(model);
+        }
+
+        private static void Register(
+            MvMusicVideoModel registry,
+            MvCameraModel model,
+            bool isCutIn,
+            int cutInOrder)
+        {
+            if (isCutIn) registry.RegisterCutInCamera(model, cutInOrder);
+            else registry.RegisterMainCamera(model);
+        }
+
+        private static void Register(
+            MvMusicVideoModel registry,
+            MvLightModel model,
+            bool isCutIn,
+            int cutInOrder)
+        {
+            if (isCutIn) registry.RegisterCutInLight(model, cutInOrder);
+            else registry.RegisterMainLight(model);
+        }
+
+        private static void Register(
+            MvMusicVideoModel registry,
+            MvStageModel model,
+            bool isCutIn,
+            int cutInOrder)
+        {
+            if (isCutIn) registry.RegisterCutInStage(model, cutInOrder);
+            else registry.RegisterMainStage(model);
+        }
+
+        private static void Register(
+            MvMusicVideoModel registry,
+            MvCharacterModel model,
+            bool isCutIn,
+            int cutInOrder)
+        {
+            if (isCutIn) registry.RegisterCutInCharacter(model, cutInOrder);
+            else registry.RegisterMainCharacter(model);
+        }
+
+        private static void Register(
+            MvMusicVideoModel registry,
+            MvPenlightModel model,
+            bool isCutIn,
+            int cutInOrder)
+        {
+            if (isCutIn) registry.RegisterCutInPenlight(model, cutInOrder);
+            else registry.RegisterMainPenlight(model);
+        }
     }
 
     [RequireComponent(typeof(MvBundleSetLoader), typeof(MvPlaybackCoordinator))]
@@ -121,9 +237,13 @@ namespace Haruki.MV
         private readonly List<MvPlayerInstance> _players = new List<MvPlayerInstance>();
         private MvBundleSetLoader _bundles;
         private MvPlaybackCoordinator _coordinator;
+        private MvCutInController _cutInController;
+        private MvRenderCanvas _renderCanvas;
 
         public IReadOnlyList<MvPlayerInstance> Players => _players;
         public MvPlayerInstance MainPlayer => _players.Count == 0 ? null : _players[0];
+        public MvMusicVideoModel MusicVideoModel { get; private set; }
+        public MvRenderCanvas RenderCanvas => _renderCanvas;
 
         private void Awake()
         {
@@ -146,6 +266,8 @@ namespace Haruki.MV
             try
             {
                 var mainData = LoadMvData(request.musicId, false);
+                var declaredCutInIds = mainData.cutinInfo?.ChildIds ?? Array.Empty<int>();
+                MusicVideoModel = MvMusicVideoModel.Create(declaredCutInIds.Length);
                 var main = new MvPlayerInstance(
                     _bundles,
                     mainData,
@@ -153,6 +275,7 @@ namespace Haruki.MV
                     request.characters,
                     false,
                     -1,
+                    MusicVideoModel,
                     transform);
                 _players.Add(main);
 
@@ -172,7 +295,6 @@ namespace Haruki.MV
                             id,
                             _bundles.ContainsBundle,
                             true))));
-                var declaredCutInIds = mainData.cutinInfo?.ChildIds ?? Array.Empty<int>();
                 for (var order = 0; order < declaredCutInIds.Length; order++)
                 {
                     var childId = declaredCutInIds[order];
@@ -197,6 +319,7 @@ namespace Haruki.MV
                             childCharacters,
                             true,
                             order,
+                            MusicVideoModel,
                             transform));
                     }
                     catch (Exception exception)
@@ -206,7 +329,22 @@ namespace Haruki.MV
                     }
                 }
 
+                if (_players.Any(player => player.IsCutIn))
+                {
+                    _cutInController = gameObject.AddComponent<MvCutInController>();
+                    _cutInController.Initialize(this, _bundles, mainData.id);
+                }
+
+                EnsureRenderCanvas();
+                BindOutputCameras();
+
                 AudioSource audioSource = null;
+                if (string.IsNullOrWhiteSpace(request.audioBundleName) !=
+                    string.IsNullOrWhiteSpace(request.audioAssetName))
+                {
+                    throw new InvalidOperationException(
+                        "MV audioBundleName and audioAssetName must be supplied together.");
+                }
                 if (!string.IsNullOrWhiteSpace(request.audioBundleName) &&
                     !string.IsNullOrWhiteSpace(request.audioAssetName))
                 {
@@ -229,7 +367,10 @@ namespace Haruki.MV
                 _coordinator.BindScene(
                     _players.Select(player => player.Root).ToArray(),
                     audioSource,
-                    duration);
+                    duration,
+                    _cutInController == null
+                        ? Array.Empty<IMvPlaybackParticipant>()
+                        : new IMvPlaybackParticipant[] { _cutInController });
             }
             catch
             {
@@ -238,7 +379,7 @@ namespace Haruki.MV
             }
         }
 
-        public void SetCutInActive(int cutInOrder, bool active)
+        public void SetCutInSceneActive(int cutInOrder, bool active)
         {
             var player = _players.FirstOrDefault(
                 candidate => candidate.IsCutIn && candidate.CutInOrder == cutInOrder);
@@ -257,17 +398,73 @@ namespace Haruki.MV
             }
         }
 
+        public void ApplyOutputProfile(MvRenderProfile profile)
+        {
+            if (_renderCanvas == null)
+            {
+                _renderCanvas = new MvRenderCanvas(transform);
+            }
+            _renderCanvas.Configure(profile.RenderSize);
+            BindOutputCameras();
+        }
+
+        public bool HasCutIn(int cutInOrder)
+        {
+            return _players.Any(
+                candidate => candidate.IsCutIn && candidate.CutInOrder == cutInOrder);
+        }
+
         public void DisposePlayers()
         {
             if (_coordinator != null)
             {
                 _coordinator.DisposeScene();
             }
+            if (_cutInController != null)
+            {
+                _cutInController.Dispose();
+                if (Application.isPlaying) Destroy(_cutInController);
+                else DestroyImmediate(_cutInController);
+            }
+            _cutInController = null;
             for (var index = _players.Count - 1; index >= 0; index--)
             {
+                _renderCanvas?.Unbind(_players[index].Camera.MainCamera);
                 _players[index].Dispose();
             }
             _players.Clear();
+            MusicVideoModel = null;
+        }
+
+        private void OnDestroy()
+        {
+            DisposePlayers();
+            _renderCanvas?.Dispose();
+            _renderCanvas = null;
+        }
+
+        private void EnsureRenderCanvas()
+        {
+            if (_renderCanvas != null)
+            {
+                return;
+            }
+            _renderCanvas = new MvRenderCanvas(transform);
+            _renderCanvas.Configure(new Vector2Int(
+                Mathf.Max(Screen.width, 1),
+                Mathf.Max(Screen.height, 1)));
+        }
+
+        private void BindOutputCameras()
+        {
+            if (_renderCanvas?.Target == null)
+            {
+                return;
+            }
+            foreach (var player in _players)
+            {
+                _renderCanvas.Bind(player.Camera.MainCamera);
+            }
         }
 
         private MusicVideoData LoadMvData(int musicId, bool isCutIn)

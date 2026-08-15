@@ -207,6 +207,39 @@ namespace Haruki.MV
             return "live_pv/model/stage_override_texture/" + CatalogId(mvId);
         }
 
+        public static string HeightFogBundleName(int mvId, bool isCutIn = false)
+        {
+            ValidateMvId(mvId);
+            return "live_pv/model/height_fog/" +
+                mvId.ToString(isCutIn ? "D6" : "D4");
+        }
+
+        public static string CameraDecorationBundleName(int mvId)
+        {
+            ValidateMvId(mvId);
+            return "live_pv/model/camera_decoration/" + CatalogId(mvId);
+        }
+
+        public static string MusicItemBundleName(int itemId)
+        {
+            ValidateMvId(itemId);
+            return $"live_pv/model/music_item/{itemId:D4}";
+        }
+
+        public static string MeshFlareTextureBundleName(int mvId, bool isCutIn = false)
+        {
+            ValidateMvId(mvId);
+            return "live_pv/model/mesh_flare_para/textures/" +
+                mvId.ToString(isCutIn ? "D6" : "D4");
+        }
+
+        public const string MeshFlareControllerBundleName =
+            "live_pv/model/mesh_flare_para/common";
+        public const string WaterCausticsBundleName =
+            "live_pv/model/water_caustics";
+        public const string WaterEyePresetBundleName =
+            "live_pv/model/character_settings/water_eye_preset";
+
         public static string CharacterFaceBundleName(
             string modelId,
             MvCharacterModelVersion version = MvCharacterModelVersion.V2)
@@ -277,6 +310,26 @@ namespace Haruki.MV
             return ResolveCharacterBundleName(
                 CharacterHeadOptionalBundleName(modelId, MvCharacterModelVersion.V2),
                 CharacterHeadOptionalBundleName(modelId, MvCharacterModelVersion.V1),
+                bundleExists);
+        }
+
+        public static string ResolveCharacterBodyColorBundleName(
+            string modelId,
+            Func<string, bool> bundleExists)
+        {
+            return ResolveCharacterBundleName(
+                CharacterBodyColorBundleName(modelId, MvCharacterModelVersion.V2),
+                CharacterBodyColorBundleName(modelId, MvCharacterModelVersion.V1),
+                bundleExists);
+        }
+
+        public static string ResolveCharacterHeadOptionalColorBundleName(
+            string modelId,
+            Func<string, bool> bundleExists)
+        {
+            return ResolveCharacterBundleName(
+                CharacterHeadOptionalColorBundleName(modelId, MvCharacterModelVersion.V2),
+                CharacterHeadOptionalColorBundleName(modelId, MvCharacterModelVersion.V1),
                 bundleExists);
         }
 

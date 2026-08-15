@@ -47,6 +47,10 @@ export function resolveUnityWebGLBuild(
       dataUrl: `${baseUrl}${buildName}.data${suffix}`,
       frameworkUrl: `${baseUrl}${buildName}.framework.js${suffix}`,
       codeUrl: `${baseUrl}${buildName}.wasm${suffix}`,
+      // MV output pixels are controlled by Screen.SetResolution. Keeping the
+      // WebGL loader tied to CSS size would silently overwrite 1080p/4K.
+      devicePixelRatio: 1,
+      matchWebGLToCanvasSize: false,
       ...(options.streamingAssetsUrl
         ? { streamingAssetsUrl: trimTrailingSlash(options.streamingAssetsUrl) }
         : {}),

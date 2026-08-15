@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using Sekai.Core;
+using Sekai.Rendering;
 using UnityEngine;
 
 namespace Haruki.MV
@@ -37,13 +38,20 @@ namespace Haruki.MV
 
         public MvResolvedStageInfo StageInfo { get; private set; }
         public GameObject BaseStage { get; private set; }
+        public GameObject HeightFog { get; private set; }
+        public GameObject WaterCaustics { get; private set; }
+        public SekaiGlobalFlipBookProjector WaterCausticsProjector { get; private set; }
+        public MvStageFeatureState FeatureState { get; private set; }
         public IReadOnlyList<GameObject> Decorations => _decorations;
         public IReadOnlyDictionary<string, Texture2D> OriginalTextures => _originalTextures;
 
         public void Load(
             MusicVideoData mvData,
             MusicVideoData parentMvData,
-            bool isCutIn)
+            bool isCutIn,
+            IReadOnlyList<MvCharacterLoadSpec> characters = null,
+            Camera mainCamera = null,
+            Transform directionalLight = null)
         {
             if (mvData == null)
             {
@@ -51,6 +59,9 @@ namespace Haruki.MV
             }
 
             StageInfo = MvOfficialRuntimeData.ResolveStage(mvData, parentMvData);
+            FeatureState = _root.gameObject.AddComponent<MvStageFeatureState>();
+            FeatureState.Configure(StageInfo);
+            var adjustData = CreateCharacterAdjustData(mvData, characters);
             var overrideTextures = StageInfo.OverrideTexture
                 ? LoadOverrideTextures(
                     mvData.id,
@@ -61,7 +72,7 @@ namespace Haruki.MV
 
             if (!StageInfo.SkipBaseStageLoad)
             {
-                BaseStage = _bundles.InstantiatePrefab(
+                BaseStage = _bundles.CreatePrefabInstance(
                     new MvPrefabLoadRequest
                     {
                         bundleName = MvOfficialRuntimeData.StageBundleName(StageInfo.Id),
@@ -78,6 +89,7 @@ namespace Haruki.MV
                     _clonedMaterials,
                     _originalTextures);
                 MvOfficialObjectBinding.BindControlGroups(BaseStage, _bindings);
+                CharacterAdjuster.AdjustGameObjects(BaseStage, adjustData, true);
             }
 
             var decorationIndex = 0;
@@ -93,6 +105,50 @@ namespace Haruki.MV
                 overrideTextures,
                 isCutIn,
                 StageInfo.OverrideTexture);
+
+            if (StageInfo.EnableHeightFog)
+            {
+                var bundleName = MvOfficialRuntimeData.HeightFogBundleName(mvData.id, isCutIn);
+                if (!_bundles.ContainsBundle(bundleName))
+                {
+                    throw new InvalidOperationException(
+                        $"MV {mvData.id} enables HeightFog but bundle '{bundleName}' is unavailable.");
+                }
+                HeightFog = _bundles.InstantiateSinglePrefab(bundleName, _root);
+                _instances.Add(HeightFog);
+                var controller = HeightFog.GetComponent<HeightFogController>() ??
+                    HeightFog.GetComponentInChildren<HeightFogController>(true) ??
+                    throw new InvalidOperationException(
+                        $"HeightFog bundle '{bundleName}' has no HeightFogController.");
+                controller.Setup(mainCamera, directionalLight);
+                _bindings[HeightFog.name] = controller;
+            }
+
+            if (StageInfo.EnableWaterCaustics)
+            {
+                var bundleName = MvOfficialRuntimeData.WaterCausticsBundleName;
+                if (!_bundles.ContainsBundle(bundleName))
+                {
+                    throw new InvalidOperationException(
+                        $"MV {mvData.id} enables WaterCaustics but '{bundleName}' is unavailable.");
+                }
+                WaterCaustics = _bundles.CreatePrefabInstance(
+                    new MvPrefabLoadRequest
+                    {
+                        bundleName = bundleName,
+                        assetName = "water_caustics",
+                    },
+                    _root,
+                    "WaterCausticsProjector");
+                _instances.Add(WaterCaustics);
+                WaterCausticsProjector =
+                    WaterCaustics.GetComponent<SekaiGlobalFlipBookProjector>() ??
+                    WaterCaustics.GetComponentInChildren<SekaiGlobalFlipBookProjector>(true) ??
+                    throw new InvalidOperationException(
+                        "Official WaterCaustics prefab has no SekaiGlobalFlipBookProjector.");
+                WaterCausticsProjector.Setup();
+                _bindings["WaterCausticsProjector"] = WaterCausticsProjector;
+            }
 
             if (StageInfo.EnablePlanarReflection)
             {
@@ -153,6 +209,11 @@ namespace Haruki.MV
             _clonedMaterials.Clear();
             _originalTextures.Clear();
             BaseStage = null;
+            HeightFog = null;
+            WaterCaustics = null;
+            WaterCausticsProjector = null;
+            FeatureState?.Release();
+            FeatureState = null;
             StageInfo = null;
         }
 
@@ -237,7 +298,7 @@ namespace Haruki.MV
                     continue;
                 }
                 var objectName = $"StageDecoration{startIndex++}";
-                var decoration = _bundles.InstantiatePrefab(
+                var decoration = _bundles.CreatePrefabInstance(
                     new MvPrefabLoadRequest
                     {
                         bundleName = MvOfficialRuntimeData.StageDecorationBundleName(info.id),
@@ -259,8 +320,47 @@ namespace Haruki.MV
                 }
                 MvOfficialObjectBinding.BindStageDecorationTargets(decoration, _bindings);
                 MvOfficialObjectBinding.BindControlGroups(decoration, _bindings);
+                CharacterAdjuster.AdjustGameObjects(
+                    decoration,
+                    CreateCharacterAdjustDataForLoadedStage(),
+                    true);
             }
             return startIndex;
+        }
+
+        private CharacterAdjuster.CharacterAdjustData[] _characterAdjustData =
+            Array.Empty<CharacterAdjuster.CharacterAdjustData>();
+
+        private CharacterAdjuster.CharacterAdjustData[] CreateCharacterAdjustData(
+            MusicVideoData mvData,
+            IReadOnlyList<MvCharacterLoadSpec> characters)
+        {
+            var infos = mvData.characterInfos ?? Array.Empty<MusicVideoCharacterInfo>();
+            if (characters == null || characters.Count < infos.Length)
+            {
+                throw new InvalidOperationException(
+                    $"MV {mvData.id} stage adjustment requires all {infos.Length} character specs.");
+            }
+            _characterAdjustData = new CharacterAdjuster.CharacterAdjustData[infos.Length];
+            for (var index = 0; index < infos.Length; index++)
+            {
+                var character = characters[index] ?? throw new InvalidOperationException(
+                    $"MV {mvData.id} character spec {index} is null.");
+                if (character.characterHeight <= 0f)
+                {
+                    throw new InvalidOperationException(
+                        $"MV {mvData.id} character spec {index} has no master height.");
+                }
+                _characterAdjustData[index] = new CharacterAdjuster.CharacterAdjustData(
+                    character.characterId,
+                    character.characterHeight);
+            }
+            return _characterAdjustData;
+        }
+
+        private CharacterAdjuster.CharacterAdjustData[] CreateCharacterAdjustDataForLoadedStage()
+        {
+            return _characterAdjustData;
         }
 
         private Dictionary<string, Texture2D> LoadOverrideTextures(

@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { convertUnityQuaternionToThree } from "./unityCoordinateConversion";
 
 type JsonRecord = Record<string, unknown>;
 
@@ -56,8 +57,10 @@ const ROTATION_ORDERS: THREE.EulerOrder[] = [
 
 export class SekaiExtraBoneRuntime {
   private readonly entries: RuntimeExtraBone[];
-  private readonly sourceEuler = new THREE.Euler();
-  private readonly targetEuler = new THREE.Euler();
+  private readonly sourceUnityQuaternion = new THREE.Quaternion();
+  private readonly sourceUnityEuler = new THREE.Euler();
+  private readonly targetUnityEuler = new THREE.Euler();
+  private readonly targetUnityQuaternion = new THREE.Quaternion();
   private readonly targetQuaternion = new THREE.Quaternion();
 
   private constructor(entries: RuntimeExtraBone[]) {
@@ -94,14 +97,13 @@ export class SekaiExtraBoneRuntime {
         continue;
       }
 
-      const order = ROTATION_ORDERS[readNumber(entry.RotationOrder ?? entry.rotationOrder, 0)]
-        ?? "XYZ";
-      const defaultEuler = readDefaultEuler(entry, order);
+      const order = ROTATION_ORDERS[readNumber(entry.RotationOrder ?? entry.rotationOrder, 4)]
+        ?? "ZXY";
       runtimeEntries.push({
         node,
         referenceNode,
         coefficient: readNumber(entry.Coefficient ?? entry.coefficient, 1),
-        defaultQuaternion: new THREE.Quaternion().setFromEuler(defaultEuler),
+        defaultQuaternion: readDefaultQuaternion(entry),
         axisX: readBoolean(entry.AxisX ?? entry.axisX, true),
         axisY: readBoolean(entry.AxisY ?? entry.axisY, true),
         axisZ: readBoolean(entry.AxisZ ?? entry.axisZ, true),
@@ -115,19 +117,31 @@ export class SekaiExtraBoneRuntime {
 
   update(): void {
     for (const entry of this.entries) {
-      this.sourceEuler.setFromQuaternion(entry.referenceNode.quaternion, entry.order);
-      const sign = Math.sign(entry.coefficient);
-      this.targetEuler.set(0, 0, 0, entry.order);
+      // Unity Quaternion.eulerAngles is always the fixed ZXY representation and
+      // returns positive angles. Do this before applying the component's custom
+      // output rotation order; extracting in that order changes the signal.
+      this.sourceUnityQuaternion.set(
+        entry.referenceNode.quaternion.x,
+        -entry.referenceNode.quaternion.y,
+        -entry.referenceNode.quaternion.z,
+        entry.referenceNode.quaternion.w
+      ).normalize();
+      this.sourceUnityEuler.setFromQuaternion(this.sourceUnityQuaternion, "ZXY");
+      makePositiveEuler(this.sourceUnityEuler);
+
+      const sign = entry.coefficient > 0 ? -1 : entry.coefficient < 0 ? 1 : 0;
+      this.targetUnityEuler.set(0, 0, 0, entry.order);
       if (entry.axisX) {
-        this.targetEuler.x = this.sourceEuler.x * sign;
+        this.targetUnityEuler.x = this.sourceUnityEuler.x * sign;
       }
       if (entry.axisY) {
-        this.targetEuler.y = this.sourceEuler.y * sign;
+        this.targetUnityEuler.y = this.sourceUnityEuler.y * sign;
       }
       if (entry.axisZ) {
-        this.targetEuler.z = this.sourceEuler.z * sign;
+        this.targetUnityEuler.z = this.sourceUnityEuler.z * sign;
       }
-      this.targetQuaternion.setFromEuler(this.targetEuler);
+      this.targetUnityQuaternion.setFromEuler(this.targetUnityEuler);
+      this.targetQuaternion.copy(convertUnityQuaternionToThree(this.targetUnityQuaternion));
       lerpQuaternion(
         entry.node.quaternion,
         entry.defaultQuaternion,
@@ -175,12 +189,27 @@ function readExtraBoneEntries(extension: unknown): SpringExtraBoneEntry[] {
   return entries;
 }
 
-function readDefaultEuler(entry: SpringExtraBoneEntry, order: THREE.EulerOrder): THREE.Euler {
+function readDefaultQuaternion(entry: SpringExtraBoneEntry): THREE.Quaternion {
   const raw = asRecord(entry.DefaultEulerAngles ?? entry.defaultEulerAngles) ?? {};
   const x = readNumber(raw.X ?? raw.x, 0);
   const y = readNumber(raw.Y ?? raw.y, 0);
   const z = readNumber(raw.Z ?? raw.z, 0);
-  return new THREE.Euler(x * DEG2RAD, -y * DEG2RAD, -z * DEG2RAD, order);
+  const unityQuaternion = new THREE.Quaternion().setFromEuler(
+    new THREE.Euler(x * DEG2RAD, y * DEG2RAD, z * DEG2RAD, "ZXY")
+  );
+  return convertUnityQuaternionToThree(unityQuaternion);
+}
+
+function makePositiveEuler(euler: THREE.Euler): THREE.Euler {
+  euler.x = positiveRadians(euler.x);
+  euler.y = positiveRadians(euler.y);
+  euler.z = positiveRadians(euler.z);
+  return euler;
+}
+
+function positiveRadians(value: number): number {
+  const period = Math.PI * 2;
+  return ((value % period) + period) % period;
 }
 
 function buildNodeResolution(root: THREE.Object3D): NodeResolution {

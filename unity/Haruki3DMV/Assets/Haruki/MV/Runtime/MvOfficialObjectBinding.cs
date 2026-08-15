@@ -90,6 +90,18 @@ namespace Haruki.MV
             }
         }
 
+        public static void BindCameraDecorationTargets(
+            GameObject decoration,
+            IDictionary<string, UnityEngine.Object> bindings)
+        {
+            EnsureArguments(decoration, bindings);
+            bindings["CameraDecoration"] = decoration;
+            foreach (var text in FindComponents(decoration, "TextMeshPro", true))
+            {
+                bindings[text.gameObject.name] = text;
+            }
+        }
+
         public static Component FindFirstComponent(
             GameObject root,
             string typeName,

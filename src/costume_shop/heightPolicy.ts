@@ -8,8 +8,7 @@ export function resolveCostumeShopHeightRate(masterHeightMeters: number) {
 }
 
 export function resolveCostumeShopModelScale(masterHeightMeters: number) {
-  const height = normalizeCharacterHeight(masterHeightMeters);
-  return height * resolveCostumeShopHeightRate(height);
+  return resolveCostumeShopHeightRate(masterHeightMeters);
 }
 
 function normalizeCharacterHeight(masterHeightMeters: number) {

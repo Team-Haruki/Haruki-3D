@@ -7,34 +7,71 @@ namespace Haruki.MV.Tests
     public sealed class MvCharacterNodeTests
     {
         [Test]
-        public void AttachSkinnedPartMergesMissingBonesAndRemapsRenderer()
+        public void AttachSkinnedPartUsesOfficialNeckHeadGraft()
         {
-            var body = CreateSkeleton("body", out _, out var bodyHead);
-            var part = CreateSkeleton("face", out _, out var partHead);
-            var hair = new GameObject("Hair");
-            hair.transform.SetParent(partHead, false);
-            var renderer = hair.AddComponent<SkinnedMeshRenderer>();
-            renderer.sharedMesh = new Mesh();
-            renderer.rootBone = partHead;
-            renderer.bones = new[] { partHead, hair.transform };
+            var body = CreateBody(
+                out var bodyRenderer,
+                out var bodyNeck,
+                out var bodyHead);
+            var bodyNeckParent = bodyNeck.parent;
+            var bodyHeadChild = new GameObject("BodyHeadChild").transform;
+            bodyHeadChild.SetParent(bodyHead, false);
+
+            var face = CreateFace(
+                out var faceRenderer,
+                out var faceNeck,
+                out var faceHead);
+            var target = new GameObject("Look_target").transform;
+            target.SetParent(faceNeck, false);
 
             try
             {
-                MvCharacterNode.AttachSkinnedPart(body, part);
+                MvCharacterNode.AttachSkinnedPart(body, face);
 
-                var mergedHair = bodyHead.Find("Hair");
-                Assert.That(mergedHair, Is.SameAs(hair.transform));
-                Assert.That(renderer.rootBone, Is.SameAs(bodyHead));
-                Assert.That(renderer.bones, Is.EqualTo(new[] { bodyHead, hair.transform }));
+                Assert.That(bodyHeadChild.parent, Is.SameAs(faceHead));
+                Assert.That(target.parent, Is.SameAs(bodyNeckParent));
+                Assert.That(bodyRenderer.bones, Is.EqualTo(new[] { faceNeck, faceHead }));
+                Assert.That(faceRenderer.rootBone, Is.SameAs(bodyRenderer.rootBone));
+                Assert.That(faceRenderer.transform.parent, Is.SameAs(bodyRenderer.transform.parent));
+                Assert.That(bodyNeck == null, Is.True);
+                Assert.That(bodyHead == null, Is.True);
+            }
+            finally
+            {
+                Object.DestroyImmediate(bodyRenderer.sharedMesh);
+                Object.DestroyImmediate(faceRenderer.sharedMesh);
+                Object.DestroyImmediate(body);
+                if (face != null)
+                {
+                    Object.DestroyImmediate(face);
+                }
+            }
+        }
+
+        [Test]
+        public void HeadOptionalMountUsesOfficialPartAndFallbackTransform()
+        {
+            var body = CreateBody(out var renderer, out _, out var head);
+            var mount = new GameObject("a03").transform;
+            mount.SetParent(head, false);
+            var optional = new GameObject("optional");
+            optional.transform.localPosition = Vector3.one;
+            optional.transform.localEulerAngles = new Vector3(10f, 20f, 30f);
+            optional.transform.localScale = Vector3.one * 2f;
+            try
+            {
+                MvCharacterNode.AttachHeadOptional(body, optional, "a03");
+
+                Assert.That(optional.transform.parent, Is.SameAs(mount));
+                Assert.That(optional.transform.localPosition, Is.EqualTo(Vector3.zero));
+                Assert.That(optional.transform.localEulerAngles, Is.EqualTo(Vector3.zero));
+                Assert.That(optional.transform.localScale, Is.EqualTo(Vector3.one * 2f));
             }
             finally
             {
                 Object.DestroyImmediate(renderer.sharedMesh);
                 Object.DestroyImmediate(body);
-                if (part != null)
-                {
-                    Object.DestroyImmediate(part);
-                }
+                if (optional != null) Object.DestroyImmediate(optional);
             }
         }
 
@@ -71,18 +108,171 @@ namespace Haruki.MV.Tests
             }
         }
 
-        private static GameObject CreateSkeleton(
-            string name,
-            out Transform position,
+        [Test]
+        public void CharacterLayerIsAppliedToTheCompleteGraftedHierarchy()
+        {
+            var character = new GameObject("Character");
+            var child = new GameObject("Face");
+            child.transform.SetParent(character.transform, false);
+            try
+            {
+                MvCharacterNode.SetLayerRecursively(
+                    character,
+                    MvRecoveredCameraResources.MainCharacterLayer);
+
+                Assert.That(character.layer, Is.EqualTo(21));
+                Assert.That(child.layer, Is.EqualTo(21));
+            }
+            finally
+            {
+                Object.DestroyImmediate(character);
+            }
+        }
+
+        [Test]
+        public void GenderMotionUsesFormationIndexAndMasterFigure()
+        {
+            var info = new Sekai.Core.MusicVideoCharacterInfo
+            {
+                motionInfo = new Sekai.Core.MusicVideoMotionInfo
+                {
+                    motionType = Sekai.Core.MotionType.Gender,
+                },
+            };
+
+            Assert.That(
+                MvCharacterNode.ResolveCharacterKey(
+                    info,
+                    new MvCharacterLoadSpec { isFigureMan = true },
+                    3,
+                    5),
+                Is.EqualTo("Character3_Male"));
+            Assert.That(
+                MvCharacterNode.ResolveCharacterKey(
+                    info,
+                    new MvCharacterLoadSpec { isFigureMan = false },
+                    3,
+                    5),
+                Is.EqualTo("Character3_Female"));
+        }
+
+        [Test]
+        public void AuxiliaryBindingsUseRecoveredInsertSuffixDomains()
+        {
+            var character = new GameObject("Character");
+            var eye = character.AddComponent<MvWaterEyeState>();
+            var bindings = new Dictionary<string, Object>
+            {
+                ["Character0_MeshOff_insert"] = null,
+                ["Character0_ReflectionOff_insert"] = null,
+                ["Character0_HeelOffsetOff_insert"] = null,
+                ["Character0_DrawCameraSelect_insert"] = null,
+                ["Water Eye Track 0_insert"] = null,
+                ["Eye Flipbook Track 0_insert"] = null,
+                ["Spring Bone Slow Track 0#insert"] = null,
+                ["Spring Bone Control Track 0#insert"] = null,
+            };
+            try
+            {
+                MvCharacterNode.BindCharacterAuxiliaryTracks(
+                    bindings, character, eye, 0, true);
+
+                Assert.That(bindings["Water Eye Track 0_insert"], Is.SameAs(eye));
+                Assert.That(bindings["Spring Bone Slow Track 0#insert"], Is.SameAs(character));
+                Assert.That(bindings["Character0_MeshOff_insert"], Is.SameAs(character));
+            }
+            finally
+            {
+                Object.DestroyImmediate(character);
+            }
+        }
+
+        [TestCase("tex_bdy_05_C", "_MainTex")]
+        [TestCase("tex_bdy_05_S", "_ShadowTex")]
+        [TestCase("tex_bdy_05_H", "_ValueTex")]
+        [TestCase("tex_bdy_05_N", null)]
+        public void ColorVariationUsesTheOfficialCshTextureRoles(
+            string textureName,
+            string expectedProperty)
+        {
+            Assert.That(
+                MvCharacterNode.ColorVariationProperty(textureName),
+                Is.EqualTo(expectedProperty));
+        }
+
+        [Test]
+        public void MusicItemBindingsUseFormationPartAndInsertDomains()
+        {
+            var root = new GameObject("MusicItem");
+            var model = root.AddComponent<Sekai.Core.MusicItemModel>();
+            var bindings = new Dictionary<string, Object>
+            {
+                ["MusicItem2_0"] = null,
+                ["MusicItem2_1_Opacity_insert"] = null,
+                ["MusicItem2_1_UvScroll_insert"] = null,
+            };
+            try
+            {
+                MvCharacterNode.BindMusicItemTracks(
+                    bindings, root, model, 2, 1, true);
+
+                Assert.That(bindings["MusicItem2_0"], Is.Null);
+                Assert.That(bindings["MusicItem2_1_Opacity_insert"], Is.SameAs(model));
+                Assert.That(bindings["MusicItem2_1_UvScroll_insert"], Is.SameAs(model));
+
+                MvCharacterNode.BindMusicItemTracks(
+                    bindings, root, model, 2, 0, false);
+                Assert.That(bindings["MusicItem2_0"], Is.SameAs(root));
+            }
+            finally
+            {
+                Object.DestroyImmediate(root);
+            }
+        }
+
+        private static GameObject CreateBody(
+            out SkinnedMeshRenderer renderer,
+            out Transform neck,
             out Transform head)
         {
-            var root = new GameObject(name);
-            position = new GameObject("Position").transform;
+            var root = new GameObject("body");
+            var position = new GameObject("Position").transform;
             position.SetParent(root.transform, false);
             var hip = new GameObject("Hip").transform;
             hip.SetParent(position, false);
+            neck = new GameObject("Neck").transform;
+            neck.SetParent(hip, false);
             head = new GameObject("Head").transform;
-            head.SetParent(hip, false);
+            head.SetParent(neck, false);
+            var mesh = new GameObject("Body");
+            mesh.transform.SetParent(root.transform, false);
+            renderer = mesh.AddComponent<SkinnedMeshRenderer>();
+            renderer.sharedMesh = new Mesh();
+            renderer.rootBone = position;
+            renderer.bones = new[] { neck, head };
+            return root;
+        }
+
+        private static GameObject CreateFace(
+            out SkinnedMeshRenderer renderer,
+            out Transform neck,
+            out Transform head)
+        {
+            var root = new GameObject("face");
+            var position = new GameObject("Position").transform;
+            position.SetParent(root.transform, false);
+            var hip = new GameObject("Hip").transform;
+            hip.SetParent(position, false);
+            neck = new GameObject("Neck").transform;
+            neck.SetParent(hip, false);
+            head = new GameObject("Head").transform;
+            head.SetParent(neck, false);
+            var mesh = new GameObject("Face");
+            mesh.transform.SetParent(root.transform, false);
+            renderer = mesh.AddComponent<SkinnedMeshRenderer>();
+            renderer.sharedMesh = new Mesh();
+            renderer.rootBone = neck;
+            renderer.bones = new[] { neck, head };
             return root;
         }
     }

@@ -164,12 +164,17 @@ export {
 } from "./costume_shop/heightPolicy";
 export {
   UnityPrefabSpringRuntime,
+  computeUtjAverageChildTailPosition,
   type SpringTimelineControl,
 } from "./engine/unityPrefabSpringRuntimeAdapter";
+export { SekaiExtraBoneRuntime } from "./engine/sekaiExtraBoneRuntime";
 export {
   UtjColliderStatus,
+  applyUtjLengthLimits,
   checkLocalCapsuleCollisionAndReact,
   checkLocalSphereCollisionAndReact,
+  computeUtjLocalRotation,
+  constrainUtjAngleLimit,
 } from "./engine/utjSpringBoneRuntime";
 export {
   applyRawMaterialShaderUniforms,

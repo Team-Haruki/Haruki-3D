@@ -30,7 +30,7 @@ namespace Haruki.MV
                 return;
             }
 
-            Penlight = _bundles.InstantiatePrefab(
+            Penlight = _bundles.CreatePrefabInstance(
                 new MvPrefabLoadRequest
                 {
                     bundleName = MvOfficialRuntimeData.PenlightBundleName(info.id),

@@ -1,4 +1,5 @@
 using NUnit.Framework;
+using System.Reflection;
 using UnityEngine;
 
 namespace Haruki.MV.Tests
@@ -41,7 +42,7 @@ namespace Haruki.MV.Tests
         {
             _coordinator.BindScene(_scene, null, 20);
 
-            _coordinator.Seek(25);
+            _coordinator.SeekTo(25);
 
             Assert.That(_coordinator.CurrentTimeSeconds, Is.EqualTo(20));
         }
@@ -64,11 +65,29 @@ namespace Haruki.MV.Tests
             }
         }
 
+        [TestCase(1050L, 1040L, 1050L)]
+        [TestCase(1100L, 1000L, 1062L)]
+        [TestCase(1000L, 1100L, 1100L)]
+        public void AudioClockUsesTheRecoveredSixtyThreeMillisecondBoundary(
+            long predicted,
+            long audioMilliseconds,
+            long expected)
+        {
+            var method = typeof(MvPlaybackCoordinator).GetMethod(
+                "ResolveAudioSyncedTimeMilliseconds",
+                BindingFlags.Static | BindingFlags.NonPublic);
+
+            Assert.That(method, Is.Not.Null);
+            Assert.That(
+                method.Invoke(null, new object[] { predicted, audioMilliseconds }),
+                Is.EqualTo(expected));
+        }
+
         [Test]
         public void PlaybackCommandsRequireABoundScene()
         {
-            Assert.Throws<System.InvalidOperationException>(() => _coordinator.SetPaused(false));
-            Assert.Throws<System.InvalidOperationException>(() => _coordinator.Seek(1));
+            Assert.Throws<System.InvalidOperationException>(() => _coordinator.SetPlaybackPaused(false));
+            Assert.Throws<System.InvalidOperationException>(() => _coordinator.SeekTo(1));
         }
 
         [Test]
@@ -77,8 +96,8 @@ namespace Haruki.MV.Tests
             var participant = _scene.AddComponent<RecordingPlaybackParticipant>();
             _coordinator.BindScene(_scene, null, 20);
 
-            _coordinator.SetPaused(false);
-            _coordinator.Seek(8);
+            _coordinator.SetPlaybackPaused(false);
+            _coordinator.SeekTo(8);
             _coordinator.DisposeScene();
 
             Assert.That(participant.LastPause, Is.False);
@@ -96,8 +115,8 @@ namespace Haruki.MV.Tests
                 var second = secondRoot.AddComponent<RecordingPlaybackParticipant>();
 
                 _coordinator.BindScene(new[] { _scene, secondRoot }, null, 20);
-                _coordinator.SetPaused(false);
-                _coordinator.Seek(7);
+                _coordinator.SetPlaybackPaused(false);
+                _coordinator.SeekTo(7);
 
                 Assert.That(first.LastSeek, Is.EqualTo(7));
                 Assert.That(second.LastSeek, Is.EqualTo(7));
@@ -202,7 +221,7 @@ namespace Haruki.MV.Tests
         {
             var loader = _host.AddComponent<MvBundleSetLoader>();
 
-            Assert.Throws<System.InvalidOperationException>(() => loader.InstantiatePrefab(
+            Assert.Throws<System.InvalidOperationException>(() => loader.CreatePrefabInstance(
                 new MvPrefabLoadRequest { bundleName = "missing", assetName = "stage" }
             ));
         }

@@ -79,6 +79,7 @@ namespace Haruki.MV
                         $"MV timeline '{timelineName}' could not be loaded.");
                 }
 
+                MvReferenceBlendRuntime.Setup(timeline);
                 var director = _directors[index];
                 director.playableAsset = timeline;
                 TimelineDuration = Math.Max(TimelineDuration, timeline.duration);

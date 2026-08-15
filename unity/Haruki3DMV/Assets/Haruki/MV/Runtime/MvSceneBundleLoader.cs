@@ -179,7 +179,7 @@ namespace Haruki.MV
             onReady();
         }
 
-        public IEnumerator Dispose(Action onDisposed, Action<Exception> onError)
+        public IEnumerator DisposeLoadedScene(Action onDisposed, Action<Exception> onError)
         {
             if (IsBusy)
             {

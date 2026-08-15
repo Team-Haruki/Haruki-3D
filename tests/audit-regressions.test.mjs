@@ -100,9 +100,10 @@ function loadCaptureRequestValidator() {
     defaultPhase: 0.5,
     defaultWarmupMs: 250,
     defaultWarmupFrames: 60,
-    defaultWarmupMode: "animation",
+    defaultWarmupMode: "runtime",
     defaultCameraPreset: "capture",
     defaultCameraProfile: "full-body",
+    defaultSpringRuntimeMode: "unity-prefab",
     defaultFaceSdfEnabled: false,
     defaultProjectedShadow: {
       width: 0.72,
@@ -154,6 +155,15 @@ test("capture request preserves explicit zero values", () => {
   assert.equal(request.phase, 0);
   assert.equal(request.warmupMs, 0);
   assert.equal(request.warmupFrames, 0);
+});
+
+test("capture request defaults to official frozen-pose spring warmup but preserves an explicit animation mode", () => {
+  const validateCaptureRequest = loadCaptureRequestValidator();
+  assert.equal(validateCaptureRequest(validCaptureRequest()).warmupMode, "runtime");
+  assert.equal(
+    validateCaptureRequest(validCaptureRequest({ warmupMode: "animation" })).warmupMode,
+    "animation"
+  );
 });
 
 test("capture request preserves an exact independent head source", () => {

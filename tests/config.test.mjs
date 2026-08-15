@@ -367,9 +367,11 @@ test("persistent capture server propagates config defaults into role parts captu
   assert.match(serverSource, /new URLSearchParams\(\{/);
   assert.match(serverSource, /normalizeCharacterYawMode\(input\.characterYawMode, null\)/);
   assert.match(serverSource, /normalizeCameraProfile\(input\.cameraProfile, defaultCameraProfile\)/);
+  assert.match(serverSource, /input\.springRuntimeMode === "off" \|\| input\.springRuntimeMode === "unity-prefab"/);
   assert.doesNotMatch(serverSource, /characterYawMode: "face-camera"/);
   assert.doesNotMatch(serverSource, /capturePhase=0\.5&captureClip=motion_loop&springRuntimeMode=unity-prefab&cameraPreset=id5-debug/);
   assert.match(harnessSource, /phase: request\.phase \?\? config\.phase/);
+  assert.match(harnessSource, /springRuntimeMode: request\.springRuntimeMode \?\? config\.springRuntimeMode/);
   assert.match(harnessSource, /cameraPreset: request\.cameraPreset \?\? config\.cameraPreset/);
   assert.match(harnessSource, /cameraProfile: request\.cameraProfile \?\? config\.cameraProfile/);
   assert.match(harnessSource, /characterYawMode: request\.characterYawMode \?\? config\.characterYawMode \?\? undefined/);
@@ -384,6 +386,8 @@ test("persistent capture server propagates config defaults into role parts captu
   assert.match(captureTypesSource, /characterYawMode\?: "0" \| "45" \| "-45" \| "90" \| "-90" \| "180" \| "face-camera"/);
   assert.match(captureAdapterSource, /this\.engine\.applyCameraPreset\(request\.cameraPreset \?\? "capture", request\.cameraProfile\)/);
   assert.match(captureAdapterSource, /this\.engine\.faceCharacterTowardCamera\(\)/);
+  assert.match(captureAdapterSource, /this\.engine\.setViewYawDegrees\(Number\(request\.characterYawMode\)\)/);
+  assert.match(captureAdapterSource, /springRuntimeMode: request\.springRuntimeMode/);
 });
 
 test("docker runtime image includes capture server support modules", () => {
@@ -399,7 +403,8 @@ test("docker runtime image includes capture server support modules", () => {
   assert.match(dockerfile, /HARUKI_CAPTURE_WIDTH=1024/);
   assert.match(dockerfile, /HARUKI_CAPTURE_HEIGHT=1024/);
   assert.match(dockerfile, /HARUKI_CAPTURE_SCALE=1\.6666667/);
-  assert.match(dockerfile, /HARUKI_CAPTURE_WARMUP_FRAMES=180/);
+  assert.match(dockerfile, /HARUKI_CAPTURE_WARMUP_FRAMES=60/);
+  assert.match(dockerfile, /HARUKI_CAPTURE_WARMUP_MODE=runtime/);
   assert.match(dockerfile, /HARUKI_CAPTURE_SPRING_RUNTIME_MODE=unity-prefab/);
   assert.match(dockerfile, /HARUKI_CAPTURE_CAMERA_PRESET=capture/);
 });
@@ -428,7 +433,7 @@ test("role parts capture supports warmup frames for spring runtime settling", ()
 
   assert.match(serverSource, /warmupFrames:\s*readIntInRange\(\s*input\.warmupFrames/);
   assert.match(serverSource, /warmupMs:\s*readIntInRange\(input\.warmupMs/);
-  assert.match(serverSource, /warmupMode:\s*input\.warmupMode === "runtime" \? "runtime" : defaultWarmupMode === "runtime" \? "runtime" : "animation"/);
+  assert.match(serverSource, /input\.warmupMode === "animation" \|\| input\.warmupMode === "runtime"/);
   assert.match(harnessSource, /const requestedWarmupFrames = request\.warmupFrames \?\? config\.warmupFrames/);
   assert.match(harnessSource, /warmupMs:\s*request\.warmupMs \?\? config\.warmupMs/);
   assert.match(harnessSource, /warmupFrames,\s*warmupMode:\s*request\.warmupMode \?\? config\.warmupMode/);
@@ -1052,8 +1057,17 @@ test("custom selection mutations use the official full-character update path", (
     engineSource.indexOf("await this.applyCustomRoleDefaultMotion(combined, !preserveAnimation)")
   );
   assert.doesNotMatch(sameSelectionBranch, /resetCurrentSpringRuntimeState/);
-  assert.match(engineSource, /if \(isEnabled && !wasEnabled\) \{\s*this\.resetAndSettleCurrentSpringRuntime\(60\);/);
-  assert.doesNotMatch(engineSource, /settleCurrentPose\(\)/);
+  assert.match(engineSource, /this\.currentSpringRuntime\?\.resetPose\(\);\s+this\.springRuntimeMode = mode;/);
+  const springModeBody = engineSource.slice(
+    engineSource.indexOf("setSpringRuntimeMode(mode:"),
+    engineSource.indexOf("private resetCurrentSpringRuntimeState")
+  );
+  assert.doesNotMatch(springModeBody, /createSpringRuntime/);
+  assert.doesNotMatch(engineSource, /if \(this\.springRuntimeMode === "unity-prefab"\)/);
+  assert.doesNotMatch(engineSource, /resetAndSettleCurrentSpringRuntime/);
+  assert.doesNotMatch(engineSource, /settleCurrentPose\(/);
+  assert.match(engineSource, /seekAnimationLoopPhase\(phase: number\) \{\s+this\.prepareSpringRuntimeForAnimationSeek\(\);\s+this\.applyAnimationSeekResult/);
+  assert.match(engineSource, /private prepareSpringRuntimeForAnimationSeek\(\) \{[\s\S]*this\.currentSpringRuntime\?\.resetPose\(\);/);
   assert.match(engineSource, /private async loadRenderRecipeInternal/);
   assert.match(engineSource, /wardrobe\.getActiveRoleId\(\) !== nextRoleId[\s\S]*wardrobe\.selectRole/);
   assert.doesNotMatch(engineSource, /partSet\?\.packages\.clear\(\)/);
@@ -1300,7 +1314,9 @@ test("Sekai ExtraBone runtime follows official rotation order and coefficient di
   );
 
   assert.match(extraBoneSource, /"XYZ",\s+"XZY",\s+"YXZ",\s+"YZX",\s+"ZXY",\s+"ZYX"/s);
-  assert.match(extraBoneSource, /const sign = Math\.sign\(entry\.coefficient\)/);
+  assert.match(extraBoneSource, /setFromQuaternion\(this\.sourceUnityQuaternion, "ZXY"\)/);
+  assert.match(extraBoneSource, /const sign = entry\.coefficient > 0 \? -1 : entry\.coefficient < 0 \? 1 : 0/);
+  assert.match(extraBoneSource, /defaultQuaternion: readDefaultQuaternion\(entry\)/);
   assert.match(extraBoneSource, /function lerpQuaternion/);
   assert.match(extraBoneSource, /const sign = from\.dot\(to\) < 0 \? -1 : 1/);
   assert.match(extraBoneSource, /THREE\.MathUtils\.clamp\(alpha, 0, 1\)/);

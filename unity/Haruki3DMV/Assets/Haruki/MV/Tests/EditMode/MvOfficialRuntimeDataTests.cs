@@ -84,6 +84,21 @@ namespace Haruki.MV.Tests
                     "0112/a03",
                     name => name == v1Head),
                 Is.EqualTo(v1Head));
+
+            var v1BodyColor =
+                "live_pv/model/character/color_variation/body/05/9001/02";
+            Assert.That(
+                MvOfficialRuntimeData.ResolveCharacterBodyColorBundleName(
+                    "05/9001/02",
+                    name => name == v1BodyColor),
+                Is.EqualTo(v1BodyColor));
+            var v2HeadColor =
+                "live_pv/model/characterv2/color_variation/head_optional/0112/a03/02";
+            Assert.That(
+                MvOfficialRuntimeData.ResolveCharacterHeadOptionalColorBundleName(
+                    "0112/a03/02",
+                    name => name == v2HeadColor),
+                Is.EqualTo(v2HeadColor));
         }
 
         [Test]
@@ -103,6 +118,15 @@ namespace Haruki.MV.Tests
             Assert.That(
                 MvOfficialRuntimeData.PenlightBundleName(112),
                 Is.EqualTo("live_pv/model/penlight/0112"));
+            Assert.That(
+                MvOfficialRuntimeData.CameraDecorationBundleName(112),
+                Is.EqualTo("live_pv/model/camera_decoration/0112"));
+            Assert.That(
+                MvOfficialRuntimeData.MeshFlareTextureBundleName(112),
+                Is.EqualTo("live_pv/model/mesh_flare_para/textures/0112"));
+            Assert.That(
+                MvOfficialRuntimeData.MusicItemBundleName(42),
+                Is.EqualTo("live_pv/model/music_item/0042"));
         }
 
         [Test]
@@ -118,8 +142,7 @@ namespace Haruki.MV.Tests
         [Test]
         public void CutInsAreOptionalAndUnavailableChildrenDoNotBlockMain()
         {
-            var host = new GameObject("MVData");
-            var data = host.AddComponent<MusicVideoData>();
+            var data = ScriptableObject.CreateInstance<MusicVideoData>();
             data.cutinInfo = new MusicVideoCutinInfo
             {
                 ChildIds = new[] { 101120, 101121 },
@@ -135,17 +158,15 @@ namespace Haruki.MV.Tests
             }
             finally
             {
-                UnityEngine.Object.DestroyImmediate(host);
+                UnityEngine.Object.DestroyImmediate(data);
             }
         }
 
         [Test]
         public void NormalCutInReusesTheMatchingFinalMainMember()
         {
-            var mainHost = new GameObject("MainMVData");
-            var childHost = new GameObject("ChildMVData");
-            var main = mainHost.AddComponent<MusicVideoData>();
-            var child = childHost.AddComponent<MusicVideoData>();
+            var main = ScriptableObject.CreateInstance<MusicVideoData>();
+            var child = ScriptableObject.CreateInstance<MusicVideoData>();
             var first = new MvCharacterLoadSpec { characterId = 1, characterHeight = 152 };
             var fifth = new MvCharacterLoadSpec { characterId = 23, characterHeight = 158 };
             try
@@ -186,16 +207,15 @@ namespace Haruki.MV.Tests
             }
             finally
             {
-                UnityEngine.Object.DestroyImmediate(mainHost);
-                UnityEngine.Object.DestroyImmediate(childHost);
+                UnityEngine.Object.DestroyImmediate(main);
+                UnityEngine.Object.DestroyImmediate(child);
             }
         }
 
         [Test]
         public void MainCharacterCountExcludesInsertSlots()
         {
-            var host = new GameObject("MVData");
-            var data = host.AddComponent<MusicVideoData>();
+            var data = ScriptableObject.CreateInstance<MusicVideoData>();
             try
             {
                 data.characterInfos = new[]
@@ -208,17 +228,15 @@ namespace Haruki.MV.Tests
             }
             finally
             {
-                UnityEngine.Object.DestroyImmediate(host);
+                UnityEngine.Object.DestroyImmediate(data);
             }
         }
 
         [Test]
         public void InheritedStageUsesTheConfirmedParentAndChildFields()
         {
-            var parentHost = new GameObject("ParentMVData");
-            var childHost = new GameObject("ChildMVData");
-            var parent = parentHost.AddComponent<MusicVideoData>();
-            var child = childHost.AddComponent<MusicVideoData>();
+            var parent = ScriptableObject.CreateInstance<MusicVideoData>();
+            var child = ScriptableObject.CreateInstance<MusicVideoData>();
             try
             {
                 parent.id = 112;
@@ -263,16 +281,15 @@ namespace Haruki.MV.Tests
             }
             finally
             {
-                UnityEngine.Object.DestroyImmediate(parentHost);
-                UnityEngine.Object.DestroyImmediate(childHost);
+                UnityEngine.Object.DestroyImmediate(parent);
+                UnityEngine.Object.DestroyImmediate(child);
             }
         }
 
         [Test]
         public void InheritedStageRequiresItsParent()
         {
-            var childHost = new GameObject("ChildMVData");
-            var child = childHost.AddComponent<MusicVideoData>();
+            var child = ScriptableObject.CreateInstance<MusicVideoData>();
             try
             {
                 child.id = 101120;
@@ -282,7 +299,7 @@ namespace Haruki.MV.Tests
             }
             finally
             {
-                UnityEngine.Object.DestroyImmediate(childHost);
+                UnityEngine.Object.DestroyImmediate(child);
             }
         }
 

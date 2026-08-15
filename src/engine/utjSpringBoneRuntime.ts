@@ -278,6 +278,12 @@ export function applyUtjLengthLimits(input: UtjApplyLengthLimitsInput): void {
   for (const target of input.targets) {
     const targetToTip = input.currTipPos.clone().sub(target.position);
     const distance = targetToTip.length();
+    // Unity Vector3.normalized returns zero for a zero-length vector. Dividing
+    // directly here would create NaNs and make the later finite-value recovery
+    // erase an otherwise valid spring state.
+    if (distance <= EPSILON) {
+      continue;
+    }
     const over = distance - target.initialLength;
     movement.addScaledVector(targetToTip, -(stiffness * over) / distance);
   }
@@ -986,7 +992,11 @@ export function constrainUtjAngleLimit(input: UtjConstrainVectorInput): boolean 
   const upComponent = input.basisUp.clone().multiplyScalar(upLength);
   const sideForward = vector.clone().sub(upComponent);
   const sideForwardLength = sideForward.length();
-  const sideForwardDirection = sideForward.multiplyScalar(1.0 / sideForwardLength);
+  // Unity's normalized getter yields Vector3.zero for the degenerate plane
+  // projection instead of Infinity/NaN.
+  const sideForwardDirection = sideForwardLength <= EPSILON
+    ? sideForward.set(0, 0, 0)
+    : sideForward.multiplyScalar(1.0 / sideForwardLength);
   const rawSideDot = input.basisSide.dot(sideForwardDirection);
   const sideDotMax = Number.isNaN(rawSideDot) ? 1.0 : Math.min(rawSideDot, 1.0);
   const sideDot = rawSideDot < -1.0 ? -1.0 : sideDotMax;
@@ -1042,7 +1052,10 @@ export function computeUtjLocalRotation(
     .clone()
     .sub(headPosition)
     .applyQuaternion(baseRotation.clone().invert());
-  localTipDirection.multiplyScalar(1.0 / localTipDirection.length());
+  if (localTipDirection.lengthSq() <= EPSILON * EPSILON) {
+    return initialLocalRotation.clone();
+  }
+  localTipDirection.normalize();
   const delta = new THREE.Quaternion().setFromUnitVectors(boneAxis.clone(), localTipDirection);
   return initialLocalRotation.clone().multiply(delta);
 }

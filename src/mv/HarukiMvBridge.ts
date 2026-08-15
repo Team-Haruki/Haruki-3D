@@ -27,20 +27,79 @@ export type HarukiMvAssetRequest = {
   assetName: string;
 };
 
+export const HARUKI_MV_RENDER_PRESETS = {
+  "720p": { width: 1280, height: 720 },
+  "1080p": { width: 1920, height: 1080 },
+  "1440p": { width: 2560, height: 1440 },
+  "4k-uhd": { width: 3840, height: 2160 },
+} as const;
+
+export type HarukiMvFixedRenderResolution = keyof typeof HARUKI_MV_RENDER_PRESETS;
+
+type HarukiMvRenderTiming = {
+  refreshRate: number;
+  use120Fps: boolean;
+};
+
+type HarukiMvDeviceRenderProfileRequest = HarukiMvRenderTiming & {
+  resolution?: "device";
+  width: number;
+  height: number;
+  dpi: number;
+  quality: "default" | "high" | "virtual-live-default";
+  playMode: "ingame-3dmv" | "music-video";
+};
+
+type HarukiMvFixedRenderProfileRequest = HarukiMvRenderTiming & {
+  resolution: HarukiMvFixedRenderResolution;
+};
+
+type HarukiMvCustomRenderProfileRequest = HarukiMvRenderTiming & {
+  resolution: "custom";
+  width: number;
+  height: number;
+};
+
+export type HarukiMvRenderProfileRequest =
+  | HarukiMvDeviceRenderProfileRequest
+  | HarukiMvFixedRenderProfileRequest
+  | HarukiMvCustomRenderProfileRequest;
+
+export type HarukiMvRenderProfile = {
+  renderWidth: number;
+  renderHeight: number;
+  postEffectWidth: number;
+  postEffectHeight: number;
+  targetFrameRate: number;
+};
+
 export type HarukiMvCharacterRequest = {
   characterId?: number;
   bodyBundleName?: string;
   bodyAssetName?: string;
+  /** Optional official C/S/H color-variation bundle for the body. */
+  bodyColorBundleName?: string;
   faceBundleName?: string;
   faceAssetName?: string;
   headOptionalBundleName?: string;
   headOptionalAssetName?: string;
+  /** Optional official C/S/H color-variation bundle for head_optional. */
+  headOptionalColorBundleName?: string;
+  /** Official MasterCostume3DModel.part bone used to mount head_optional. */
+  headOptionalPart?: string;
   timelineBindingName?: string;
   standaloneMotionBundleName?: string;
   standaloneMotionAssetNames?: string[];
+  /** Master character figure: true only for the game's man model family. */
+  isFigureMan?: boolean;
   /** Master gameCharacters height in centimetres. */
   characterHeight: number;
   heelOffset?: number;
+  /** Apply the three official MasterGameCharacterUnit skin colors below. */
+  overrideSkinColors?: boolean;
+  defaultSkinColor?: { r: number; g: number; b: number; a: number };
+  shadow1SkinColor?: { r: number; g: number; b: number; a: number };
+  shadow2SkinColor?: { r: number; g: number; b: number; a: number };
 };
 
 export type HarukiMvCutInRequest = {
@@ -55,7 +114,9 @@ export type HarukiMvPlayerRequest = {
   enableCutIns?: boolean;
   characters: HarukiMvCharacterRequest[];
   cutIns?: HarukiMvCutInRequest[];
+  /** WebGL AssetBundle containing the server-converted browser AudioClip. */
   audioBundleName?: string;
+  /** Address of the AudioClip inside audioBundleName; both fields are atomic. */
   audioAssetName?: string;
 };
 
@@ -63,6 +124,9 @@ export type HarukiMvBridge = {
   loadBundleSet(request: HarukiMvBundleSetRequest): Promise<unknown>;
   instantiatePrefab(request: HarukiMvPrefabRequest): Promise<unknown>;
   readMvData(request: HarukiMvAssetRequest): Promise<unknown>;
+  getRenderProfile(request: HarukiMvRenderProfileRequest): Promise<HarukiMvRenderProfile>;
+  /** Applies the selected output pixels and frame-rate target inside Unity. */
+  applyRenderProfile(request: HarukiMvRenderProfileRequest): Promise<HarukiMvRenderProfile>;
   loadMv(request: HarukiMvPlayerRequest): Promise<unknown>;
   setCutInActive(cutInOrder: number, active: boolean): void;
   loadScene(request: HarukiMvSceneRequest): Promise<unknown>;
@@ -186,6 +250,20 @@ export function createHarukiMvBridge(runtime: HarukiMvRuntime): HarukiMvBridge {
       }
       return sendAndWait("ReadMvData", request, "mv-data-ready");
     },
+    getRenderProfile(request) {
+      return sendAndWait(
+        "GetRenderProfile",
+        createRenderProfilePayload(request),
+        "render-profile-ready"
+      ) as Promise<HarukiMvRenderProfile>;
+    },
+    applyRenderProfile(request) {
+      return sendAndWait(
+        "ApplyRenderProfile",
+        createRenderProfilePayload(request),
+        "render-profile-applied"
+      ) as Promise<HarukiMvRenderProfile>;
+    },
     loadMv(request) {
       if (!Number.isInteger(request.musicId) || request.musicId <= 0) {
         throw new RangeError("MV musicId must be a positive integer.");
@@ -244,5 +322,78 @@ export function createHarukiMvBridge(runtime: HarukiMvRuntime): HarukiMvBridge {
     disposeScene() {
       return sendAndWait("Dispose", {}, "disposed");
     },
+  };
+}
+
+function createRenderProfilePayload(request: HarukiMvRenderProfileRequest) {
+  if (!Number.isInteger(request.refreshRate) || request.refreshRate <= 0) {
+    throw new RangeError("MV render profile refreshRate must be a positive integer.");
+  }
+
+  const resolution = request.resolution ?? "device";
+  const outputResolution = {
+    device: 0,
+    "720p": 1,
+    "1080p": 2,
+    "1440p": 3,
+    "4k-uhd": 4,
+    custom: 5,
+  }[resolution];
+  if (outputResolution === undefined) {
+    throw new RangeError("MV render profile resolution is invalid.");
+  }
+
+  let width = 0;
+  let height = 0;
+  let dpi = 0;
+  let quality = 0;
+  let playMode = 4;
+  if (resolution === "device") {
+    const deviceRequest = request as HarukiMvDeviceRenderProfileRequest;
+    for (const field of ["width", "height"] as const) {
+      if (!Number.isInteger(deviceRequest[field]) || deviceRequest[field] <= 0) {
+        throw new RangeError(`MV render profile ${field} must be a positive integer.`);
+      }
+    }
+    if (!Number.isFinite(deviceRequest.dpi) || deviceRequest.dpi <= 0) {
+      throw new RangeError("MV render profile dpi must be positive and finite.");
+    }
+    quality = {
+      default: 0,
+      high: 1,
+      "virtual-live-default": 2,
+    }[deviceRequest.quality];
+    playMode = {
+      "ingame-3dmv": 0,
+      "music-video": 4,
+    }[deviceRequest.playMode];
+    if (quality === undefined || playMode === undefined) {
+      throw new RangeError("MV render profile quality and playMode are invalid.");
+    }
+    width = deviceRequest.width;
+    height = deviceRequest.height;
+    dpi = deviceRequest.dpi;
+  } else if (resolution === "custom") {
+    const customRequest = request as HarukiMvCustomRenderProfileRequest;
+    for (const field of ["width", "height"] as const) {
+      if (!Number.isInteger(customRequest[field]) || customRequest[field] <= 0) {
+        throw new RangeError(`MV render profile ${field} must be a positive integer.`);
+      }
+    }
+    width = customRequest.width;
+    height = customRequest.height;
+  } else {
+    ({ width, height } = HARUKI_MV_RENDER_PRESETS[resolution]);
+  }
+
+  return {
+    width,
+    height,
+    dpi,
+    refreshRate: request.refreshRate,
+    quality,
+    playMode,
+    outputResolution,
+    use120Fps: request.use120Fps,
   };
 }

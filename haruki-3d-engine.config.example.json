@@ -9,7 +9,7 @@
     "phase": 0.5,
     "clip": "motion_loop",
     "warmupFrames": 60,
-    "warmupMode": "animation",
+    "warmupMode": "runtime",
     "springRuntimeMode": "unity-prefab",
     "cameraPreset": "capture",
     "cameraProfile": "full-body",

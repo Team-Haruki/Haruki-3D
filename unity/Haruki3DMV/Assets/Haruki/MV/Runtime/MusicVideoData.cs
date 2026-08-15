@@ -3,10 +3,18 @@ using UnityEngine;
 
 namespace Sekai.Core
 {
-    public sealed class MusicVideoData : MonoBehaviour
+    public enum MotionType
+    {
+        Single = 0,
+        Gender = 1,
+        Unique = 2,
+        GenderUnique = 3,
+    }
+
+    public sealed class MusicVideoData : ScriptableObject
     {
         public int id;
-        public string name;
+        public new string name;
         public MusicVideoCharacterInfo[] characterInfos = Array.Empty<MusicVideoCharacterInfo>();
         public MusicVideoStageInfo stageInfo;
         public MusicVideoCameraInfo cameraInfo;
@@ -38,13 +46,15 @@ namespace Sekai.Core
     [Serializable]
     public sealed class MusicVideoMotionInfo
     {
-        public int motionType;
+        public MotionType motionType;
         public int[] uniqueCharacterIds = Array.Empty<int>();
     }
 
     [Serializable]
     public sealed class MusicVideoItemInfo
     {
+        public int id;
+        public bool useNonDefaultShader;
     }
 
     [Serializable]

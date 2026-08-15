@@ -97,7 +97,7 @@ function readCaptureConfig(): CaptureConfig | null {
     clip: clipParam === "motion" ? "motion" : "motion_loop",
     warmupMs: Math.max(Math.trunc(Number.isFinite(warmupMs) ? warmupMs : 0), 0),
     warmupFrames: Math.max(Math.trunc(Number.isFinite(warmupFrames) ? warmupFrames : 0), 0),
-    warmupMode: warmupModeParam === "runtime" ? "runtime" : "animation",
+    warmupMode: warmupModeParam === "animation" ? "animation" : "runtime",
     bodyDebugMode: readBodyDebugMode(params),
     faceSdfEnabled: params.has("faceSdfEnabled")
       ? readBoolean(params.get("faceSdfEnabled"))
@@ -327,6 +327,7 @@ getCaptureWindow().__HARUKI_CAPTURE_REQUEST__ = async (
       warmupMs: request.warmupMs ?? config.warmupMs,
       warmupFrames,
       warmupMode: request.warmupMode ?? config.warmupMode,
+      springRuntimeMode: request.springRuntimeMode ?? config.springRuntimeMode,
       cameraPreset: request.cameraPreset ?? config.cameraPreset,
       cameraProfile: request.cameraProfile ?? config.cameraProfile,
       characterYawMode: request.characterYawMode ?? config.characterYawMode ?? undefined,
@@ -372,7 +373,7 @@ async function bootstrapCapture() {
     engine.setRenderIsolationMode(config.renderIsolation);
     engine.applyCameraPreset(config.cameraPreset, config.cameraProfile);
     if (config.characterYawMode && config.characterYawMode !== "face-camera") {
-      engine.setCharacterYawDegrees(characterYawDegreesByMode[config.characterYawMode]);
+      engine.setViewYawDegrees(characterYawDegreesByMode[config.characterYawMode]);
     }
     engine.setUtjSpringBoneTraceFilters(
       config.utjTraceBones,

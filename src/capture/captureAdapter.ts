@@ -42,6 +42,7 @@ export class HarukiCaptureAdapter {
       warmupMs: request.warmupMs,
       warmupFrames: request.warmupFrames,
       warmupMode: request.warmupMode,
+      springRuntimeMode: request.springRuntimeMode,
       cameraPreset: request.cameraPreset,
       cameraProfile: request.cameraProfile,
       characterYawMode: request.characterYawMode,
@@ -102,7 +103,9 @@ export class HarukiCaptureAdapter {
     const clip = request.clip ?? "motion_loop";
     const warmupFrames = Math.max(Math.trunc(request.warmupFrames ?? 0), 0);
     const warmupMs = Math.max(Math.trunc(request.warmupMs ?? 0), 0);
-    const warmupMode = request.warmupMode ?? "animation";
+    // CostumeShop seeks the requested pose first, then CalmDownSpringBone runs
+    // UpdateDynamics repeatedly without advancing the Animator.
+    const warmupMode = request.warmupMode ?? "runtime";
     const advanceWarmupAnimation = warmupMode === "animation";
     const seekTargetPhase = (targetPhase: number) => clip === "motion"
       ? this.engine.seekAnimationPhase(targetPhase)
@@ -131,7 +134,7 @@ export class HarukiCaptureAdapter {
       case "-90":
       case "180":
       case "0":
-        this.engine.setCharacterYawDegrees(Number(request.characterYawMode));
+        this.engine.setViewYawDegrees(Number(request.characterYawMode));
         break;
       case "face-camera":
         this.engine.faceCharacterTowardCamera();
