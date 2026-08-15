@@ -72,17 +72,12 @@ Timeline types. Binary textures and other recovered assets are copied without
 content rewriting. The build then scans every imported YAML object and fails
 with the recovered type name when a referenced game script is still unresolved.
 
-Pushes that touch the MV project also run `.github/workflows/unity-mv.yml`.
-The workflow runs EditMode tests, compiles the real WebGL player, validates its
-four generated build files, and uploads `haruki-3dmv-webgl`. It needs the
-protected `unity-build` environment secrets `UNITY_LICENSE`, `UNITY_EMAIL`, and
-`UNITY_PASSWORD`; moving the build to GitHub does not remove Unity's
-editor-license requirement. `UNITY_LICENSE` must contain the activated `.ulf`
-file expected by GameCI. Do not upload the machine-local
-`UnityEntitlementLicense.xml`, and do not commit either file. The repository
-ignores `.alf`, `.ulf`, and entitlement files and tests that none are tracked.
-The GameCI actions are pinned to full commit SHAs so a moving tag cannot change
-the code that receives those secrets.
+The Unity MV player is built on an activated development machine with
+`npm run build:mv:unity`; it is not part of GitHub Actions. The command runs
+EditMode tests, compiles the real WebGL player, and validates the generated
+files locally. Do not upload the machine-local `UnityEntitlementLicense.xml`
+or commit activation material. The repository ignores `.alf`, `.ulf`, and
+entitlement files and tests that none are tracked.
 
 The committed Unity project provides a browser bridge, recursive AssetBundle
 dependency loading, additive scene loading, and one playback coordinator for

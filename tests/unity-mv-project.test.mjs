@@ -161,20 +161,6 @@ test("repository contains a Unity 2022.3 WebGL MV project", () => {
   assert.doesNotMatch(bundleLoader, /Camera\.main|fieldOfView/);
 });
 
-test("GitHub Actions builds and validates the real Unity WebGL artifact", () => {
-  const workflow = fs.readFileSync(
-    path.join(repoRoot, ".github", "workflows", "unity-mv.yml"),
-    "utf8"
-  );
-  assert.match(workflow, /game-ci\/unity-test-runner@[0-9a-f]{40} # v4/);
-  assert.match(workflow, /game-ci\/unity-builder@[0-9a-f]{40} # v4/);
-  assert.match(workflow, /environment: unity-build/);
-  assert.match(workflow, /buildMethod: Haruki\.MV\.Editor\.BuildWebGL\.PerformBuild/);
-  assert.match(workflow, /secrets\.UNITY_LICENSE/);
-  assert.match(workflow, /HarukiMV\.wasm\.gz/);
-  assert.match(workflow, /actions\/upload-artifact@v4/);
-});
-
 test("Unity activation material cannot be tracked by accident", () => {
   const ignore = fs.readFileSync(path.join(repoRoot, ".gitignore"), "utf8");
   assert.match(ignore, /^\*\.alf$/m);
