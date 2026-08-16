@@ -299,6 +299,40 @@ test("0414 prefab runtime applies official model combine and installs native mes
   assert.equal(graph.debug.keyNodes.modelCombineFaceNeck.destroyed, false);
 });
 
+test("official model combine destroys static renderers from the temporary face prefab", () => {
+  const extension = makeRuntimeExtension();
+  extension.runtimeUnitySetup.prefabGraphs[0].transforms.push(
+    transform(16, "face/Hair_outline", 10)
+  );
+  extension.runtimeUnitySetup.prefabGraphs[0].renderers.push({
+    pathId: 1003,
+    typeName: "MeshRenderer",
+    transformPathId: 16,
+    transformPath: "face/Hair_outline",
+  });
+  extension.nativeMeshes.meshes.push({
+    ...extension.nativeMeshes.meshes[1],
+    meshPath: "face/Hair_outline/HairOutlineMesh",
+    meshName: "HairOutlineMesh",
+    rendererPathId: 1003,
+    rendererTransformPathId: 16,
+    rendererTransformPath: "face/Hair_outline",
+  });
+
+  const graph = buildUnityPrefabSourceGraph(extension);
+  const nativeMeshes = installUnityRuntimeNativeMeshes(graph, extension);
+
+  assert.equal(graph.nodeByPath.get("face/Hair_outline"), undefined);
+  assert.equal(graph.nodeByPathId.get(16), undefined);
+  assert.equal(nativeMeshes.error, null);
+  assert.equal(nativeMeshes.meshCount, 2);
+  assert.equal(
+    graph.root.getObjectByName("HairOutlineMesh"),
+    undefined,
+    "a static face renderer must not reappear at the character origin"
+  );
+});
+
 test("prefab runtime binds skinned morph meshes and applies exported constraints", () => {
   const extension = makeRuntimeExtension();
   extension.runtimeUnitySetup.constraintSetup = {
@@ -595,6 +629,17 @@ function makeRuntimeExtension() {
           transform(14, "face/Face", 10),
           transform(15, "face/Visor", 10),
         ],
+        renderers: [{
+          pathId: 1001,
+          typeName: "SkinnedMeshRenderer",
+          transformPathId: 14,
+          transformPath: "face/Face",
+        }, {
+          pathId: 1002,
+          typeName: "SkinnedMeshRenderer",
+          transformPathId: 15,
+          transformPath: "face/Visor",
+        }],
       }],
       bodyHeadAssembly: {
         version: "0414",
@@ -617,6 +662,8 @@ function makeRuntimeExtension() {
         partKind: "face",
         meshPath: "face/Face/FaceMesh",
         meshName: "FaceMesh",
+        rendererPathId: 1001,
+        rendererTransformPathId: 14,
         rendererTransformPath: "face/Face",
         positions: [0, 0, 0, 1, 0, 0, 0, 1, 0],
         normals: [0, 0, 1, 0, 0, 1, 0, 0, 1],
@@ -631,6 +678,8 @@ function makeRuntimeExtension() {
         partKind: "face",
         meshPath: "face/Visor/VisorMesh",
         meshName: "VisorMesh",
+        rendererPathId: 1002,
+        rendererTransformPathId: 15,
         rendererTransformPath: "face/Visor",
         positions: [0, 0, 0, 1, 0, 0, 0, 1, 0],
         normals: [0, 0, 1, 0, 0, 1, 0, 0, 1],

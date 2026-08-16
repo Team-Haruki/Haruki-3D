@@ -131,9 +131,17 @@ type RuntimePrefabTransformSource = {
   localScale?: UnityVectorLike;
 };
 
+type RuntimePrefabRendererSource = {
+  pathId?: number;
+  typeName?: string | null;
+  transformPathId?: number | null;
+  transformPath?: string | null;
+};
+
 type RuntimePrefabGraphSource = {
   partKind?: string;
   transforms?: RuntimePrefabTransformSource[];
+  renderers?: RuntimePrefabRendererSource[];
 };
 
 type RuntimeUnitySetupSource = {
@@ -426,7 +434,8 @@ function applyOfficialModelCombineSetup(
   detachRuntimeSubtree(bodyNodeA.node, nodeByPath, nodeByPathId);
   // The instantiated face prefab is only an assembly input. Its wrapper,
   // control nodes, and duplicate Position -> Chest_const chain do not survive
-  // ModelCombineSetup; Face/Neck/Head and every renderer were extracted above.
+  // ModelCombineSetup; Face/Neck/Head and its SkinnedMeshRenderers were
+  // extracted above. Static renderers remain in the wrapper and are destroyed.
   detachRuntimeSubtree(childRoot.node, nodeByPath, nodeByPathId);
 
   nodeByPath.set(bodyNodeA.path, faceNodeA.node);
@@ -448,12 +457,35 @@ function collectOfficialHeadRendererPaths(
   childRootPath: string
 ) {
   return [...new Set(
-    (readRuntimeNativeMeshSet0414(extension)?.meshes ?? [])
-      .map((mesh) => mesh.rendererTransformPath)
-      .filter((path): path is string =>
-        typeof path === "string" && path.startsWith(`${childRootPath}/`)
-      )
+    (readRuntimeUnitySetup0414(extension)?.prefabGraphs ?? [])
+      .flatMap((graph) => graph.renderers ?? [])
+      .filter((renderer) => renderer.typeName === "SkinnedMeshRenderer")
+      .map((renderer) => renderer.transformPath)
+      .filter((path): path is string => Boolean(
+        path && path.startsWith(`${childRootPath}/`)
+      ))
   )];
+}
+
+function isDestroyedStaticFaceRenderer(
+  extension: unknown,
+  source: RuntimeNativeMeshSource
+) {
+  const setup = readRuntimeUnitySetup0414(extension);
+  const childRootPath = setup?.bodyHeadAssembly?.childRootPath;
+  const transformPath = source.rendererTransformPath;
+  if (
+    !childRootPath ||
+    !transformPath?.startsWith(`${childRootPath}/`)
+  ) {
+    return false;
+  }
+  const matchingRenderers = (setup.prefabGraphs ?? [])
+    .flatMap((graph) => graph.renderers ?? [])
+    .filter((renderer) => renderer.transformPath === transformPath);
+  return matchingRenderers.length > 0 && matchingRenderers.every(
+    (renderer) => renderer.typeName !== "SkinnedMeshRenderer"
+  );
 }
 
 function resolveOfficialBodyRootBone(
@@ -744,6 +776,9 @@ export function installUnityRuntimeNativeMeshes(
   graph.root.updateMatrixWorld(true);
 
   for (const source of meshes) {
+    if (isDestroyedStaticFaceRenderer(extension, source)) {
+      continue;
+    }
     const targetPath = source.rendererTransformPath;
     const bonePaths = source.bonePaths ?? [];
     const bonePathIds = source.bonePathIds ?? [];
