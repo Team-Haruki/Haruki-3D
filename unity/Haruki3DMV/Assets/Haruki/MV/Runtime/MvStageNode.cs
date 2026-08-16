@@ -90,6 +90,9 @@ namespace Haruki.MV
                     _originalTextures);
                 MvOfficialObjectBinding.BindControlGroups(BaseStage, _bindings);
                 CharacterAdjuster.AdjustGameObjects(BaseStage, adjustData, true);
+                MvCharacterNode.SetLayerRecursively(
+                    BaseStage,
+                    MvRecoveredCameraResources.Live3DLayer);
             }
 
             var decorationIndex = 0;
@@ -324,6 +327,9 @@ namespace Haruki.MV
                     decoration,
                     CreateCharacterAdjustDataForLoadedStage(),
                     true);
+                MvCharacterNode.SetLayerRecursively(
+                    decoration,
+                    MvRecoveredCameraResources.Live3DLayer);
             }
             return startIndex;
         }

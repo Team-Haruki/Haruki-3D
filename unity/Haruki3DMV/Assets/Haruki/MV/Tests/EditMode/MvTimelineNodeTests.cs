@@ -56,6 +56,7 @@ namespace Haruki.MV.Tests
             _node.LoadTimelines(CreateTimeline);
 
             Assert.That(_node.TimelineDuration, Is.EqualTo(6));
+            Assert.That(_node.PlaybackDuration, Is.EqualTo(2));
             Assert.That(bindings["StageBinding"], Is.SameAs(_root));
             Assert.That(bindings["CharacterBinding"], Is.SameAs(_root));
             Assert.That(bindings["EffectBinding"], Is.SameAs(_node.Directors[4].gameObject));

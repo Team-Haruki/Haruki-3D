@@ -40,6 +40,9 @@ namespace Haruki.MV
                 null);
             MvOfficialObjectBinding.InitializePenlight(Penlight);
             MvOfficialObjectBinding.BindPenlightTransforms(Penlight, _bindings);
+            MvCharacterNode.SetLayerRecursively(
+                Penlight,
+                MvRecoveredCameraResources.Live3DLayer);
         }
 
         public void Dispose()

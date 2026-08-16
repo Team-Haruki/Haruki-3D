@@ -25,6 +25,8 @@ namespace Haruki.MV
         private double _durationSeconds;
         private double _timeSeconds;
         private bool _audioStarted;
+        private bool _audioWasPlaying;
+        private bool _audioCompleted;
         private bool _audioClockInitialized;
         private long _referenceAudioMilliseconds;
         private double _referenceUnityTime;
@@ -32,6 +34,21 @@ namespace Haruki.MV
         public MvPlaybackState State { get; private set; } = MvPlaybackState.Empty;
         public double CurrentTimeSeconds => _timeSeconds;
         public double DurationSeconds => _durationSeconds;
+        public string AudioClipName => _audioSource?.clip != null
+            ? _audioSource.clip.name
+            : null;
+        public bool AudioStarted => _audioStarted;
+        public bool AudioIsPlaying => _audioSource != null && _audioSource.isPlaying;
+        public string AudioLoadState => _audioSource?.clip != null
+            ? _audioSource.clip.loadState.ToString()
+            : AudioDataLoadState.Unloaded.ToString();
+        public double AudioDurationSeconds => _audioSource?.clip != null
+            ? ResolveAudioClipDuration(_audioSource.clip)
+            : 0;
+        public double AudioTimeSeconds => _audioSource?.clip != null &&
+            _audioSource.clip.loadState == AudioDataLoadState.Loaded
+                ? _audioSource.time
+                : 0;
 
         public void BindScene(GameObject sceneRoot, AudioSource audioSource, double durationSeconds)
         {
@@ -76,8 +93,10 @@ namespace Haruki.MV
             _sceneRoots = (GameObject[])sceneRoots.Clone();
             _audioSource = audioSource;
             _durationSeconds = audioSource != null && audioSource.clip != null
-                ? audioSource.clip.length
+                ? Math.Max(ResolveAudioClipDuration(audioSource.clip), durationSeconds)
                 : durationSeconds;
+            _audioWasPlaying = false;
+            _audioCompleted = false;
             _directors = CollectComponents<PlayableDirector>(_sceneRoots);
             var behaviours = CollectComponents<MonoBehaviour>(_sceneRoots);
             var participants = new List<IMvPlaybackParticipant>();
@@ -141,10 +160,11 @@ namespace Haruki.MV
             {
                 _audioSource.UnPause();
             }
-            else
+            else if (!_audioCompleted)
             {
                 _audioSource.Play();
                 _audioStarted = true;
+                _audioWasPlaying = false;
             }
             ResetAudioClock();
         }
@@ -254,6 +274,8 @@ namespace Haruki.MV
                 _audioSource.Stop();
             }
             _audioStarted = false;
+            _audioWasPlaying = false;
+            _audioCompleted = false;
             _audioClockInitialized = false;
             SeekInternal(0);
             SetPlaybackPaused(true);
@@ -287,6 +309,8 @@ namespace Haruki.MV
             _durationSeconds = 0;
             _timeSeconds = 0;
             _audioStarted = false;
+            _audioWasPlaying = false;
+            _audioCompleted = false;
             _audioClockInitialized = false;
             State = MvPlaybackState.Empty;
         }
@@ -300,32 +324,58 @@ namespace Haruki.MV
 
             if (_audioSource != null && _audioSource.clip != null && _audioStarted)
             {
-                if (!_audioSource.isPlaying)
+                var audioLoadState = _audioSource.clip.loadState;
+                if (audioLoadState == AudioDataLoadState.Unloaded ||
+                    audioLoadState == AudioDataLoadState.Loading)
                 {
-                    SeekVisuals(_durationSeconds);
-                    _audioStarted = false;
-                    SetPlaybackPaused(true);
                     return;
                 }
-                var unityNow = Time.unscaledTimeAsDouble;
-                var audioMilliseconds = (long)(_audioSource.time * 1000.0f);
-                if (!_audioClockInitialized)
+                if (audioLoadState == AudioDataLoadState.Failed)
                 {
+                    _audioStarted = false;
+                    _audioCompleted = true;
+                    _audioClockInitialized = false;
+                    Debug.LogError("MV audio data failed to load; visual playback will continue.");
+                }
+                else if (!_audioSource.isPlaying && !_audioWasPlaying)
+                {
+                    _audioSource.Play();
                     ResetAudioClock();
+                    return;
                 }
-                var predicted = _referenceAudioMilliseconds
-                    + (long)((unityNow - _referenceUnityTime)
-                        * _audioSource.pitch * 1000.0);
-                var synced = ResolveAudioSyncedTimeMilliseconds(
-                    predicted,
-                    audioMilliseconds);
-                if (audioMilliseconds - predicted >= 63)
+                else if (!_audioSource.isPlaying)
                 {
-                    _referenceAudioMilliseconds = audioMilliseconds;
-                    _referenceUnityTime = unityNow;
+                    _audioStarted = false;
+                    _audioWasPlaying = false;
+                    _audioCompleted = true;
+                    _audioClockInitialized = false;
+                    SeekVisuals(Math.Max(
+                        _timeSeconds,
+                        ResolveAudioClipDuration(_audioSource.clip)));
                 }
-                SeekVisuals(synced / 1000.0);
-                return;
+                else
+                {
+                    _audioWasPlaying = true;
+                    var unityNow = Time.unscaledTimeAsDouble;
+                    var audioMilliseconds = (long)(_audioSource.time * 1000.0f);
+                    if (!_audioClockInitialized)
+                    {
+                        ResetAudioClock();
+                    }
+                    var predicted = _referenceAudioMilliseconds
+                        + (long)((unityNow - _referenceUnityTime)
+                            * _audioSource.pitch * 1000.0);
+                    var synced = ResolveAudioSyncedTimeMilliseconds(
+                        predicted,
+                        audioMilliseconds);
+                    if (audioMilliseconds - predicted >= 63)
+                    {
+                        _referenceAudioMilliseconds = audioMilliseconds;
+                        _referenceUnityTime = unityNow;
+                    }
+                    SeekVisuals(synced / 1000.0);
+                    return;
+                }
             }
 
             var nextTime = _timeSeconds + Time.unscaledDeltaTime;
@@ -345,9 +395,39 @@ namespace Haruki.MV
                 return;
             }
 
-            var audioTime = Math.Min(_timeSeconds, Math.Max(0, _audioSource.clip.length - 0.001));
+            var clipLength = ResolveAudioClipDuration(_audioSource.clip);
+            var withinAudio = clipLength <= 0 || _timeSeconds < clipLength;
+            var audioTime = clipLength > 0
+                ? Math.Min(_timeSeconds, Math.Max(0, clipLength - 0.001))
+                : _timeSeconds;
+            if (!withinAudio)
+            {
+                if (_audioStarted)
+                {
+                    _audioSource.Stop();
+                }
+                _audioStarted = false;
+                _audioCompleted = true;
+            }
+            else if (_audioCompleted)
+            {
+                _audioCompleted = false;
+                if (State == MvPlaybackState.Playing)
+                {
+                    _audioSource.Play();
+                    _audioStarted = true;
+                    _audioWasPlaying = false;
+                }
+            }
             _audioSource.time = (float)audioTime;
             ResetAudioClock();
+        }
+
+        private static double ResolveAudioClipDuration(AudioClip clip)
+        {
+            return clip != null && clip.frequency > 0
+                ? (double)clip.samples / clip.frequency
+                : 0;
         }
 
         private static long ResolveAudioSyncedTimeMilliseconds(

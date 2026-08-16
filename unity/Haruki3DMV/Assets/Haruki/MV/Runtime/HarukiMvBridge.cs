@@ -163,6 +163,12 @@ namespace Haruki.MV
             public Color fogColor;
             public Vector4 fogFactor;
             public float allLightIntensity;
+            public string audioClipName;
+            public string audioLoadState;
+            public bool audioStarted;
+            public bool audioIsPlaying;
+            public double audioDurationSeconds;
+            public double audioTimeSeconds;
             public bool postProcessShadersReady;
             public bool postProcessTexturesReady;
             public string[] missingPostProcessShaders = Array.Empty<string>();
@@ -499,9 +505,21 @@ namespace Haruki.MV
                         {
                             continue;
                         }
-                        var texture = material.HasProperty("_MainTex")
-                            ? material.GetTexture("_MainTex")
-                            : material.mainTexture;
+                        Texture texture = null;
+                        foreach (var propertyName in new[]
+                        {
+                            "_MainTex",
+                            "_BaseMap",
+                            "_MeshFlareParaMainTex",
+                        })
+                        {
+                            if (!material.HasProperty(propertyName))
+                            {
+                                continue;
+                            }
+                            texture = material.GetTexture(propertyName);
+                            break;
+                        }
                         materials.Add(new MaterialDiagnostics
                         {
                             renderer = renderer.name,
@@ -563,6 +581,12 @@ namespace Haruki.MV
                     fogColor = Shader.GetGlobalColor("_SekaiFogColor"),
                     fogFactor = Shader.GetGlobalVector("_SekaiFogFactor"),
                     allLightIntensity = Shader.GetGlobalFloat("_SekaiAllLightIntensity"),
+                    audioClipName = _coordinator.AudioClipName,
+                    audioLoadState = _coordinator.AudioLoadState,
+                    audioStarted = _coordinator.AudioStarted,
+                    audioIsPlaying = _coordinator.AudioIsPlaying,
+                    audioDurationSeconds = _coordinator.AudioDurationSeconds,
+                    audioTimeSeconds = _coordinator.AudioTimeSeconds,
                     postProcessShadersReady = postProcess?.HasOfficialShaderLibrary == true,
                     postProcessTexturesReady = postProcessTexturesReady,
                     missingPostProcessShaders = postProcess?.MissingShaderNames.ToArray() ??

@@ -299,6 +299,9 @@ namespace Haruki.MV
                 MeshFlareRoot.GetComponentInChildren<MeshFlareParaController>(true) ??
                 throw new InvalidOperationException(
                     "Official MeshFlarePara prefab has no MeshFlareParaController.");
+            MvCharacterNode.SetLayerRecursively(
+                MeshFlareRoot,
+                MvRecoveredCameraResources.Live3DLayer);
             var textureData = _bundles.LoadAllAssets<MeshFlareParaTexData>(textureBundle)
                 .FirstOrDefault(data => data != null && data.Id == mvId) ??
                 _bundles.LoadAllAssets<MeshFlareParaTexData>(textureBundle)

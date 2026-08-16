@@ -13,7 +13,8 @@ namespace Haruki.MV
         public const int PresentationRendererIndex = 0;
         public const int MainRendererIndex = 5;
         public const int SubRendererIndex = 10;
-        public const int MainCharacterLayer = 21;
+        public const int Live3DLayer = 21;
+        public const int MainCharacterLayer = Live3DLayer;
 
         public static GameObject Create(string resourcePath)
         {

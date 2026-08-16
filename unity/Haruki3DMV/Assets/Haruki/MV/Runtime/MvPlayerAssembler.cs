@@ -147,7 +147,7 @@ namespace Haruki.MV
         public MvCharacterNode Character { get; }
         public MvPenlightNode Penlight { get; }
         public MvTimelinePlaybackParticipant TimelinePlayback { get; }
-        public double Duration => Timeline.TimelineDuration;
+        public double Duration => Timeline.PlaybackDuration;
 
         public void Dispose()
         {
@@ -361,13 +361,10 @@ namespace Haruki.MV
                     audioSource.playOnAwake = false;
                 }
 
-                var duration = audioSource != null && audioSource.clip != null
-                    ? audioSource.clip.length
-                    : _players.Max(player => player.Duration);
                 _coordinator.BindScene(
                     _players.Select(player => player.Root).ToArray(),
                     audioSource,
-                    duration,
+                    main.Duration,
                     _cutInController == null
                         ? Array.Empty<IMvPlaybackParticipant>()
                         : new IMvPlaybackParticipant[] { _cutInController });

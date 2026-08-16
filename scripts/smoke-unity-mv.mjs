@@ -259,11 +259,6 @@ try {
       );
     }
     if (assembleSampleMv) {
-      const reusableCharacter = {
-        bodyBundleName: "live_pv/model/characterv2/body/05/9001/ladies_m",
-        faceBundleName: "live_pv/model/characterv2/face/05/9001",
-        characterHeight: 158,
-      };
       await page.evaluate(
         (request) => {
           window.harukiMvUnityInstance.SendMessage(
@@ -275,15 +270,51 @@ try {
         {
           musicId: expectedMusicId,
           enableCutIns: enableSampleCutIns,
+          audioBundleName: "music/long/se_0112_01",
+          audioAssetName: "music",
           characters: [
-            reusableCharacter,
-            reusableCharacter,
-            reusableCharacter,
-            reusableCharacter,
-            { characterHeight: 158 },
+            {
+              characterId: 5,
+              bodyBundleName: "live_pv/model/characterv2/body/05/0001/ladies_m",
+              faceBundleName: "live_pv/model/characterv2/face/05/0001",
+              characterHeight: 158,
+            },
+            {
+              characterId: 7,
+              bodyBundleName: "live_pv/model/characterv2/body/07/0001/ladies_m",
+              faceBundleName: "live_pv/model/characterv2/face/07/0001",
+              characterHeight: 156,
+            },
+            {
+              characterId: 6,
+              bodyBundleName: "live_pv/model/characterv2/body/06/0001/ladies_m",
+              faceBundleName: "live_pv/model/characterv2/face/06/0001",
+              characterHeight: 163,
+            },
+            {
+              characterId: 8,
+              bodyBundleName: "live_pv/model/characterv2/body/08/0001/ladies_s",
+              faceBundleName: "live_pv/model/characterv2/face/08/0001",
+              characterHeight: 168,
+            },
+            {
+              characterId: 22,
+              bodyBundleName: "live_pv/model/characterv2/body/22/0003/ladies_s",
+              faceBundleName: "live_pv/model/characterv2/face/22/0003",
+              characterHeight: 152,
+            },
           ],
           cutIns: enableSampleCutIns
-            ? [{ musicId: 101120, reuseMainMember: true }]
+            ? [{
+                musicId: 101120,
+                reuseMainMember: false,
+                characters: [{
+                  characterId: 5,
+                  bodyBundleName: "live_pv/model/characterv2/body/05/9001/ladies_m",
+                  faceBundleName: "live_pv/model/characterv2/face/05/9001",
+                  characterHeight: 158,
+                }],
+              }]
             : [],
         }
       );
@@ -315,10 +346,29 @@ try {
       if (playingState.state !== "playing") {
         throw new Error(`Unity MV did not enter playing state: ${JSON.stringify(playingState)}`);
       }
-      await page.waitForTimeout(250);
-      const progressedState = await invokeAndReadState("GetState");
+      let progressedState;
+      const audioStartDeadline = Date.now() + 120_000;
+      do {
+        await page.waitForTimeout(250);
+        progressedState = await invokeAndReadState("GetState");
+      } while (!(progressedState.timeSeconds > 0) && Date.now() < audioStartDeadline);
       if (!(progressedState.timeSeconds > 0)) {
         throw new Error(`Unity MV clock did not advance: ${JSON.stringify(progressedState)}`);
+      }
+      const playingDiagnostics = await requestRenderProfile(
+        "GetDiagnostics",
+        "diagnostics-ready",
+        { requestId: "smoke-playing-diagnostics" }
+      );
+      if (playingDiagnostics.audioClipName !== "se_0112_01" ||
+          playingDiagnostics.audioLoadState !== "Loaded" ||
+          playingDiagnostics.audioStarted !== true ||
+          playingDiagnostics.audioIsPlaying !== true ||
+          !(playingDiagnostics.audioDurationSeconds > 127) ||
+          !(playingDiagnostics.audioTimeSeconds > 0)) {
+        throw new Error(
+          `Unity MV audio did not start correctly: ${JSON.stringify(playingDiagnostics)}`
+        );
       }
       const pausedState = await invokeAndReadState(
         "SetPaused",

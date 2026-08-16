@@ -38,7 +38,7 @@ namespace Haruki.MV.Tests
                 "RemapRecoveredShaderGuids",
                 BindingFlags.NonPublic | BindingFlags.Static);
             Assert.That(method, Is.Not.Null);
-            method.Invoke(null, new object[] { TestRoot });
+            method.Invoke(null, new object[] { TestRoot, TestRoot });
 
             var replacementGuid = AssetDatabase.AssetPathToGUID(
                 "Assets/Haruki/MV/Shaders/Hidden_Sekai_V2_UberPost.shader");

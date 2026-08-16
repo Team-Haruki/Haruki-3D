@@ -48,7 +48,7 @@ namespace Haruki.MV.Tests
         }
 
         [Test]
-        public void AudioClipDefinesTheMasterClockDuration()
+        public void VisualTimelineMayOutlastTheAudioClip()
         {
             var source = _scene.AddComponent<AudioSource>();
             var clip = AudioClip.Create("mv", 96000, 1, 48000, false);
@@ -57,7 +57,7 @@ namespace Haruki.MV.Tests
                 source.clip = clip;
                 _coordinator.BindScene(_scene, source, 20);
 
-                Assert.That(_coordinator.DurationSeconds, Is.EqualTo(2).Within(0.001));
+                Assert.That(_coordinator.DurationSeconds, Is.EqualTo(20).Within(0.001));
             }
             finally
             {

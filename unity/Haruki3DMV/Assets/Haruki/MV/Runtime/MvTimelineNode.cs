@@ -26,6 +26,7 @@ namespace Haruki.MV
         public IReadOnlyList<PlayableDirector> Directors => _directors;
         public MvLiveEffectTimelineManager LiveEffectTimelineManager { get; private set; }
         public double TimelineDuration { get; private set; }
+        public double PlaybackDuration { get; private set; }
 
         public void Initialize(
             Dictionary<string, UnityEngine.Object> bindingObjects,
@@ -69,6 +70,7 @@ namespace Haruki.MV
             }
 
             TimelineDuration = 0;
+            PlaybackDuration = 0;
             for (var index = 0; index < TimelineNames.Length; index++)
             {
                 var timelineName = TimelineNames[index];
@@ -83,6 +85,14 @@ namespace Haruki.MV
                 var director = _directors[index];
                 director.playableAsset = timeline;
                 TimelineDuration = Math.Max(TimelineDuration, timeline.duration);
+                if (timelineName == "Character")
+                {
+                    // Light, penlight and stage tracks may deliberately carry
+                    // long tail clips past the music. The official character
+                    // timeline is the authoritative visual playback span when
+                    // no audio clip is supplied.
+                    PlaybackDuration = timeline.duration;
+                }
 
                 if (timelineName == "Effect")
                 {
@@ -262,6 +272,7 @@ namespace Haruki.MV
             _root = null;
             LiveEffectTimelineManager = null;
             TimelineDuration = 0;
+            PlaybackDuration = 0;
         }
 
         private void EnsureInitialized()

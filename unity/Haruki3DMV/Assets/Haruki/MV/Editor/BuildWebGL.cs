@@ -231,7 +231,7 @@ namespace Haruki.MV.Editor
                         "AssetBundles/" + entry.name,
                         RecoveredAssetRoot + "/" + entry.name);
                 }
-                RemapRecoveredShaderGuids(RecoveredAssetRoot);
+                RemapRecoveredShaderGuids(recoveredAssets, RecoveredAssetRoot);
                 RemapRecoveredScriptGuids(recoveredAssets, RecoveredAssetRoot);
                 AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
                 ValidateRecoveredRuntimePrerequisites(recoveredAssets, RecoveredAssetRoot);
@@ -343,6 +343,16 @@ namespace Haruki.MV.Editor
                             entry.name,
                             "music-item prefab");
                         addressableNames = new[] { "item" };
+                    }
+                    else if (entry.name?.StartsWith("music/long/", StringComparison.Ordinal) == true)
+                    {
+                        var clipName = entry.name.Substring(entry.name.LastIndexOf('/') + 1);
+                        assetNames = RequireSingleAsset<AudioClip>(
+                            sourceDirectory,
+                            clipName + ".wav",
+                            entry.name,
+                            "decoded long-version music clip");
+                        addressableNames = new[] { "music" };
                     }
                     else if (string.Equals(
                         entry.name,
@@ -466,10 +476,47 @@ namespace Haruki.MV.Editor
 
         private static void CopyRecoveredGroup(string recoveredAssets, string relativeSource, string destination)
         {
-            var source = Path.Combine(recoveredAssets, relativeSource.Replace('/', Path.DirectorySeparatorChar));
-            if (!Directory.Exists(source))
+            var normalizedSource = relativeSource.Replace('/', Path.DirectorySeparatorChar);
+            var candidates = new List<string>
             {
-                throw new DirectoryNotFoundException($"Recovered Unity asset group is missing: {source}");
+                Path.Combine(recoveredAssets, normalizedSource)
+            };
+            const string assetBundlePrefix = "AssetBundles/";
+            if (relativeSource.StartsWith(assetBundlePrefix, StringComparison.Ordinal))
+            {
+                var logicalName = relativeSource.Substring(assetBundlePrefix.Length)
+                    .Replace('/', Path.DirectorySeparatorChar);
+                candidates.Add(Path.Combine(
+                    recoveredAssets,
+                    "sekai",
+                    "assetbundle",
+                    "resources",
+                    "ondemand",
+                    logicalName));
+                candidates.Add(Path.Combine(
+                    recoveredAssets,
+                    "sekai",
+                    "builtinassets",
+                    "assetbundle",
+                    "resources",
+                    "ondemand",
+                    logicalName));
+                candidates.Add(Path.Combine(
+                    recoveredAssets,
+                    "sekai",
+                    "builtinassets",
+                    "assetbundle",
+                    "resources",
+                    "tutorial",
+                    logicalName));
+            }
+
+            var source = candidates.FirstOrDefault(Directory.Exists);
+            if (string.IsNullOrEmpty(source))
+            {
+                throw new DirectoryNotFoundException(
+                    "Recovered Unity asset group is missing. Checked:\n" +
+                    string.Join("\n", candidates));
             }
             var destinationParent = Path.GetDirectoryName(Path.GetFullPath(destination));
             if (!string.IsNullOrEmpty(destinationParent))
@@ -479,7 +526,9 @@ namespace Haruki.MV.Editor
             FileUtil.CopyFileOrDirectory(source, destination);
         }
 
-        private static void RemapRecoveredShaderGuids(string importedRoot)
+        private static void RemapRecoveredShaderGuids(
+            string recoveredAssets,
+            string importedRoot)
         {
             const string replacementRoot = "Assets/Haruki/MV/Shaders";
             var replacementShaders = AssetDatabase.FindAssets("t:Shader", new[] { replacementRoot })
@@ -542,10 +591,14 @@ namespace Haruki.MV.Editor
             var replacements = new Dictionary<string, string>(StringComparer.Ordinal);
             var replacedShaderPaths = new List<string>();
 
-            foreach (var shaderPath in Directory.GetFiles(
-                importedRoot,
+            var shaderRoots = new[] { importedRoot, recoveredAssets }
+                .Where(Directory.Exists)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray();
+            foreach (var shaderPath in shaderRoots.SelectMany(root => Directory.GetFiles(
+                root,
                 "*.shader",
-                SearchOption.AllDirectories))
+                SearchOption.AllDirectories)))
             {
                 var shaderText = File.ReadAllText(shaderPath);
                 if (!shaderText.Contains("DummyShaderTextExporter"))
@@ -565,8 +618,11 @@ namespace Haruki.MV.Editor
                         $"Recovered shader metadata is missing for '{shaderNameMatch.Groups[1].Value}'.",
                         metaPath);
                 }
-                replacements.Add(ReadMetaGuid(metaPath), replacementGuid);
-                replacedShaderPaths.Add(shaderPath);
+                replacements[ReadMetaGuid(metaPath)] = replacementGuid;
+                if (shaderPath.StartsWith(importedRoot + Path.DirectorySeparatorChar, StringComparison.Ordinal))
+                {
+                    replacedShaderPaths.Add(shaderPath);
+                }
             }
 
             if (replacements.Count == 0)
@@ -586,23 +642,25 @@ namespace Haruki.MV.Editor
             var serializedPaths = Directory.GetFiles(importedRoot, "*", SearchOption.AllDirectories)
                 .Where(path => serializedExtensions.Contains(Path.GetExtension(path)))
                 .ToArray();
+            var guidPattern = new Regex(
+                @"(?<![0-9A-Fa-f])[0-9A-Fa-f]{32}(?![0-9A-Fa-f])",
+                RegexOptions.Compiled);
             foreach (var path in serializedPaths)
             {
                 var text = File.ReadAllText(path);
-                foreach (var replacement in replacements)
-                {
-                    text = text.Replace(replacement.Key, replacement.Value);
-                }
+                text = guidPattern.Replace(
+                    text,
+                    match => replacements.TryGetValue(match.Value, out var replacement)
+                        ? replacement
+                        : match.Value);
                 File.WriteAllText(path, text);
-            }
-            foreach (var replacement in replacements)
-            {
-                var unresolved = serializedPaths.FirstOrDefault(path =>
-                    File.ReadAllText(path).Contains(replacement.Key));
-                if (unresolved != null)
+                foreach (Match match in guidPattern.Matches(text))
                 {
-                    throw new InvalidOperationException(
-                        $"Recovered shader GUID {replacement.Key} remained in {unresolved}.");
+                    if (replacements.ContainsKey(match.Value))
+                    {
+                        throw new InvalidOperationException(
+                            $"Recovered shader GUID {match.Value} remained in {path}.");
+                    }
                 }
             }
             foreach (var shaderPath in replacedShaderPaths)
@@ -836,41 +894,45 @@ namespace Haruki.MV.Editor
                     path.EndsWith(".playable", StringComparison.OrdinalIgnoreCase) ||
                     path.EndsWith(".prefab", StringComparison.OrdinalIgnoreCase))
                 .ToArray();
+            var guidPattern = new Regex(
+                @"(?<![0-9A-Fa-f])[0-9A-Fa-f]{32}(?![0-9A-Fa-f])",
+                RegexOptions.Compiled);
+            var scriptPropertyPattern = new Regex(
+                @"script_0x([0-9A-Fa-f]{1,8})(?:_[A-Za-z]+)?",
+                RegexOptions.Compiled);
             foreach (var path in serializedPaths)
             {
                 var text = File.ReadAllText(path);
-                foreach (var replacement in replacements)
-                {
-                    text = text.Replace(replacement.Key, replacement.Value);
-                }
+                text = guidPattern.Replace(
+                    text,
+                    match => replacements.TryGetValue(match.Value, out var replacement)
+                        ? replacement
+                        : match.Value);
                 text = RemapRecoveredScriptAnimationProperties(text);
                 text = RemapRecoveredAnimationPaths(text);
                 text = RemapRecoveredMaterialAnimationProperties(text);
                 File.WriteAllText(path, text);
-            }
 
-            foreach (var propertyName in RecoveredAnimationPropertyNames)
-            {
-                var unresolved = serializedPaths.FirstOrDefault(path =>
-                    Regex.IsMatch(
-                        File.ReadAllText(path),
-                        $@"script_0x0*{propertyName.Key:X8}(?![0-9A-Fa-f])",
-                        RegexOptions.IgnoreCase));
-                if (unresolved != null)
+                foreach (Match match in scriptPropertyPattern.Matches(text))
                 {
-                    throw new InvalidOperationException(
-                        $"Recovered animation property 0x{propertyName.Key:X8} remained in {unresolved}.");
+                    if (uint.TryParse(
+                            match.Groups[1].Value,
+                            System.Globalization.NumberStyles.HexNumber,
+                            System.Globalization.CultureInfo.InvariantCulture,
+                            out var hash) &&
+                        RecoveredAnimationPropertyNames.ContainsKey(hash))
+                    {
+                        throw new InvalidOperationException(
+                            $"Recovered animation property 0x{hash:X8} remained in {path}.");
+                    }
                 }
-            }
-
-            foreach (var replacement in replacements)
-            {
-                var unresolved = serializedPaths.FirstOrDefault(path =>
-                    File.ReadAllText(path).Contains(replacement.Key));
-                if (unresolved != null)
+                foreach (Match match in guidPattern.Matches(text))
                 {
-                    throw new InvalidOperationException(
-                        $"Recovered script GUID {replacement.Key} remained in {unresolved}.");
+                    if (replacements.ContainsKey(match.Value))
+                    {
+                        throw new InvalidOperationException(
+                            $"Recovered script GUID {match.Value} remained in {path}.");
+                    }
                 }
             }
         }
