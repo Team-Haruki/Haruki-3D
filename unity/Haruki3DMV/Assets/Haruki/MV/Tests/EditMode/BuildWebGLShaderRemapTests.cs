@@ -78,5 +78,70 @@ namespace Haruki.MV.Tests
 
             Assert.That(remapped, Is.EqualTo(recovered));
         }
+
+        [TestCase("script_0x3738F1E6_rJPntKJ", "fogColor.r")]
+        [TestCase("script_0x150CCE81_sPUTwqL", "fogEnd")]
+        [TestCase("script_0xE9B2B892_ulhTsTL", "intensity")]
+        [TestCase("script_0xBC8CF78A_nVwTVoL", "ambientColor.r")]
+        public void RestoresRecoveredScriptAnimationPropertiesWithoutNoiseSuffix(
+            string recovered,
+            string expected)
+        {
+            var method = typeof(BuildWebGL).GetMethod(
+                "RemapRecoveredScriptAnimationProperties",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(method, Is.Not.Null);
+
+            var remapped = (string)method.Invoke(null, new object[] { $"attribute: {recovered}" });
+
+            Assert.That(remapped, Is.EqualTo($"attribute: {expected}"));
+        }
+
+        [Test]
+        public void PreservesUnknownRecoveredScriptAnimationProperties()
+        {
+            const string recovered = "attribute: script_0x12345678_unknown";
+            var method = typeof(BuildWebGL).GetMethod(
+                "RemapRecoveredScriptAnimationProperties",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            var remapped = (string)method.Invoke(null, new object[] { recovered });
+
+            Assert.That(remapped, Is.EqualTo(recovered));
+        }
+
+        [TestCase("path: path_0xC647CF32_JWkttsH", "path: mainCam")]
+        [TestCase("path: path_0x4F5CF102_hTJRkiJ", "path: mainCam/Camera")]
+        [TestCase("path: path_0xC3BD6806_pKPwvmJ", "path: mainCam/CamParam")]
+        [TestCase("path: path_0xA150FA61_tVjUTqN", "path: subCam")]
+        [TestCase("path: path_0x738D4D1_UNrHoiJ", "path: subCam/target")]
+        [TestCase("path: path_0x7DE7101E_HniqUJN", "path: subCam/Camera")]
+        [TestCase("path: path_0xF2C7D50E_LjIqsjJ", "path: subCam/CamParam")]
+        public void RestoresRecoveredCameraAnimationPaths(
+            string recovered,
+            string expected)
+        {
+            var method = typeof(BuildWebGL).GetMethod(
+                "RemapRecoveredAnimationPaths",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            Assert.That(method, Is.Not.Null);
+
+            var remapped = (string)method.Invoke(null, new object[] { recovered });
+
+            Assert.That(remapped, Is.EqualTo(expected));
+        }
+
+        [Test]
+        public void PreservesUnknownRecoveredAnimationPaths()
+        {
+            const string recovered = "path: path_0x12345678_unknown";
+            var method = typeof(BuildWebGL).GetMethod(
+                "RemapRecoveredAnimationPaths",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            var remapped = (string)method.Invoke(null, new object[] { recovered });
+
+            Assert.That(remapped, Is.EqualTo(recovered));
+        }
     }
 }

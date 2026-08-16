@@ -100,6 +100,7 @@ namespace Haruki.MV.Tests
             var root = MvRecoveredCameraResources.Create(MvCameraNode.MainCameraResource);
             try
             {
+                Assert.That(root.GetComponent<Animator>(), Is.Not.Null);
                 var mainCam = root.transform.Find("mainCam");
                 Assert.That(mainCam, Is.Not.Null);
                 Assert.That(mainCam.GetSiblingIndex(), Is.EqualTo(0));
@@ -139,6 +140,7 @@ namespace Haruki.MV.Tests
             var root = MvRecoveredCameraResources.Create(MvCameraNode.SubCameraResource);
             try
             {
+                Assert.That(root.GetComponent<Animator>(), Is.Not.Null);
                 var subCam = root.transform.Find("subCam");
                 Assert.That(subCam, Is.Not.Null);
                 Assert.That(subCam.Find("target").GetSiblingIndex(), Is.EqualTo(0));

@@ -32,6 +32,24 @@ HARUKI_MV_SOURCE_SET_MANIFEST=/path/to/mv-source-set.json \
 npm run build:mv:unity
 ```
 
+Recovered assets are normally deleted after their WebGL bundles are written.
+To inspect the exact remapped Materials, AnimationClips, Prefabs, and Timelines
+inside the Unity editor, retain the generated import explicitly:
+
+```bash
+HARUKI_MV_KEEP_RECOVERED_ASSETS=1 \
+HARUKI_MV_RECOVERED_PROJECT=/path/to/ExportedProject \
+HARUKI_MV_SOURCE_SET_MANIFEST=/path/to/mv-source-set.json \
+npm run build:mv:unity
+```
+
+The retained tree is written below
+`Assets/Haruki/MV/Generated/MvBuild`. It is an inspection artifact, not a
+publishable source package. AssetRipper expands compact binary AnimationClips
+to verbose Unity YAML, so a 45 MiB source set can temporarily occupy roughly
+800 MiB; delete the generated tree after editor inspection or rebuild without
+the retention flag.
+
 AssetRipper cannot recover portable ShaderLab source from the Android shader
 programs. The default recovered build therefore rejects every
 `DummyShaderTextExporter` placeholder. To rebuild a local evidence bundle while
@@ -68,8 +86,10 @@ Built-in Unity Timeline script references recovered by AssetRipper are remapped
 to the matching Unity Timeline 1.7.6 types before rebuilding. Sekai-specific
 Track/Clip and recovered component GUIDs are separately remapped to the matching
 runtime classes in this project; they are never substituted for built-in
-Timeline types. Binary textures and other recovered assets are copied without
-content rewriting. The build then scans every imported YAML object and fails
+Timeline types. AssetRipper's noisy hashed AnimationClip property and camera
+hierarchy placeholders are restored before Unity imports the clips. Recovered
+textures and other recovered assets are copied without semantic rewriting. The
+build then scans every imported YAML object and fails
 with the recovered type name when a referenced game script is still unresolved.
 
 The Unity MV player is built on an activated development machine with

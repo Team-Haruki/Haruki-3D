@@ -20,6 +20,42 @@ namespace Haruki.MV.Editor
         private const string BuildName = "HarukiMV";
         private const string AllowDummyShadersEnvironmentVariable =
             "HARUKI_MV_ALLOW_DUMMY_SHADERS";
+        private const string KeepRecoveredAssetsEnvironmentVariable =
+            "HARUKI_MV_KEEP_RECOVERED_ASSETS";
+        private static readonly IReadOnlyDictionary<uint, string>
+            RecoveredAnimationPropertyNames = new Dictionary<uint, string>
+            {
+                [0xBC8CF78A] = "ambientColor.r",
+                [0xD1511361] = "ambientColor.g",
+                [0xA13BE7EE] = "ambientColor.b",
+                [0x3832B654] = "ambientColor.a",
+                [0xE9B2B892] = "intensity",
+                [0x0B5F698D] = "glowIntensity",
+                [0x1BB27D40] = "shadowColor.r",
+                [0x766F99AB] = "shadowColor.g",
+                [0x06056D24] = "shadowColor.b",
+                [0x9F0C3C9E] = "shadowColor.a",
+                [0xDF7C3605] = "shadowThreshold",
+                [0xFBA7B536] = "rimColor.r",
+                [0x967A51DD] = "rimColor.g",
+                [0xE610A552] = "rimColor.b",
+                [0x7F19F4E8] = "rimColor.a",
+                [0x93875A49] = "range",
+                [0xF0225CF4] = "emission",
+                [0x9B01F251] = "lightInfluence",
+                [0x3D7E83F9] = "isUseShadowColor",
+                [0x929571D4] = "shadowRimColor.r",
+                [0xFF48953F] = "shadowRimColor.g",
+                [0x8F2261B0] = "shadowRimColor.b",
+                [0x162B300A] = "shadowRimColor.a",
+                [0xD22DC43F] = "shadowSharpness",
+                [0x3738F1E6] = "fogColor.r",
+                [0x5AE5150D] = "fogColor.g",
+                [0x2A8FE182] = "fogColor.b",
+                [0xB386B038] = "fogColor.a",
+                [0x8333F82D] = "fogStart",
+                [0x150CCE81] = "fogEnd",
+            };
 
         [Serializable]
         private sealed class MvSourceSetBuildManifest
@@ -384,8 +420,17 @@ namespace Haruki.MV.Editor
             }
             finally
             {
-                AssetDatabase.DeleteAsset(RecoveredAssetRoot);
-                AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                if (Environment.GetEnvironmentVariable(
+                        KeepRecoveredAssetsEnvironmentVariable) == "1")
+                {
+                    Debug.Log(
+                        $"Kept remapped recovered MV assets at {RecoveredAssetRoot} for inspection.");
+                }
+                else
+                {
+                    AssetDatabase.DeleteAsset(RecoveredAssetRoot);
+                    AssetDatabase.Refresh(ImportAssetOptions.ForceSynchronousImport);
+                }
             }
         }
 
@@ -781,40 +826,6 @@ namespace Haruki.MV.Editor
                     AssetDatabase.AssetPathToGUID(projectScript));
             }
 
-            var animationPropertyNames = new Dictionary<uint, string>
-            {
-                [0xBC8CF78A] = "ambientColor.r",
-                [0xD1511361] = "ambientColor.g",
-                [0xA13BE7EE] = "ambientColor.b",
-                [0x3832B654] = "ambientColor.a",
-                [0xE9B2B892] = "intensity",
-                [0x0B5F698D] = "glowIntensity",
-                [0x1BB27D40] = "shadowColor.r",
-                [0x766F99AB] = "shadowColor.g",
-                [0x06056D24] = "shadowColor.b",
-                [0x9F0C3C9E] = "shadowColor.a",
-                [0xDF7C3605] = "shadowThreshold",
-                [0xFBA7B536] = "rimColor.r",
-                [0x967A51DD] = "rimColor.g",
-                [0xE610A552] = "rimColor.b",
-                [0x7F19F4E8] = "rimColor.a",
-                [0x93875A49] = "range",
-                [0xF0225CF4] = "emission",
-                [0x9B01F251] = "lightInfluence",
-                [0x3D7E83F9] = "isUseShadowColor",
-                [0x929571D4] = "shadowRimColor.r",
-                [0xFF48953F] = "shadowRimColor.g",
-                [0x8F2261B0] = "shadowRimColor.b",
-                [0x162B300A] = "shadowRimColor.a",
-                [0xD22DC43F] = "shadowSharpness",
-                [0x3738F1E6] = "fogColor.r",
-                [0x5AE5150D] = "fogColor.g",
-                [0x2A8FE182] = "fogColor.b",
-                [0xB386B038] = "fogColor.a",
-                [0x8333F82D] = "fogStart",
-                [0x150CCE81] = "fogEnd",
-            };
-
             var serializedPaths = Directory.GetFiles(
                     importedRoot,
                     "*",
@@ -832,22 +843,13 @@ namespace Haruki.MV.Editor
                 {
                     text = text.Replace(replacement.Key, replacement.Value);
                 }
-                text = Regex.Replace(
-                    text,
-                    @"script_0x([0-9A-Fa-f]+)",
-                    match => uint.TryParse(
-                            match.Groups[1].Value,
-                            System.Globalization.NumberStyles.HexNumber,
-                            System.Globalization.CultureInfo.InvariantCulture,
-                            out var hash)
-                        && animationPropertyNames.TryGetValue(hash, out var propertyName)
-                            ? propertyName
-                            : match.Value);
+                text = RemapRecoveredScriptAnimationProperties(text);
+                text = RemapRecoveredAnimationPaths(text);
                 text = RemapRecoveredMaterialAnimationProperties(text);
                 File.WriteAllText(path, text);
             }
 
-            foreach (var propertyName in animationPropertyNames)
+            foreach (var propertyName in RecoveredAnimationPropertyNames)
             {
                 var unresolved = serializedPaths.FirstOrDefault(path =>
                     Regex.IsMatch(
@@ -871,6 +873,51 @@ namespace Haruki.MV.Editor
                         $"Recovered script GUID {replacement.Key} remained in {unresolved}.");
                 }
             }
+        }
+
+        private static string RemapRecoveredScriptAnimationProperties(string text)
+        {
+            return Regex.Replace(
+                text,
+                @"script_0x([0-9A-Fa-f]{1,8})(?:_[A-Za-z]+)?",
+                match => uint.TryParse(
+                        match.Groups[1].Value,
+                        System.Globalization.NumberStyles.HexNumber,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out var hash)
+                    && RecoveredAnimationPropertyNames.TryGetValue(hash, out var propertyName)
+                        ? propertyName
+                        : match.Value);
+        }
+
+        private static string RemapRecoveredAnimationPaths(string text)
+        {
+            // AssetRipper preserves the Animator.StringToHash CRC but replaces
+            // the original hierarchy path with path_0x{crc}_{noise}. Camera
+            // AnimationClips therefore import successfully while silently
+            // driving no Transform. These paths are closed by the captured
+            // MainCamera_MV/SubCamera prefab hierarchies.
+            var paths = new Dictionary<uint, string>
+            {
+                [0xC647CF32] = "mainCam",
+                [0x4F5CF102] = "mainCam/Camera",
+                [0xC3BD6806] = "mainCam/CamParam",
+                [0xA150FA61] = "subCam",
+                [0x0738D4D1] = "subCam/target",
+                [0x7DE7101E] = "subCam/Camera",
+                [0xF2C7D50E] = "subCam/CamParam",
+            };
+            return Regex.Replace(
+                text,
+                @"path_0x([0-9A-Fa-f]{1,8})_[A-Za-z]+",
+                match => uint.TryParse(
+                        match.Groups[1].Value,
+                        System.Globalization.NumberStyles.HexNumber,
+                        System.Globalization.CultureInfo.InvariantCulture,
+                        out var hash)
+                    && paths.TryGetValue(hash, out var path)
+                        ? path
+                        : match.Value);
         }
 
         private static string RemapRecoveredMaterialAnimationProperties(string text)
@@ -1021,6 +1068,55 @@ namespace Haruki.MV.Editor
                         $"{AllowDummyShadersEnvironmentVariable}=1. Examples:\n" +
                         string.Join("\n", dummyShaders));
                 }
+            }
+
+            var unresolvedCameraPaths = Directory.GetFiles(
+                    importedRoot,
+                    "*.anim",
+                    SearchOption.AllDirectories)
+                .Where(path => path.Replace('\\', '/').Contains("/timeline/", StringComparison.Ordinal) &&
+                    path.Replace('\\', '/').Contains("/camera/", StringComparison.Ordinal))
+                .Select(path => new
+                {
+                    Path = path,
+                    Match = Regex.Match(
+                        File.ReadAllText(path),
+                        @"path_0x[0-9A-Fa-f]+_[A-Za-z]+")
+                })
+                .Where(entry => entry.Match.Success)
+                .Take(8)
+                .ToArray();
+            if (unresolvedCameraPaths.Length != 0)
+            {
+                gaps.Add(
+                    "camera AnimationClips still contain unrecovered hierarchy paths:\n" +
+                    string.Join("\n", unresolvedCameraPaths.Select(entry =>
+                        $"{entry.Match.Value}: {entry.Path}")));
+            }
+
+            var invalidCharacterMaterials = AssetDatabase
+                .FindAssets("t:Material", new[] { importedRoot })
+                .Select(AssetDatabase.GUIDToAssetPath)
+                .Where(path => path.Replace('\\', '/').Contains(
+                    "/live_pv/model/character",
+                    StringComparison.Ordinal))
+                .Select(path => new
+                {
+                    Path = path,
+                    Material = AssetDatabase.LoadAssetAtPath<Material>(path)
+                })
+                .Where(entry => entry.Material == null ||
+                    entry.Material.shader == null ||
+                    entry.Material.shader.name == "Hidden/InternalErrorShader" ||
+                    entry.Material.HasProperty("_MainTex") &&
+                        entry.Material.GetTexture("_MainTex") == null)
+                .Take(8)
+                .ToArray();
+            if (invalidCharacterMaterials.Length != 0)
+            {
+                gaps.Add(
+                    "character materials have no usable shader or main texture:\n" +
+                    string.Join("\n", invalidCharacterMaterials.Select(entry => entry.Path)));
             }
 
             var recoveredMvData = AssetDatabase

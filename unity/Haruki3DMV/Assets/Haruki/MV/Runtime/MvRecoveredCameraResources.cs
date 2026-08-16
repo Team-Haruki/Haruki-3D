@@ -33,6 +33,7 @@ namespace Haruki.MV
         private static GameObject CreateMainCamera()
         {
             var root = Node("MainCamera", null);
+            ConfigureAnimationRoot(root);
             var mainCam = Node("mainCam", root.transform);
             mainCam.transform.localPosition = new Vector3(1.8f, 1f, 6f);
             mainCam.transform.localRotation = new Quaternion(
@@ -53,6 +54,7 @@ namespace Haruki.MV
         private static GameObject CreateSubCamera()
         {
             var root = Node("SubCamera", null);
+            ConfigureAnimationRoot(root);
             root.transform.localScale = new Vector3(1f, 1.000000238f, 1.000000238f);
             var subCam = Node("subCam", root.transform);
             Node("target", subCam.transform);
@@ -63,6 +65,12 @@ namespace Haruki.MV
             var cameraParameter = Node("CamParam", subCam.transform);
             cameraParameter.transform.localPosition = new Vector3(0f, 0f, 0.35f);
             return root;
+        }
+
+        private static void ConfigureAnimationRoot(GameObject root)
+        {
+            var animator = root.AddComponent<Animator>();
+            animator.applyRootMotion = false;
         }
 
         private static void ConfigureMainCamera(Camera camera)

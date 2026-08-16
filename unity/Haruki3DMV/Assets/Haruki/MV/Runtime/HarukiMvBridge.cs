@@ -1,7 +1,13 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Runtime.InteropServices;
 using UnityEngine;
+using UnityEngine.Playables;
+using UnityEngine.Rendering.Universal;
 using Sekai.Core;
+using Sekai.Rendering;
+using Sekai.Rendering.PostPrcessV2;
 
 namespace Haruki.MV
 {
@@ -118,6 +124,54 @@ namespace Haruki.MV
         private sealed class DisposedPayload
         {
             public string requestId;
+        }
+
+        [Serializable]
+        private sealed class DiagnosticsRequest
+        {
+            public string requestId;
+        }
+
+        [Serializable]
+        private sealed class CameraDiagnostics
+        {
+            public string name;
+            public Vector3 position;
+            public Vector3 eulerAngles;
+            public float fieldOfView;
+            public bool enabled;
+        }
+
+        [Serializable]
+        private sealed class MaterialDiagnostics
+        {
+            public string renderer;
+            public string material;
+            public string shader;
+            public bool shaderSupported;
+            public int passCount;
+            public string mainTexture;
+            public int mainTextureWidth;
+            public int mainTextureHeight;
+        }
+
+        [Serializable]
+        private sealed class DiagnosticsPayload
+        {
+            public string requestId;
+            public CameraDiagnostics camera;
+            public Color fogColor;
+            public Vector4 fogFactor;
+            public float allLightIntensity;
+            public bool postProcessShadersReady;
+            public bool postProcessTexturesReady;
+            public string[] missingPostProcessShaders = Array.Empty<string>();
+            public int timelineCount;
+            public int timelineOutputCount;
+            public int unboundTimelineOutputCount;
+            public string[] unboundTimelineOutputs = Array.Empty<string>();
+            public int rendererCount;
+            public MaterialDiagnostics[] materials = Array.Empty<MaterialDiagnostics>();
         }
 
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -414,6 +468,116 @@ namespace Haruki.MV
         public void GetState(string unused)
         {
             EmitState();
+        }
+
+        public void GetDiagnostics(string json)
+        {
+            DiagnosticsRequest request;
+            try
+            {
+                request = ParseRequest<DiagnosticsRequest>(json);
+            }
+            catch (Exception exception)
+            {
+                EmitError(exception);
+                return;
+            }
+
+            InvokeSafely(() =>
+            {
+                var player = _playerAssembler.MainPlayer ??
+                    throw new InvalidOperationException("Load an MV before requesting diagnostics.");
+                var camera = player.Camera.MainCamera;
+                var materials = new List<MaterialDiagnostics>();
+                var seenMaterials = new HashSet<int>();
+                var renderers = player.Root.GetComponentsInChildren<Renderer>(true);
+                foreach (var renderer in renderers)
+                {
+                    foreach (var material in renderer.sharedMaterials)
+                    {
+                        if (material == null || !seenMaterials.Add(material.GetInstanceID()))
+                        {
+                            continue;
+                        }
+                        var texture = material.HasProperty("_MainTex")
+                            ? material.GetTexture("_MainTex")
+                            : material.mainTexture;
+                        materials.Add(new MaterialDiagnostics
+                        {
+                            renderer = renderer.name,
+                            material = material.name,
+                            shader = material.shader != null ? material.shader.name : null,
+                            shaderSupported = material.shader != null && material.shader.isSupported,
+                            passCount = material.passCount,
+                            mainTexture = texture != null ? texture.name : null,
+                            mainTextureWidth = texture != null ? texture.width : 0,
+                            mainTextureHeight = texture != null ? texture.height : 0,
+                        });
+                    }
+                }
+
+                var directors = player.Timeline.Directors;
+                var outputCount = 0;
+                var unboundOutputs = new List<string>();
+                foreach (var director in directors)
+                {
+                    if (director?.playableAsset == null)
+                    {
+                        continue;
+                    }
+                    foreach (var output in director.playableAsset.outputs)
+                    {
+                        outputCount++;
+                        if (director.GetGenericBinding(output.sourceObject) == null)
+                        {
+                            unboundOutputs.Add($"{director.name}/{output.streamName}");
+                        }
+                    }
+                }
+
+                var postProcess = camera == null
+                    ? null
+                    : camera.GetUniversalAdditionalCameraData()
+                        .scriptableRenderer is var runtimeRenderer &&
+                        SekaiRendererRuntime.TryGet(runtimeRenderer, out var runtime)
+                            ? runtime.Data.rendererFeatures
+                                .OfType<SekaiPostProcessRendererFeature>()
+                                .Select(feature => feature.Pass)
+                                .FirstOrDefault(pass => pass != null)
+                            : null;
+                var postProcessTexturesReady =
+                    Resources.Load<Texture2D>(TextureResources.AreaTexturePath) != null &&
+                    Resources.Load<Texture2D>(TextureResources.SearchTexturePath) != null;
+
+                Emit("diagnostics-ready", JsonUtility.ToJson(new DiagnosticsPayload
+                {
+                    requestId = request.requestId,
+                    camera = camera == null ? null : new CameraDiagnostics
+                    {
+                        name = camera.name,
+                        position = camera.transform.position,
+                        eulerAngles = camera.transform.eulerAngles,
+                        fieldOfView = camera.fieldOfView,
+                        enabled = camera.enabled,
+                    },
+                    fogColor = Shader.GetGlobalColor("_SekaiFogColor"),
+                    fogFactor = Shader.GetGlobalVector("_SekaiFogFactor"),
+                    allLightIntensity = Shader.GetGlobalFloat("_SekaiAllLightIntensity"),
+                    postProcessShadersReady = postProcess?.HasOfficialShaderLibrary == true,
+                    postProcessTexturesReady = postProcessTexturesReady,
+                    missingPostProcessShaders = postProcess?.MissingShaderNames.ToArray() ??
+                        Array.Empty<string>(),
+                    timelineCount = directors.Count,
+                    timelineOutputCount = outputCount,
+                    unboundTimelineOutputCount = unboundOutputs.Count,
+                    unboundTimelineOutputs = unboundOutputs.ToArray(),
+                    rendererCount = renderers.Length,
+                    materials = materials
+                        .OrderBy(value => value.renderer, StringComparer.Ordinal)
+                        .ThenBy(value => value.material, StringComparer.Ordinal)
+                        .ToArray(),
+                }));
+            }, request.requestId);
         }
 
         public void Dispose(string json)

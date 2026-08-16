@@ -17,6 +17,7 @@ const assembleSampleMv = process.env.HARUKI_MV_ASSEMBLE_SAMPLE === "1";
 const enableSampleCutIns = process.env.HARUKI_MV_ENABLE_CUTINS === "1";
 const logBrowserConsole = process.env.HARUKI_MV_LOG_CONSOLE === "1";
 const allowRenderErrors = process.env.HARUKI_MV_ALLOW_RENDER_ERRORS === "1";
+const seekSeconds = Number(process.env.HARUKI_MV_SEEK_SECONDS ?? 12.5);
 const screenshotPath = process.env.HARUKI_MV_SCREENSHOT
   ? path.resolve(process.env.HARUKI_MV_SCREENSHOT)
   : null;
@@ -331,11 +332,24 @@ try {
       }
       const soughtState = await invokeAndReadState(
         "Seek",
-        JSON.stringify({ timeSeconds: 12.5 })
+        JSON.stringify({ timeSeconds: seekSeconds })
       );
-      if (Math.abs(soughtState.timeSeconds - 12.5) > 0.001) {
+      if (Math.abs(soughtState.timeSeconds - seekSeconds) > 0.001) {
         throw new Error(`Unity MV seek mismatch: ${JSON.stringify(soughtState)}`);
       }
+      await page.waitForTimeout(250);
+      const diagnostics = await requestRenderProfile(
+        "GetDiagnostics",
+        "diagnostics-ready",
+        { requestId: "smoke-diagnostics" }
+      );
+      const { materials, ...diagnosticSummary } = diagnostics;
+      console.log(
+        `Unity WebGL MV diagnostics: ${JSON.stringify({
+          ...diagnosticSummary,
+          materialCount: materials.length,
+        })}`
+      );
       await invokeAndReadState(
         "SetCutInActive",
         JSON.stringify({ cutInOrder: 0, active: true })
