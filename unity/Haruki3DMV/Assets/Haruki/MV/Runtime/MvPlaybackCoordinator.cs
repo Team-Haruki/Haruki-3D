@@ -11,7 +11,9 @@ namespace Haruki.MV
     {
         Empty,
         Paused,
-        Playing
+        Preparing,
+        Playing,
+        Completed
     }
 
     public sealed class MvPlaybackCoordinator : MonoBehaviour
@@ -25,11 +27,17 @@ namespace Haruki.MV
         private double _durationSeconds;
         private double _timeSeconds;
         private bool _audioStarted;
+        private bool _audioPlayRequested;
+        private bool _audioHasBegun;
+        private bool _audioMutedForSeek;
         private bool _audioWasPlaying;
         private bool _audioCompleted;
         private bool _audioClockInitialized;
+        private bool _waitingForAudio;
         private long _referenceAudioMilliseconds;
         private double _referenceUnityTime;
+
+        public event Action PlaybackCompleted;
 
         public MvPlaybackState State { get; private set; } = MvPlaybackState.Empty;
         public double CurrentTimeSeconds => _timeSeconds;
@@ -137,34 +145,35 @@ namespace Haruki.MV
         public void SetPlaybackPaused(bool paused)
         {
             EnsureBound();
-            State = paused ? MvPlaybackState.Paused : MvPlaybackState.Playing;
-
-            foreach (var participant in _participants)
+            if (!paused && _audioCompleted)
             {
-                participant.SetPaused(paused);
+                return;
             }
-
             if (_audioSource == null || _audioSource.clip == null)
             {
+                State = paused ? MvPlaybackState.Paused : MvPlaybackState.Playing;
+                SetParticipantsPaused(paused);
                 return;
             }
 
             if (paused)
             {
+                State = MvPlaybackState.Paused;
+                SetParticipantsPaused(true);
                 if (_audioStarted)
                 {
                     _audioSource.Pause();
                 }
+                _audioPlayRequested = false;
+                _audioWasPlaying = false;
             }
-            else if (_audioStarted)
+            else
             {
-                _audioSource.UnPause();
-            }
-            else if (!_audioCompleted)
-            {
-                _audioSource.Play();
+                State = MvPlaybackState.Preparing;
+                SetParticipantsPaused(true);
                 _audioStarted = true;
                 _audioWasPlaying = false;
+                RequestAudioStart();
             }
             ResetAudioClock();
         }
@@ -273,10 +282,15 @@ namespace Haruki.MV
             {
                 _audioSource.Stop();
             }
+            RestoreAudioMute();
             _audioStarted = false;
+            _audioPlayRequested = false;
+            _audioHasBegun = false;
+            _audioMutedForSeek = false;
             _audioWasPlaying = false;
             _audioCompleted = false;
             _audioClockInitialized = false;
+            _waitingForAudio = false;
             SeekInternal(0);
             SetPlaybackPaused(true);
         }
@@ -287,6 +301,7 @@ namespace Haruki.MV
             {
                 _audioSource.Stop();
             }
+            RestoreAudioMute();
 
             foreach (var director in _directors)
             {
@@ -309,54 +324,85 @@ namespace Haruki.MV
             _durationSeconds = 0;
             _timeSeconds = 0;
             _audioStarted = false;
+            _audioPlayRequested = false;
+            _audioHasBegun = false;
+            _audioMutedForSeek = false;
             _audioWasPlaying = false;
             _audioCompleted = false;
             _audioClockInitialized = false;
+            _waitingForAudio = false;
             State = MvPlaybackState.Empty;
         }
 
         private void Update()
         {
-            if (State != MvPlaybackState.Playing)
+            if (State != MvPlaybackState.Playing &&
+                State != MvPlaybackState.Preparing)
             {
                 return;
             }
 
-            if (_audioSource != null && _audioSource.clip != null && _audioStarted)
+            if (_audioSource != null && _audioSource.clip != null)
             {
+                if (!_audioStarted)
+                {
+                    return;
+                }
                 var audioLoadState = _audioSource.clip.loadState;
-                if (audioLoadState == AudioDataLoadState.Unloaded ||
-                    audioLoadState == AudioDataLoadState.Loading)
+                if (audioLoadState == AudioDataLoadState.Unloaded)
+                {
+                    _audioSource.clip.LoadAudioData();
+                    return;
+                }
+                if (audioLoadState == AudioDataLoadState.Loading)
                 {
                     return;
                 }
                 if (audioLoadState == AudioDataLoadState.Failed)
                 {
                     _audioStarted = false;
+                    _audioPlayRequested = false;
+                    _audioHasBegun = false;
+                    RestoreAudioMute();
                     _audioCompleted = true;
                     _audioClockInitialized = false;
-                    Debug.LogError("MV audio data failed to load; visual playback will continue.");
+                    _waitingForAudio = false;
+                    State = MvPlaybackState.Paused;
+                    SetParticipantsPaused(true);
+                    Debug.LogError("MV audio data failed to load; playback has been paused.");
+                    return;
                 }
                 else if (!_audioSource.isPlaying && !_audioWasPlaying)
                 {
-                    _audioSource.Play();
-                    ResetAudioClock();
+                    if (!_audioPlayRequested)
+                    {
+                        RequestAudioStart();
+                    }
                     return;
                 }
                 else if (!_audioSource.isPlaying)
                 {
-                    _audioStarted = false;
-                    _audioWasPlaying = false;
-                    _audioCompleted = true;
-                    _audioClockInitialized = false;
-                    SeekVisuals(Math.Max(
-                        _timeSeconds,
-                        ResolveAudioClipDuration(_audioSource.clip)));
+                    CompleteAudioPlayback();
+                    return;
                 }
                 else
                 {
                     _audioWasPlaying = true;
-                    var unityNow = Time.unscaledTimeAsDouble;
+                    _audioHasBegun = true;
+                    if (_audioPlayRequested)
+                    {
+                        _audioPlayRequested = false;
+                        ApplyVisualTimeToAudioSource();
+                        RestoreAudioMute();
+                        ResetAudioClock();
+                        BeginVisualPlayback();
+                        return;
+                    }
+                    if (State == MvPlaybackState.Preparing)
+                    {
+                        BeginVisualPlayback();
+                    }
+                    var unityNow = Time.timeAsDouble;
                     var audioMilliseconds = (long)(_audioSource.time * 1000.0f);
                     if (!_audioClockInitialized)
                     {
@@ -367,8 +413,11 @@ namespace Haruki.MV
                             * _audioSource.pitch * 1000.0);
                     var synced = ResolveAudioSyncedTimeMilliseconds(
                         predicted,
-                        audioMilliseconds);
-                    if (audioMilliseconds - predicted >= 63)
+                        audioMilliseconds,
+                        (long)(_timeSeconds * 1000.0),
+                        ref _waitingForAudio,
+                        out var resetReference);
+                    if (resetReference)
                     {
                         _referenceAudioMilliseconds = audioMilliseconds;
                         _referenceUnityTime = unityNow;
@@ -378,7 +427,7 @@ namespace Haruki.MV
                 }
             }
 
-            var nextTime = _timeSeconds + Time.unscaledDeltaTime;
+            var nextTime = _timeSeconds + Time.deltaTime;
             SeekVisuals(nextTime);
             if (_timeSeconds >= _durationSeconds)
             {
@@ -402,12 +451,8 @@ namespace Haruki.MV
                 : _timeSeconds;
             if (!withinAudio)
             {
-                if (_audioStarted)
-                {
-                    _audioSource.Stop();
-                }
-                _audioStarted = false;
-                _audioCompleted = true;
+                FinishAudioPlayback(false);
+                return;
             }
             else if (_audioCompleted)
             {
@@ -419,7 +464,11 @@ namespace Haruki.MV
                     _audioWasPlaying = false;
                 }
             }
-            _audioSource.time = (float)audioTime;
+            if (_audioStarted &&
+                _audioSource.clip.loadState == AudioDataLoadState.Loaded)
+            {
+                _audioSource.time = (float)audioTime;
+            }
             ResetAudioClock();
         }
 
@@ -432,27 +481,140 @@ namespace Haruki.MV
 
         private static long ResolveAudioSyncedTimeMilliseconds(
             long predicted,
-            long audioMilliseconds)
+            long audioMilliseconds,
+            long playbackMilliseconds,
+            ref bool waitingForAudio,
+            out bool resetReference)
         {
+            resetReference = false;
+            if (audioMilliseconds <= 99)
+            {
+                waitingForAudio = false;
+                return audioMilliseconds;
+            }
+            if (waitingForAudio)
+            {
+                resetReference = true;
+                if (audioMilliseconds > playbackMilliseconds)
+                {
+                    waitingForAudio = false;
+                    return audioMilliseconds;
+                }
+                return playbackMilliseconds;
+            }
             if (predicted - audioMilliseconds >= 63)
             {
+                waitingForAudio = true;
                 return audioMilliseconds + 62;
             }
-            return audioMilliseconds - predicted >= 63
-                ? audioMilliseconds
-                : predicted;
+            if (audioMilliseconds - predicted >= 63)
+            {
+                resetReference = true;
+                return audioMilliseconds;
+            }
+            return predicted;
         }
 
         private void ResetAudioClock()
         {
-            if (_audioSource == null || _audioSource.clip == null)
+            _waitingForAudio = false;
+            if (_audioSource == null ||
+                _audioSource.clip == null ||
+                _audioSource.clip.loadState != AudioDataLoadState.Loaded)
             {
                 _audioClockInitialized = false;
                 return;
             }
             _referenceAudioMilliseconds = (long)(_audioSource.time * 1000.0f);
-            _referenceUnityTime = Time.unscaledTimeAsDouble;
+            _referenceUnityTime = Time.timeAsDouble;
             _audioClockInitialized = true;
+        }
+
+        private void ApplyVisualTimeToAudioSource()
+        {
+            var clipLength = ResolveAudioClipDuration(_audioSource.clip);
+            _audioSource.time = (float)(clipLength > 0
+                ? Math.Min(_timeSeconds, Math.Max(0, clipLength - 0.001))
+                : _timeSeconds);
+        }
+
+        private void RequestAudioStart()
+        {
+            if (_timeSeconds > 0 && !_audioMutedForSeek)
+            {
+                _audioSource.mute = true;
+                _audioMutedForSeek = true;
+            }
+            if (_audioHasBegun)
+            {
+                _audioSource.UnPause();
+                _audioPlayRequested = true;
+                return;
+            }
+            if (_audioSource.clip.loadState == AudioDataLoadState.Unloaded)
+            {
+                _audioSource.clip.LoadAudioData();
+            }
+            else if (_audioSource.clip.loadState == AudioDataLoadState.Loaded)
+            {
+                _audioSource.Play();
+                _audioPlayRequested = true;
+            }
+        }
+
+        private void RestoreAudioMute()
+        {
+            if (!_audioMutedForSeek || _audioSource == null)
+            {
+                return;
+            }
+            _audioSource.mute = false;
+            _audioMutedForSeek = false;
+        }
+
+        private void CompleteAudioPlayback()
+        {
+            FinishAudioPlayback(true);
+        }
+
+        private void FinishAudioPlayback(bool naturalCompletion)
+        {
+            var audioDuration = ResolveAudioClipDuration(_audioSource?.clip);
+            if (_audioSource != null)
+            {
+                _audioSource.Stop();
+            }
+            _audioStarted = false;
+            _audioPlayRequested = false;
+            _audioHasBegun = false;
+            _audioWasPlaying = false;
+            _audioCompleted = true;
+            _audioClockInitialized = false;
+            _waitingForAudio = false;
+            RestoreAudioMute();
+            SeekVisuals(audioDuration);
+            State = naturalCompletion
+                ? MvPlaybackState.Completed
+                : MvPlaybackState.Paused;
+            SetParticipantsPaused(true);
+            if (naturalCompletion)
+            {
+                PlaybackCompleted?.Invoke();
+            }
+        }
+
+        private void BeginVisualPlayback()
+        {
+            State = MvPlaybackState.Playing;
+            SetParticipantsPaused(false);
+        }
+
+        private void SetParticipantsPaused(bool paused)
+        {
+            foreach (var participant in _participants)
+            {
+                participant.SetPaused(paused);
+            }
         }
 
         private void SeekVisuals(double timeSeconds)

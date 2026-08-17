@@ -123,6 +123,8 @@ test("repository contains a Unity 2022.3 WebGL MV project", () => {
   assert.match(build, /addressableNames = new\[\] \{ "body" \}/);
   assert.match(build, /addressableNames = new\[\] \{ "face" \}/);
   assert.match(build, /addressableNames = new\[\] \{ "head_optional" \}/);
+  assert.match(build, /audioBundleName = audioBundleName/);
+  assert.match(build, /Single\(entry => entry\.name\.StartsWith\(\s*"music\/long\/"/);
   assert.match(build, /deps = entry\.dependencies/);
   assert.doesNotMatch(build, /new GameObject\("Main Camera"\)/);
   assert.doesNotMatch(build, /new GameObject\("Preview Light"\)/);
@@ -159,6 +161,39 @@ test("repository contains a Unity 2022.3 WebGL MV project", () => {
   );
   assert.doesNotMatch(bundleLoader, /frameCamera|FrameWithMainCamera/);
   assert.doesNotMatch(bundleLoader, /Camera\.main|fieldOfView/);
+  assert.match(bundleLoader, /ResolveAudioBundleName/);
+  assert.match(bundleLoader, /public string AudioBundleName/);
+
+  const playerAssembler = fs.readFileSync(
+    path.join(unityRoot, "Assets/Haruki/MV/Runtime/MvPlayerAssembler.cs"),
+    "utf8"
+  );
+  assert.doesNotMatch(playerAssembler, /audioBundleName|audioAssetName/);
+  assert.match(playerAssembler, /_bundles\.AudioBundleName/);
+  assert.match(playerAssembler, /LoadAsset<AudioClip>\([\s\S]*"music"/);
+  assert.match(playerAssembler, /request\.canSkipDisplayMusicInfo/);
+  assert.match(playerAssembler, /MusicInfoSkipSeconds\s*=\s*5\.5/);
+
+  const playbackCoordinator = fs.readFileSync(
+    path.join(unityRoot, "Assets/Haruki/MV/Runtime/MvPlaybackCoordinator.cs"),
+    "utf8"
+  );
+  assert.match(playbackCoordinator, /Time\.timeAsDouble/);
+  assert.doesNotMatch(playbackCoordinator, /Time\.unscaledTimeAsDouble/);
+  assert.doesNotMatch(playbackCoordinator, /visual playback will continue/);
+  assert.match(playbackCoordinator, /audioMilliseconds\s*<=\s*99/);
+  assert.match(playbackCoordinator, /_waitingForAudio/);
+  assert.match(playbackCoordinator, /MvPlaybackState\.Preparing/);
+  assert.match(playbackCoordinator, /MvPlaybackState\.Completed/);
+  assert.match(playbackCoordinator, /_audioSource\.mute\s*=\s*true/);
+  assert.match(playbackCoordinator, /PlaybackCompleted\?\.Invoke/);
+
+  const browserBridge = fs.readFileSync(
+    path.join(repoRoot, "src", "mv", "HarukiMvBridge.ts"),
+    "utf8"
+  );
+  assert.doesNotMatch(browserBridge, /audioBundleName|audioAssetName/);
+  assert.match(browserBridge, /canSkipDisplayMusicInfo\?: boolean/);
 });
 
 test("Unity activation material cannot be tracked by accident", () => {

@@ -1,6 +1,7 @@
 using System;
 using System.Collections;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 using UnityEngine.Networking;
 
@@ -21,6 +22,7 @@ namespace Haruki.MV
         public int musicId;
         public string assetVersion;
         public string assetHash;
+        public string audioBundleName;
         public string[] requested = Array.Empty<string>();
         public MvBundleSetEntry[] entries = Array.Empty<MvBundleSetEntry>();
     }
@@ -58,6 +60,7 @@ namespace Haruki.MV
         public bool IsBusy { get; private set; }
         public int LoadedBundleCount => _loadedBundles.Count;
         public IReadOnlyCollection<string> LoadedBundleNames => _loadedBundles.Keys;
+        public string AudioBundleName { get; private set; }
 
         public bool ContainsBundle(string bundleName)
         {
@@ -118,10 +121,12 @@ namespace Haruki.MV
             }
 
             string[] loadOrder = null;
+            string audioBundleName = null;
             Exception loadOrderError = null;
             try
             {
                 loadOrder = ResolveLoadOrder(manifest);
+                audioBundleName = ResolveAudioBundleName(manifest);
             }
             catch (Exception exception)
             {
@@ -160,6 +165,7 @@ namespace Haruki.MV
                 }
             }
 
+            AudioBundleName = audioBundleName;
             IsBusy = false;
             onReady(_loadedBundles.Count);
         }
@@ -295,6 +301,30 @@ namespace Haruki.MV
             }
             _loadOrder.Clear();
             _loadedBundles.Clear();
+            AudioBundleName = null;
+        }
+
+        public static string ResolveAudioBundleName(MvBundleSetManifest manifest)
+        {
+            var matches = manifest?.entries?
+                .Where(entry => entry?.name?.StartsWith(
+                    "music/long/",
+                    StringComparison.Ordinal) == true)
+                .Select(entry => entry.name)
+                .Distinct(StringComparer.Ordinal)
+                .ToArray() ?? Array.Empty<string>();
+            if (matches.Length != 1)
+            {
+                throw new InvalidOperationException(
+                    $"MV dependency manifest must contain exactly one music/long main BGM bundle; found {matches.Length}.");
+            }
+            if (!string.IsNullOrWhiteSpace(manifest.audioBundleName) &&
+                !string.Equals(manifest.audioBundleName, matches[0], StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"MV dependency manifest audioBundleName '{manifest.audioBundleName}' does not match '{matches[0]}'.");
+            }
+            return matches[0];
         }
 
         public static string[] ResolveLoadOrder(MvBundleSetManifest manifest)

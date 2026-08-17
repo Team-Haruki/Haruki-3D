@@ -410,6 +410,11 @@ namespace Haruki.MV.Editor
                 {
                     throw new InvalidOperationException("One or more MV WebGL bundles were not produced.");
                 }
+                var audioBundleName = buildEntries
+                    .Single(entry => entry.name.StartsWith(
+                        "music/long/",
+                        StringComparison.Ordinal))
+                    .name;
 
                 File.WriteAllText(
                     Path.Combine(bundleOutput, "deps.json"),
@@ -418,6 +423,7 @@ namespace Haruki.MV.Editor
                         musicId = sourceSet.music_id,
                         assetVersion = sourceSet.asset_version,
                         assetHash = sourceSet.asset_hash,
+                        audioBundleName = audioBundleName,
                         requested = buildEntries.Select(entry => entry.name).ToArray(),
                         entries = buildEntries.Select(entry =>
                             new MvBundleSetEntry

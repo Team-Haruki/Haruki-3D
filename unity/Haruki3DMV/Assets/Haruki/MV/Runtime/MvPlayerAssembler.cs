@@ -20,10 +20,9 @@ namespace Haruki.MV
         public string requestId;
         public int musicId;
         public bool enableCutIns;
+        public bool canSkipDisplayMusicInfo;
         public MvCharacterLoadSpec[] characters = Array.Empty<MvCharacterLoadSpec>();
         public MvCutInLoadSpec[] cutIns = Array.Empty<MvCutInLoadSpec>();
-        public string audioBundleName;
-        public string audioAssetName;
     }
 
     public sealed class MvPlayerInstance : IDisposable
@@ -234,6 +233,7 @@ namespace Haruki.MV
     [RequireComponent(typeof(MvBundleSetLoader), typeof(MvPlaybackCoordinator))]
     public sealed class MvPlayerAssembler : MonoBehaviour
     {
+        private const double MusicInfoSkipSeconds = 5.5;
         private readonly List<MvPlayerInstance> _players = new List<MvPlayerInstance>();
         private MvBundleSetLoader _bundles;
         private MvPlaybackCoordinator _coordinator;
@@ -338,28 +338,19 @@ namespace Haruki.MV
                 EnsureRenderCanvas();
                 BindOutputCameras();
 
-                AudioSource audioSource = null;
-                if (string.IsNullOrWhiteSpace(request.audioBundleName) !=
-                    string.IsNullOrWhiteSpace(request.audioAssetName))
+                var clip = _bundles.LoadAsset<AudioClip>(
+                    _bundles.AudioBundleName,
+                    "music");
+                if (clip == null)
                 {
                     throw new InvalidOperationException(
-                        "MV audioBundleName and audioAssetName must be supplied together.");
+                        $"MV main BGM bundle '{_bundles.AudioBundleName}' has no 'music' AudioClip.");
                 }
-                if (!string.IsNullOrWhiteSpace(request.audioBundleName) &&
-                    !string.IsNullOrWhiteSpace(request.audioAssetName))
-                {
-                    var clip = _bundles.LoadAsset<AudioClip>(
-                        request.audioBundleName,
-                        request.audioAssetName);
-                    if (clip == null)
-                    {
-                        throw new InvalidOperationException(
-                            $"MV audio asset '{request.audioAssetName}' was not found.");
-                    }
-                    audioSource = main.Root.AddComponent<AudioSource>();
-                    audioSource.clip = clip;
-                    audioSource.playOnAwake = false;
-                }
+                var audioSource = main.Root.AddComponent<AudioSource>();
+                audioSource.clip = clip;
+                audioSource.playOnAwake = false;
+                audioSource.loop = false;
+                audioSource.spatialBlend = 0;
 
                 _coordinator.BindScene(
                     _players.Select(player => player.Root).ToArray(),
@@ -368,6 +359,10 @@ namespace Haruki.MV
                     _cutInController == null
                         ? Array.Empty<IMvPlaybackParticipant>()
                         : new IMvPlaybackParticipant[] { _cutInController });
+                if (request.canSkipDisplayMusicInfo)
+                {
+                    _coordinator.SeekTo(MusicInfoSkipSeconds);
+                }
             }
             catch
             {

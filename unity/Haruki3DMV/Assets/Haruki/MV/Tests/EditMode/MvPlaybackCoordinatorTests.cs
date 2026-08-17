@@ -48,7 +48,7 @@ namespace Haruki.MV.Tests
         }
 
         [Test]
-        public void VisualTimelineMayOutlastTheAudioClip()
+        public void DurationRetainsTimelineTailForExitPlanning()
         {
             var source = _scene.AddComponent<AudioSource>();
             var clip = AudioClip.Create("mv", 96000, 1, 48000, false);
@@ -65,22 +65,83 @@ namespace Haruki.MV.Tests
             }
         }
 
-        [TestCase(1050L, 1040L, 1050L)]
-        [TestCase(1100L, 1000L, 1062L)]
-        [TestCase(1000L, 1100L, 1100L)]
-        public void AudioClockUsesTheRecoveredSixtyThreeMillisecondBoundary(
-            long predicted,
-            long audioMilliseconds,
-            long expected)
+        [Test]
+        public void AudioClockUsesTheRecoveredWaitingStateMachine()
         {
             var method = typeof(MvPlaybackCoordinator).GetMethod(
                 "ResolveAudioSyncedTimeMilliseconds",
                 BindingFlags.Static | BindingFlags.NonPublic);
 
             Assert.That(method, Is.Not.Null);
-            Assert.That(
-                method.Invoke(null, new object[] { predicted, audioMilliseconds }),
-                Is.EqualTo(expected));
+            var initial = InvokeAudioClock(method, 500, 50, 0, false);
+            Assert.That(initial.time, Is.EqualTo(50));
+            Assert.That(initial.waiting, Is.False);
+            Assert.That(initial.resetReference, Is.False);
+
+            var ahead = InvokeAudioClock(method, 1100, 1000, 1000, false);
+            Assert.That(ahead.time, Is.EqualTo(1062));
+            Assert.That(ahead.waiting, Is.True);
+            Assert.That(ahead.resetReference, Is.False);
+
+            var stalled = InvokeAudioClock(method, 1062, 1000, 1062, true);
+            Assert.That(stalled.time, Is.EqualTo(1062));
+            Assert.That(stalled.waiting, Is.True);
+            Assert.That(stalled.resetReference, Is.True);
+
+            var caughtUp = InvokeAudioClock(method, 1062, 1063, 1062, true);
+            Assert.That(caughtUp.time, Is.EqualTo(1063));
+            Assert.That(caughtUp.waiting, Is.False);
+            Assert.That(caughtUp.resetReference, Is.True);
+        }
+
+        [Test]
+        public void NaturalAudioEndStopsAtTheAudioDuration()
+        {
+            var source = _scene.AddComponent<AudioSource>();
+            var clip = AudioClip.Create("mv", 96000, 1, 48000, false);
+            try
+            {
+                source.clip = clip;
+                _coordinator.BindScene(_scene, source, 20);
+                _coordinator.SetPlaybackPaused(false);
+                var method = typeof(MvPlaybackCoordinator).GetMethod(
+                    "CompleteAudioPlayback",
+                    BindingFlags.Instance | BindingFlags.NonPublic);
+
+                Assert.That(method, Is.Not.Null);
+                method.Invoke(_coordinator, null);
+
+                Assert.That(_coordinator.CurrentTimeSeconds, Is.EqualTo(2).Within(0.001));
+                Assert.That(_coordinator.State, Is.EqualTo(MvPlaybackState.Completed));
+            }
+            finally
+            {
+                Object.DestroyImmediate(clip);
+            }
+        }
+
+        [Test]
+        public void ManualSeekToAudioEndDoesNotReportNaturalCompletion()
+        {
+            var source = _scene.AddComponent<AudioSource>();
+            var clip = AudioClip.Create("mv", 96000, 1, 48000, false);
+            try
+            {
+                var completed = false;
+                source.clip = clip;
+                _coordinator.PlaybackCompleted += () => completed = true;
+                _coordinator.BindScene(_scene, source, 20);
+
+                _coordinator.SeekTo(2);
+
+                Assert.That(_coordinator.CurrentTimeSeconds, Is.EqualTo(2).Within(0.001));
+                Assert.That(_coordinator.State, Is.EqualTo(MvPlaybackState.Paused));
+                Assert.That(completed, Is.False);
+            }
+            finally
+            {
+                Object.DestroyImmediate(clip);
+            }
         }
 
         [Test]
@@ -214,6 +275,59 @@ namespace Haruki.MV.Tests
             Assert.Throws<System.InvalidOperationException>(
                 () => MvBundleSetLoader.ResolveLoadOrder(manifest)
             );
+        }
+
+        [Test]
+        public void BundleSetOwnsTheSingleMainMusicBundle()
+        {
+            var manifest = new MvBundleSetManifest
+            {
+                audioBundleName = "music/long/se_0112_01",
+                entries = new[]
+                {
+                    new MvBundleSetEntry { name = "live_pv/mv_data/0112" },
+                    new MvBundleSetEntry { name = "music/long/se_0112_01" },
+                }
+            };
+
+            Assert.That(
+                MvBundleSetLoader.ResolveAudioBundleName(manifest),
+                Is.EqualTo("music/long/se_0112_01"));
+        }
+
+        [Test]
+        public void BundleSetRejectsAmbiguousMainMusicBundles()
+        {
+            var manifest = new MvBundleSetManifest
+            {
+                entries = new[]
+                {
+                    new MvBundleSetEntry { name = "music/long/first" },
+                    new MvBundleSetEntry { name = "music/long/second" },
+                }
+            };
+
+            Assert.Throws<System.InvalidOperationException>(
+                () => MvBundleSetLoader.ResolveAudioBundleName(manifest));
+        }
+
+        private static (long time, bool waiting, bool resetReference) InvokeAudioClock(
+            MethodInfo method,
+            long predicted,
+            long audioMilliseconds,
+            long playbackMilliseconds,
+            bool waiting)
+        {
+            var arguments = new object[]
+            {
+                predicted,
+                audioMilliseconds,
+                playbackMilliseconds,
+                waiting,
+                false,
+            };
+            var time = (long)method.Invoke(null, arguments);
+            return (time, (bool)arguments[3], (bool)arguments[4]);
         }
 
         [Test]

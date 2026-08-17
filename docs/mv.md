@@ -379,9 +379,10 @@ Every replaced source `Texture2D` is retained by name for the later monitor
 refresh/default-texture contract.
 `MvCameraAdjustment` keeps the three official height
 arrays separate and applies the recovered two-target LateUpdate formula. The
-player assembler constructs main/CutIn roots and optional audio; the playback
-coordinator owns their exclusive activation, shared absolute clock, and
-coordinated disposal.
+low-level scene loader can bind audio-less diagnostic scenes; the production
+player assembler constructs main/CutIn roots with the manifest-owned main BGM.
+The playback coordinator owns their exclusive activation, shared absolute clock,
+and coordinated disposal.
 
 `MvPenlightNode` loads `live_pv/model/penlight/{id}` at address `penlight`, calls
 the recovered `PenlightParameter.Initialize()` when that component is present,
@@ -434,14 +435,21 @@ needed.
 Browser audio deliberately ends at a conventional Unity `AudioClip` boundary.
 The publishing side decodes the selected CRI cue, writes a lossless PCM
 intermediate, encodes a browser-supported Ogg Vorbis stream, imports it with the
-same Unity 2022.3 editor used for the WebGL build, and publishes the resulting
-auxiliary WebGL AssetBundle. `loadMv.audioBundleName` and
-`loadMv.audioAssetName` are an atomic pair and address that clip. The runtime
-does not ship a second CRI implementation in WebAssembly: the `AudioSource`
-clock remains authoritative and Timeline applies the recovered ±63 ms follower
-window. A release gate must compare decoded duration/sample rate/channel count
-with the selected cue and measure start, seek, and ten-minute drift before the
-audio bundle is promoted.
+same Unity 2022.3 editor used for the WebGL build, and publishes it as the sole
+`music/long/*` bundle in the MV dependency set. The generated `deps.json`
+declares that bundle as `audioBundleName`; Unity loads its fixed `music` address
+when assembling the MV. The browser shell does not select, create, or synchronize
+audio. The runtime does not ship a second CRI implementation in WebAssembly:
+the `AudioSource` clock remains authoritative and Timeline applies the recovered
+±63 ms waiting-state follower. Failed audio pauses playback instead of falling
+back to a frame clock, natural audio completion stops visual advancement, and
+`canSkipDisplayMusicInfo` selects the official 5.5-second start. A release gate
+must compare decoded duration/sample rate/channel count with the selected cue
+and measure start, seek, and ten-minute drift before the audio bundle is promoted.
+The coordinator reports `preparing` while WebGL decodes or starts audio, unmutes
+only after applying a non-zero start position, and emits `finished` with state
+`completed` when the BGM naturally ends. Disposal remains an explicit host
+command so the completed frame can be retained or replaced by product UI.
 
 That successful build closes compilation and startup, not pixel identity. The
 2026-08-15 static evidence additionally closes the WaterCaustics projection and
@@ -459,7 +467,7 @@ implementation work with the few evidence gaps that genuinely remain.
 | Proprietary `SekaiRenderer` and LensFlare | Renderer allocation/swap/release RVAs, SekaiBuffer attachments, pass ordering, final CoreBlit and LensFlare call chain are closed. No sampled MV enables LensFlare. | Ordinary output is covered; an enabled LensFlare may have wrong blend/depth/material state. | Stock `UniversalRenderer` hosts the recovered Sekai feature graph and shared attachments. | Obtain one `enableLensFlare=1` draw capture before claiming lens-flare pixels; no change is needed for MV0112 where the feature is disabled. |
 | Character finishing edge cases | Color-variation paths, skin colors, accessory transform lookup/application, and final MotionType binding names are closed. | Unique/GenderUnique member selection still lacks a real upstream sample. | Body/head C/S/H variation textures, optional master skin-color triples and the serialized face-key accessory transform controller are wired into the load path; missing accessory keys preserve the official zero-scale result. | Obtain a real Unique/GenderUnique MV only for the earlier member selector. |
 | Music items | Bundles `0003`, `0007`, and `0010`, prefab structure, controller call chain, padded bundle path and exact binding-name format are recovered. MV0112 contains none. | The implementation has no positive song-level opacity/UV binding sample yet. | The player loads `item`, applies official height/heel targets, formation/shader/visibility state, and binds animation, opacity and UV tracks. | Validate the closed implementation against one Timeline that actually declares the recovered MusicItem track names. |
-| CRI/BGM decode | Cue-sheet load and selection, prepare/start sequence, abnormal-length fallback, and the official ±63 ms audio-synchronized visual clock are closed. | Browser publishing still needs measured drift limits. | The documented server contract converts a selected cue to an Ogg-backed Unity WebGL `AudioClip`; the recovered clock drives Timeline and the request requires an atomic bundle/address pair. | Build one production audio bundle and record start, seek and ten-minute A/V drift. Reimplementing CRI in WebAssembly is not required. |
+| CRI/BGM decode | Cue-sheet load and selection, prepare/start sequence, abnormal-length fallback, and the official ±63 ms audio-synchronized visual clock are closed. | Browser publishing still needs measured drift limits. | The documented server contract converts a selected cue to an Ogg-backed Unity WebGL `AudioClip`; the dependency manifest owns its bundle identity and Unity loads and synchronizes it without host audio parameters. | Build one production audio bundle and record start, seek and ten-minute A/V drift. Reimplementing CRI in WebAssembly is not required. |
 | Fixed-timestamp visual identity | One complete ordinary 0112 lifecycle and non-black render are known. There is no authoritative game-vs-WebGL frame corpus. | Pixel regressions cannot be measured automatically. | Startup, lifecycle, buffers, resolution contracts, and non-black output are testable; visual identity is a manual boundary. | Matched game/WebGL frames plus camera, light, material, MRT, and post-effect dumps at selected timestamps. |
 | Feature coverage corpus | 0112 covers five characters and one CutIn family, but not every engine feature. | Untested features may compile yet fail when first encountered. | Unknown effects are disabled or rejected instead of silently replaced. | Small source sets with music items, fog, reflection, active distortion, active caustics, modern V2-only parts, and multiple CutIns; special 26-character mode remains separate. |
 | Reproducible exporter source build | The released exporter emitted the verified 34-bundle manifest. | Reproduction still depends on the sibling AssetStudio-Haruki checkout being built. | The project now resolves `../AssetStudio-Haruki` portably instead of a developer-specific Windows mount. | Rebuild the same manifest and compare bundle names, sizes and hashes. |

@@ -198,6 +198,15 @@ namespace Haruki.MV
             _loader = GetComponent<MvSceneBundleLoader>();
             _bundleSetLoader = GetComponent<MvBundleSetLoader>();
             _playerAssembler = GetComponent<MvPlayerAssembler>();
+            _coordinator.PlaybackCompleted += OnPlaybackCompleted;
+        }
+
+        private void OnDestroy()
+        {
+            if (_coordinator != null)
+            {
+                _coordinator.PlaybackCompleted -= OnPlaybackCompleted;
+            }
         }
 
         private void Start()
@@ -672,6 +681,12 @@ namespace Haruki.MV
                 timeSeconds = _coordinator.CurrentTimeSeconds,
                 durationSeconds = _coordinator.DurationSeconds
             }));
+        }
+
+        private void OnPlaybackCompleted()
+        {
+            Emit("finished", "{}");
+            EmitState();
         }
 
         private static void Emit(string eventName, string payload)

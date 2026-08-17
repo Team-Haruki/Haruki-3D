@@ -15,9 +15,11 @@ const mvDataBundle = process.env.HARUKI_MV_DATA_BUNDLE ?? null;
 const expectedMusicId = Number(process.env.HARUKI_MV_EXPECT_MUSIC_ID ?? 0);
 const assembleSampleMv = process.env.HARUKI_MV_ASSEMBLE_SAMPLE === "1";
 const enableSampleCutIns = process.env.HARUKI_MV_ENABLE_CUTINS === "1";
+const skipSampleMusicInfo = process.env.HARUKI_MV_SKIP_MUSIC_INFO === "1";
 const logBrowserConsole = process.env.HARUKI_MV_LOG_CONSOLE === "1";
 const allowRenderErrors = process.env.HARUKI_MV_ALLOW_RENDER_ERRORS === "1";
 const seekSeconds = Number(process.env.HARUKI_MV_SEEK_SECONDS ?? 12.5);
+const audioStartTimeoutMs = Number(process.env.HARUKI_MV_AUDIO_START_TIMEOUT_MS ?? 120_000);
 const screenshotPath = process.env.HARUKI_MV_SCREENSHOT
   ? path.resolve(process.env.HARUKI_MV_SCREENSHOT)
   : null;
@@ -270,8 +272,7 @@ try {
         {
           musicId: expectedMusicId,
           enableCutIns: enableSampleCutIns,
-          audioBundleName: "music/long/se_0112_01",
-          audioAssetName: "music",
+          canSkipDisplayMusicInfo: skipSampleMusicInfo,
           characters: [
             {
               characterId: 5,
@@ -336,24 +337,43 @@ try {
       console.log(`Unity WebGL MV assembly smoke passed: ${playerResult.payload}`);
 
       const initialState = await invokeAndReadState("GetState");
-      if (initialState.state !== "paused" || initialState.timeSeconds !== 0) {
+      const expectedInitialTime = skipSampleMusicInfo ? 5.5 : 0;
+      if (initialState.state !== "paused" ||
+          Math.abs(initialState.timeSeconds - expectedInitialTime) > 0.001) {
         throw new Error(`Unity MV initial state mismatch: ${JSON.stringify(initialState)}`);
       }
       const playingState = await invokeAndReadState(
         "SetPaused",
         JSON.stringify({ paused: false })
       );
-      if (playingState.state !== "playing") {
-        throw new Error(`Unity MV did not enter playing state: ${JSON.stringify(playingState)}`);
+      if (playingState.state !== "preparing") {
+        throw new Error(`Unity MV did not enter preparing state: ${JSON.stringify(playingState)}`);
       }
       let progressedState;
-      const audioStartDeadline = Date.now() + 120_000;
+      const audioStartDeadline = Date.now() + audioStartTimeoutMs;
       do {
         await page.waitForTimeout(250);
         progressedState = await invokeAndReadState("GetState");
-      } while (!(progressedState.timeSeconds > 0) && Date.now() < audioStartDeadline);
-      if (!(progressedState.timeSeconds > 0)) {
-        throw new Error(`Unity MV clock did not advance: ${JSON.stringify(progressedState)}`);
+      } while (!(progressedState.timeSeconds > expectedInitialTime) &&
+          Date.now() < audioStartDeadline);
+      if (!(progressedState.timeSeconds > expectedInitialTime)) {
+        const stalledDiagnostics = await requestRenderProfile(
+          "GetDiagnostics",
+          "diagnostics-ready",
+          { requestId: "smoke-stalled-audio-diagnostics" }
+        );
+        throw new Error(
+          `Unity MV clock did not advance: ${JSON.stringify({
+            state: progressedState,
+            audioLoadState: stalledDiagnostics.audioLoadState,
+            audioStarted: stalledDiagnostics.audioStarted,
+            audioIsPlaying: stalledDiagnostics.audioIsPlaying,
+            audioTimeSeconds: stalledDiagnostics.audioTimeSeconds,
+          })}`
+        );
+      }
+      if (progressedState.state !== "playing") {
+        throw new Error(`Unity MV did not enter playing state: ${JSON.stringify(progressedState)}`);
       }
       const playingDiagnostics = await requestRenderProfile(
         "GetDiagnostics",
@@ -365,7 +385,7 @@ try {
           playingDiagnostics.audioStarted !== true ||
           playingDiagnostics.audioIsPlaying !== true ||
           !(playingDiagnostics.audioDurationSeconds > 127) ||
-          !(playingDiagnostics.audioTimeSeconds > 0)) {
+          !(playingDiagnostics.audioTimeSeconds > expectedInitialTime)) {
         throw new Error(
           `Unity MV audio did not start correctly: ${JSON.stringify(playingDiagnostics)}`
         );
@@ -400,14 +420,20 @@ try {
           materialCount: materials.length,
         })}`
       );
-      await invokeAndReadState(
-        "SetCutInActive",
-        JSON.stringify({ cutInOrder: 0, active: true })
-      );
-      await invokeAndReadState(
-        "SetCutInActive",
-        JSON.stringify({ cutInOrder: 0, active: false })
-      );
+      if (enableSampleCutIns) {
+        await page.evaluate(() => {
+          window.harukiMvUnityInstance.SendMessage(
+            "HarukiMvBridge",
+            "SetCutInActive",
+            JSON.stringify({ cutInOrder: 0, active: true })
+          );
+          window.harukiMvUnityInstance.SendMessage(
+            "HarukiMvBridge",
+            "SetCutInActive",
+            JSON.stringify({ cutInOrder: 0, active: false })
+          );
+        });
+      }
       if (screenshotPath) {
         await page.evaluate(() => new Promise((resolve) =>
           requestAnimationFrame(() => requestAnimationFrame(resolve))

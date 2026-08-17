@@ -112,12 +112,10 @@ export type HarukiMvCutInRequest = {
 export type HarukiMvPlayerRequest = {
   musicId: number;
   enableCutIns?: boolean;
+  /** Match official BootData: start at 5.5 seconds when music info is skipped. */
+  canSkipDisplayMusicInfo?: boolean;
   characters: HarukiMvCharacterRequest[];
   cutIns?: HarukiMvCutInRequest[];
-  /** WebGL AssetBundle containing the server-converted browser AudioClip. */
-  audioBundleName?: string;
-  /** Address of the AudioClip inside audioBundleName; both fields are atomic. */
-  audioAssetName?: string;
 };
 
 export type HarukiMvBridge = {
