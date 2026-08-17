@@ -41,5 +41,47 @@ namespace Haruki.MV.Tests
                 Object.DestroyImmediate(host);
             }
         }
+
+        [Test]
+        public void ResolvesOfficialTwoSecondOffscreenSimulationWindows()
+        {
+            var clip = ScriptableObject.CreateInstance<CutInClip>();
+            clip.cutinIndex = 0;
+            clip.Setup(91.75, 12.066666666666663);
+
+            try
+            {
+                var idle = MvCutInController.ResolveFrame(89.74, new[] { clip });
+                Assert.That(idle.ActiveCutInOrder, Is.EqualTo(-1));
+                Assert.That(idle.OffscreenCutInOrder, Is.EqualTo(-1));
+                Assert.That(idle.OffscreenMain, Is.False);
+
+                var childPrewarm = MvCutInController.ResolveFrame(89.75, new[] { clip });
+                Assert.That(childPrewarm.ActiveCutInOrder, Is.EqualTo(-1));
+                Assert.That(childPrewarm.OffscreenCutInOrder, Is.EqualTo(0));
+                Assert.That(childPrewarm.OffscreenMain, Is.False);
+
+                var active = MvCutInController.ResolveFrame(91.75, new[] { clip });
+                Assert.That(active.ActiveCutInOrder, Is.EqualTo(0));
+                Assert.That(active.OffscreenCutInOrder, Is.EqualTo(-1));
+                Assert.That(active.OffscreenMain, Is.False);
+
+                var mainPrewarm = MvCutInController.ResolveFrame(
+                    clip.End - MvCutInController.OffScreenSimulateDuration,
+                    new[] { clip });
+                Assert.That(mainPrewarm.ActiveCutInOrder, Is.EqualTo(0));
+                Assert.That(mainPrewarm.OffscreenCutInOrder, Is.EqualTo(-1));
+                Assert.That(mainPrewarm.OffscreenMain, Is.True);
+
+                var ended = MvCutInController.ResolveFrame(clip.End, new[] { clip });
+                Assert.That(ended.ActiveCutInOrder, Is.EqualTo(-1));
+                Assert.That(ended.OffscreenCutInOrder, Is.EqualTo(-1));
+                Assert.That(ended.OffscreenMain, Is.False);
+            }
+            finally
+            {
+                Object.DestroyImmediate(clip);
+            }
+        }
     }
 }

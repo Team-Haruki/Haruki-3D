@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using Sekai.Core.Live;
 using UnityEngine;
 using UnityEngine.Playables;
@@ -8,10 +10,18 @@ namespace Haruki.MV
 {
     public sealed class MvCutInController : MonoBehaviour, IDisposable, IMvPlaybackParticipant
     {
+        public const double OffScreenSimulateDuration = 2.0;
+
         private MvPlayerAssembler _assembler;
         private PlayableDirector _director;
+        private CutInClip[] _clips = Array.Empty<CutInClip>();
+        private CutInClip _activeClip;
+        private int _offscreenCutInOrder = -1;
+        private bool _offscreenMain;
 
         public int ActiveCutInOrder { get; private set; } = -1;
+        public int OffscreenCutInOrder => _offscreenCutInOrder;
+        public bool OffscreenMain => _offscreenMain;
         public Color TransitionColor { get; private set; } = Color.black;
         public float TransitionWeight { get; private set; }
 
@@ -43,6 +53,17 @@ namespace Haruki.MV
             directorObject.transform.SetParent(transform, false);
             _director = directorObject.AddComponent<PlayableDirector>();
             _director.playableAsset = timeline;
+            _clips = timeline.GetOutputTracks()
+                .SelectMany(track => track.GetClips())
+                .Where(clip => clip.asset is CutInClip)
+                .Select(clip =>
+                {
+                    var asset = (CutInClip)clip.asset;
+                    asset.Setup(clip.start, clip.duration);
+                    return asset;
+                })
+                .OrderBy(clip => clip.Start)
+                .ToArray();
             foreach (var output in timeline.outputs)
             {
                 _director.SetGenericBinding(output.sourceObject, this);
@@ -50,6 +71,18 @@ namespace Haruki.MV
             _director.timeUpdateMode = DirectorUpdateMode.Manual;
             _director.time = 0;
             _director.Evaluate();
+        }
+
+        public void EvaluateCurrentFrame()
+        {
+            if (_director == null || _assembler == null)
+            {
+                return;
+            }
+
+            var available = _clips.Where(clip =>
+                clip != null && _assembler.HasCutIn(clip.cutinIndex));
+            ApplyFrame(ResolveFrame(_director.time, available));
         }
 
         public void Begin(CutInClip clip)
@@ -63,16 +96,20 @@ namespace Haruki.MV
                 return;
             }
             ActiveCutInOrder = clip.cutinIndex;
-            _assembler.SetCutInSceneActive(clip.cutinIndex, true);
+            _activeClip = clip;
+            _assembler.BeginCutIn(clip.cutinIndex);
+            _offscreenCutInOrder = -1;
         }
 
         public void End(CutInClip clip)
         {
             if (clip != null && ActiveCutInOrder == clip.cutinIndex)
             {
-                _assembler.SetCutInSceneActive(clip.cutinIndex, false);
+                _assembler.EndCutIn(clip.cutinIndex);
             }
             ActiveCutInOrder = -1;
+            _activeClip = null;
+            _offscreenMain = false;
             TransitionColor = Color.black;
             TransitionWeight = 0f;
         }
@@ -131,7 +168,11 @@ namespace Haruki.MV
             }
             _director = null;
             _assembler = null;
+            _clips = Array.Empty<CutInClip>();
             ActiveCutInOrder = -1;
+            _activeClip = null;
+            _offscreenCutInOrder = -1;
+            _offscreenMain = false;
             TransitionWeight = 0f;
         }
 
@@ -174,6 +215,78 @@ namespace Haruki.MV
             TransitionWeight = Mathf.Clamp01(weight);
         }
 
+        public static MvCutInFrameState ResolveFrame(
+            double time,
+            IEnumerable<CutInClip> clips)
+        {
+            if (double.IsNaN(time) || double.IsInfinity(time))
+            {
+                throw new ArgumentOutOfRangeException(nameof(time));
+            }
+            if (clips == null)
+            {
+                throw new ArgumentNullException(nameof(clips));
+            }
+
+            foreach (var clip in clips)
+            {
+                if (clip == null) continue;
+                if (time >= clip.Start && time < clip.End)
+                {
+                    return new MvCutInFrameState(
+                        clip,
+                        -1,
+                        time >= clip.End - OffScreenSimulateDuration);
+                }
+                if (time >= clip.Start - OffScreenSimulateDuration && time < clip.Start)
+                {
+                    return new MvCutInFrameState(null, clip.cutinIndex, false);
+                }
+            }
+            return new MvCutInFrameState(null, -1, false);
+        }
+
+        private void ApplyFrame(MvCutInFrameState frame)
+        {
+            if (!ReferenceEquals(_activeClip, frame.ActiveClip))
+            {
+                if (_activeClip != null)
+                {
+                    End(_activeClip);
+                }
+                if (frame.ActiveClip != null)
+                {
+                    Begin(frame.ActiveClip);
+                }
+            }
+
+            if (_offscreenCutInOrder != frame.OffscreenCutInOrder)
+            {
+                if (_offscreenCutInOrder >= 0)
+                {
+                    _assembler.SetCutInOffScreenSimulation(_offscreenCutInOrder, false);
+                }
+                if (frame.OffscreenCutInOrder >= 0)
+                {
+                    _assembler.SetCutInOffScreenSimulation(frame.OffscreenCutInOrder, true);
+                }
+                _offscreenCutInOrder = frame.OffscreenCutInOrder;
+            }
+            if (_offscreenMain != frame.OffscreenMain)
+            {
+                _assembler.SetMainOffScreenSimulation(frame.OffscreenMain);
+                _offscreenMain = frame.OffscreenMain;
+            }
+
+            if (frame.ActiveClip != null)
+            {
+                UpdateTransition(
+                    frame.ActiveClip,
+                    (float)(_director.time - frame.ActiveClip.Start),
+                    (float)frame.ActiveClip.Duration);
+            }
+        }
+
         private static float Ratio(float value, float duration)
         {
             return duration > 0f ? Mathf.Clamp01(value / duration) : 1f;
@@ -184,5 +297,23 @@ namespace Haruki.MV
             if (Application.isPlaying) UnityEngine.Object.Destroy(value);
             else UnityEngine.Object.DestroyImmediate(value);
         }
+    }
+
+    public readonly struct MvCutInFrameState
+    {
+        public MvCutInFrameState(
+            CutInClip activeClip,
+            int offscreenCutInOrder,
+            bool offscreenMain)
+        {
+            ActiveClip = activeClip;
+            OffscreenCutInOrder = offscreenCutInOrder;
+            OffscreenMain = offscreenMain;
+        }
+
+        public CutInClip ActiveClip { get; }
+        public int ActiveCutInOrder => ActiveClip == null ? -1 : ActiveClip.cutinIndex;
+        public int OffscreenCutInOrder { get; }
+        public bool OffscreenMain { get; }
     }
 }

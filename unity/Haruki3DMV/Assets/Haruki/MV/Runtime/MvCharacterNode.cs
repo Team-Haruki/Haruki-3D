@@ -107,6 +107,9 @@ namespace Haruki.MV
             new List<MvCharacterInstance>();
         private readonly List<MusicItemModel> _musicItems =
             new List<MusicItemModel>();
+        private readonly Dictionary<Renderer, bool> _cutInRendererStates =
+            new Dictionary<Renderer, bool>();
+        private bool _cutInSuppressed;
 
         public MvCharacterNode(
             MvBundleSetLoader bundles,
@@ -319,6 +322,42 @@ namespace Haruki.MV
                 mvData.characterInfos);
         }
 
+        public void SetCutInSuppressed(bool suppressed)
+        {
+            if (_cutInSuppressed == suppressed)
+            {
+                return;
+            }
+            _cutInSuppressed = suppressed;
+            if (suppressed)
+            {
+                _cutInRendererStates.Clear();
+                foreach (var character in _characters)
+                {
+                    foreach (var renderer in character.Root.GetComponentsInChildren<Renderer>(true))
+                    {
+                        _cutInRendererStates[renderer] = renderer.enabled;
+                        renderer.enabled = false;
+                    }
+                }
+            }
+            else
+            {
+                foreach (var pair in _cutInRendererStates)
+                {
+                    if (pair.Key != null)
+                    {
+                        pair.Key.enabled = pair.Value;
+                    }
+                }
+                _cutInRendererStates.Clear();
+            }
+            foreach (var item in _musicItems)
+            {
+                item?.UpdateMeshVisible(!suppressed);
+            }
+        }
+
         public void Dispose()
         {
             foreach (var character in _characters)
@@ -327,6 +366,8 @@ namespace Haruki.MV
             }
             _characters.Clear();
             _musicItems.Clear();
+            _cutInRendererStates.Clear();
+            _cutInSuppressed = false;
         }
 
         private void LoadMusicItems(

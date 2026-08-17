@@ -6,6 +6,13 @@ using UnityEngine;
 
 namespace Haruki.MV
 {
+    public enum MvCharacterModelState
+    {
+        Normal = 0,
+        Suppressing = 1,
+        Disable = 2,
+    }
+
     [Serializable]
     public sealed class MvCutInLoadSpec
     {
@@ -29,6 +36,8 @@ namespace Haruki.MV
     {
         private readonly Dictionary<string, UnityEngine.Object> _bindings =
             new Dictionary<string, UnityEngine.Object>(StringComparer.Ordinal);
+        private readonly GameObject[] _nonCharacterNodeRoots;
+        private readonly GameObject _characterNodeRoot;
 
         internal MvPlayerInstance(
             MvBundleSetLoader bundles,
@@ -50,12 +59,25 @@ namespace Haruki.MV
             Root = new GameObject($"Background3DPlayer_ID{mvData.id}");
             Root.transform.SetParent(parent, false);
 
+            var cameraRoot = CreateNodeRoot(Root.transform, "CameraNode");
+            var lightRoot = CreateNodeRoot(Root.transform, "LightNode");
+            var stageRoot = CreateNodeRoot(Root.transform, "StageNode");
+            _characterNodeRoot = CreateNodeRoot(Root.transform, "CharacterNode");
+            var penlightRoot = CreateNodeRoot(Root.transform, "PenlightNode");
+            _nonCharacterNodeRoots = new[]
+            {
+                cameraRoot,
+                lightRoot,
+                stageRoot,
+                penlightRoot,
+            };
+
             Timeline = new MvTimelineNode();
-            Camera = new MvCameraNode(_bindings, Root.transform, bundles: bundles);
-            Light = new MvLightNode(_bindings, Root.transform);
-            Stage = new MvStageNode(bundles, _bindings, Root.transform);
-            Character = new MvCharacterNode(bundles, _bindings, Root.transform);
-            Penlight = new MvPenlightNode(bundles, _bindings, Root.transform);
+            Camera = new MvCameraNode(_bindings, cameraRoot.transform, bundles: bundles);
+            Light = new MvLightNode(_bindings, lightRoot.transform);
+            Stage = new MvStageNode(bundles, _bindings, stageRoot.transform);
+            Character = new MvCharacterNode(bundles, _bindings, _characterNodeRoot.transform);
+            Penlight = new MvPenlightNode(bundles, _bindings, penlightRoot.transform);
             try
             {
                 Timeline.Initialize(_bindings, Root.transform);
@@ -110,10 +132,7 @@ namespace Haruki.MV
                 Timeline.BindTimeline();
                 TimelinePlayback = Root.AddComponent<MvTimelinePlaybackParticipant>();
                 TimelinePlayback.Initialize(Timeline);
-                if (isCutIn)
-                {
-                    Root.SetActive(false);
-                }
+                SetNodeActive(!isCutIn);
             }
             catch
             {
@@ -147,6 +166,43 @@ namespace Haruki.MV
         public MvPenlightNode Penlight { get; }
         public MvTimelinePlaybackParticipant TimelinePlayback { get; }
         public double Duration => Timeline.PlaybackDuration;
+        public bool NodesActive { get; private set; }
+        public MvCharacterModelState CharacterState { get; private set; } =
+            MvCharacterModelState.Normal;
+
+        public void SetNodeActive(bool active)
+        {
+            NodesActive = active;
+            foreach (var nodeRoot in _nonCharacterNodeRoots)
+            {
+                nodeRoot.SetActive(active);
+            }
+            _characterNodeRoot.SetActive(
+                CharacterState == MvCharacterModelState.Suppressing ||
+                (active && CharacterState == MvCharacterModelState.Normal));
+        }
+
+        public void UpdateCharacterState(MvCharacterModelState state)
+        {
+            CharacterState = state;
+            if (state != MvCharacterModelState.Suppressing)
+            {
+                Character.SetCutInSuppressed(false);
+            }
+            _characterNodeRoot.SetActive(
+                state == MvCharacterModelState.Suppressing ||
+                (NodesActive && state == MvCharacterModelState.Normal));
+        }
+
+        public void SetOffScreenSimulation(bool enabled)
+        {
+            Character.SetCutInSuppressed(enabled);
+            if (enabled)
+            {
+                CharacterState = MvCharacterModelState.Suppressing;
+                _characterNodeRoot.SetActive(true);
+            }
+        }
 
         public void Dispose()
         {
@@ -228,6 +284,13 @@ namespace Haruki.MV
             if (isCutIn) registry.RegisterCutInPenlight(model, cutInOrder);
             else registry.RegisterMainPenlight(model);
         }
+
+        private static GameObject CreateNodeRoot(Transform parent, string name)
+        {
+            var root = new GameObject(name);
+            root.transform.SetParent(parent, false);
+            return root;
+        }
     }
 
     [RequireComponent(typeof(MvBundleSetLoader), typeof(MvPlaybackCoordinator))]
@@ -244,6 +307,7 @@ namespace Haruki.MV
         public MvPlayerInstance MainPlayer => _players.Count == 0 ? null : _players[0];
         public MvMusicVideoModel MusicVideoModel { get; private set; }
         public MvRenderCanvas RenderCanvas => _renderCanvas;
+        public MvCutInController CutInController => _cutInController;
 
         private void Awake()
         {
@@ -373,20 +437,46 @@ namespace Haruki.MV
 
         public void SetCutInSceneActive(int cutInOrder, bool active)
         {
-            var player = _players.FirstOrDefault(
-                candidate => candidate.IsCutIn && candidate.CutInOrder == cutInOrder);
-            if (player == null)
+            if (active) BeginCutIn(cutInOrder);
+            else EndCutIn(cutInOrder);
+        }
+
+        public void BeginCutIn(int cutInOrder)
+        {
+            var player = CutInPlayer(cutInOrder);
+            player.SetOffScreenSimulation(false);
+            MainPlayer.UpdateCharacterState(MvCharacterModelState.Disable);
+            MainPlayer.SetNodeActive(false);
+            player.SetNodeActive(true);
+            player.UpdateCharacterState(MvCharacterModelState.Normal);
+        }
+
+        public void EndCutIn(int cutInOrder)
+        {
+            var player = CutInPlayer(cutInOrder);
+            MainPlayer.SetOffScreenSimulation(false);
+            MainPlayer.SetNodeActive(true);
+            MainPlayer.UpdateCharacterState(MvCharacterModelState.Normal);
+            player.UpdateCharacterState(MvCharacterModelState.Disable);
+            player.SetNodeActive(false);
+        }
+
+        public void SetCutInOffScreenSimulation(int cutInOrder, bool enabled)
+        {
+            var player = CutInPlayer(cutInOrder);
+            player.SetOffScreenSimulation(enabled);
+            if (!enabled && !player.NodesActive)
             {
-                throw new ArgumentOutOfRangeException(nameof(cutInOrder));
+                player.UpdateCharacterState(MvCharacterModelState.Disable);
             }
-            if (active)
+        }
+
+        public void SetMainOffScreenSimulation(bool enabled)
+        {
+            MainPlayer.SetOffScreenSimulation(enabled);
+            if (!enabled && !MainPlayer.NodesActive)
             {
-                _coordinator.SetActiveSceneRoot(player.Root);
-                return;
-            }
-            if (player.Root.activeSelf)
-            {
-                _coordinator.SetActiveSceneRoot(MainPlayer.Root);
+                MainPlayer.UpdateCharacterState(MvCharacterModelState.Disable);
             }
         }
 
@@ -404,6 +494,13 @@ namespace Haruki.MV
         {
             return _players.Any(
                 candidate => candidate.IsCutIn && candidate.CutInOrder == cutInOrder);
+        }
+
+        private MvPlayerInstance CutInPlayer(int cutInOrder)
+        {
+            return _players.FirstOrDefault(
+                candidate => candidate.IsCutIn && candidate.CutInOrder == cutInOrder) ??
+                throw new ArgumentOutOfRangeException(nameof(cutInOrder));
         }
 
         public void DisposePlayers()

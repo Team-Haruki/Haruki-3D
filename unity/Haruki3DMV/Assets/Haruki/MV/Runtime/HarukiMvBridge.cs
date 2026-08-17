@@ -169,6 +169,9 @@ namespace Haruki.MV
             public bool audioIsPlaying;
             public double audioDurationSeconds;
             public double audioTimeSeconds;
+            public int activeCutInOrder;
+            public int offscreenCutInOrder;
+            public bool offscreenMain;
             public bool postProcessShadersReady;
             public bool postProcessTexturesReady;
             public string[] missingPostProcessShaders = Array.Empty<string>();
@@ -596,6 +599,10 @@ namespace Haruki.MV
                     audioIsPlaying = _coordinator.AudioIsPlaying,
                     audioDurationSeconds = _coordinator.AudioDurationSeconds,
                     audioTimeSeconds = _coordinator.AudioTimeSeconds,
+                    activeCutInOrder = _playerAssembler.CutInController?.ActiveCutInOrder ?? -1,
+                    offscreenCutInOrder =
+                        _playerAssembler.CutInController?.OffscreenCutInOrder ?? -1,
+                    offscreenMain = _playerAssembler.CutInController?.OffscreenMain == true,
                     postProcessShadersReady = postProcess?.HasOfficialShaderLibrary == true,
                     postProcessTexturesReady = postProcessTexturesReady,
                     missingPostProcessShaders = postProcess?.MissingShaderNames.ToArray() ??

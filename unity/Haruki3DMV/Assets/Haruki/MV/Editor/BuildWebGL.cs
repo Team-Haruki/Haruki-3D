@@ -101,6 +101,18 @@ namespace Haruki.MV.Editor
                 outputPath = Path.GetFullPath(Path.Combine(Application.dataPath, "..", "Build", BuildName));
             }
 
+            outputPath = Path.GetFullPath(outputPath);
+            var projectPath = Path.GetFullPath(Path.Combine(Application.dataPath, ".."));
+            if (string.Equals(outputPath, Path.GetPathRoot(outputPath), StringComparison.Ordinal) ||
+                string.Equals(outputPath, projectPath, StringComparison.Ordinal))
+            {
+                throw new InvalidOperationException(
+                    $"Refusing to replace unsafe WebGL output path '{outputPath}'.");
+            }
+            if (Directory.Exists(outputPath))
+            {
+                Directory.Delete(outputPath, true);
+            }
             Directory.CreateDirectory(outputPath);
             var report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
             {
