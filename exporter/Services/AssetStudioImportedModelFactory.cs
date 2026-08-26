@@ -1,0 +1,125 @@
+using AssetStudio;
+using PjskBundle2Parts.Models;
+using Object = AssetStudio.Object;
+
+namespace PjskBundle2Parts.Services;
+
+public sealed class AssetStudioImportedModelFactory
+{
+    private const string SekaiUnityVersion = "2022.3.21f1";
+    private readonly bool convertModelTextures;
+
+    public AssetStudioImportedModelFactory(bool convertModelTextures = false)
+    {
+        this.convertModelTextures = convertModelTextures;
+    }
+
+    public IImported CreateImportedModel(ResolvedBundleInput input, string? preferredRootOverride = null)
+    {
+        using var readableBundle = new SekaiBundleDecryptor().PrepareReadableWorkspace(
+            input.ResolvedBundlePath,
+            BundleDependencyResolver.ResolveLoadBundlePaths(input)
+        );
+        var manager = new AssetsManager
+        {
+            MeshLazyLoad = false,
+        };
+        manager.Options.CustomUnityVersion = new UnityVersion(SekaiUnityVersion);
+        manager.SetAssetFilter(
+            ClassIDType.Animator,
+            ClassIDType.Material,
+            ClassIDType.Mesh,
+            ClassIDType.Texture2D
+        );
+        manager.LoadFilesAndFolders(readableBundle.DirectoryPath);
+
+        var objects = manager.AssetsFileList
+            .SelectMany(file => file.Objects)
+            .ToList();
+        var primaryObjects = AssetStudioObjectFilter.SelectPrimaryObjects(objects, readableBundle.PrimaryFileName);
+        var rootGameObjects = primaryObjects
+            .OfType<GameObject>()
+            .Where(gameObject => gameObject.m_Transform != null && gameObject.m_Transform.m_Father.IsNull)
+            .ToList();
+        return CreateImportedModel(input, rootGameObjects, preferredRootOverride);
+    }
+
+    public IImported CreateImportedModel(
+        ResolvedBundleInput input,
+        IReadOnlyList<Object> objects,
+        string? preferredRootOverride = null
+    )
+    {
+        var rootGameObjects = objects
+            .OfType<GameObject>()
+            .Where(gameObject => gameObject.m_Transform != null && gameObject.m_Transform.m_Father.IsNull)
+            .ToList();
+
+        return CreateImportedModel(input, rootGameObjects, preferredRootOverride);
+    }
+
+    public IImported CreateImportedModel(
+        ResolvedBundleInput input,
+        GameObject preferredRoot
+    )
+    {
+        return new ModelConverter(preferredRoot, ImageFormat.Png, null, convertModelTextures);
+    }
+
+    private IImported CreateImportedModel(
+        ResolvedBundleInput input,
+        IReadOnlyList<GameObject> rootGameObjects,
+        string? preferredRootOverride
+    )
+    {
+
+        if (rootGameObjects.Count == 0)
+        {
+            throw new InvalidOperationException($"No root GameObjects found in {input.ResolvedBundlePath}");
+        }
+
+        var preferredRootName = !string.IsNullOrWhiteSpace(preferredRootOverride)
+            ? preferredRootOverride
+            : input.PartKind switch
+            {
+                BundlePartKind.Body => "body",
+                BundlePartKind.Head => "face",
+                _ => rootGameObjects[0].m_Name,
+            };
+
+        var preferredRoot = rootGameObjects
+            .FirstOrDefault(gameObject =>
+                string.Equals(gameObject.m_Name, preferredRootName, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException(
+                $"Root GameObject '{preferredRootName}' was not found in {input.ResolvedBundlePath}. Available roots: {string.Join(", ", rootGameObjects.Select(gameObject => gameObject.m_Name))}"
+            );
+
+        return new ModelConverter(preferredRoot, ImageFormat.Png, null, convertModelTextures);
+    }
+
+    public IReadOnlyList<ImportedTexture> CreateImportedTextures(string bundlePath)
+    {
+        using var readableBundle = new SekaiBundleDecryptor().PrepareReadableBundle(bundlePath);
+        var manager = new AssetsManager();
+        manager.Options.CustomUnityVersion = new UnityVersion(SekaiUnityVersion);
+        manager.SetAssetFilter(ClassIDType.Texture2D);
+        manager.LoadFilesAndFolders(readableBundle.Path);
+
+        var textures = manager.AssetsFileList
+            .SelectMany(file => file.Objects)
+            .OfType<Texture2D>()
+            .Select(texture =>
+            {
+                using var stream = texture.ConvertToStream(ImageFormat.Png, false);
+                return stream is null
+                    ? null
+                    : new ImportedTexture(stream, $"{texture.m_Name}.png");
+            })
+            .Where(texture => texture is not null)
+            .Select(texture => texture!)
+            .DistinctBy(texture => texture.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return textures;
+    }
+
+}

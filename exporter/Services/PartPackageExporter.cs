@@ -1,0 +1,2121 @@
+using System.Text.Json;
+using System.Text.Json.Nodes;
+using System.Text.Json.Serialization;
+using System.Globalization;
+using System.Security.Cryptography;
+using System.Text;
+using System.Diagnostics;
+using AssetStudio;
+using PjskBundle2Parts.Models;
+
+namespace PjskBundle2Parts.Services;
+
+public sealed class PartPackageExporter
+{
+    private static readonly JsonSerializerOptions WriteJsonOptions = new()
+    {
+        WriteIndented = false,
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    private readonly BundleInputResolver resolver = new();
+    private readonly AssetStudioBundleParser parser = new();
+    private readonly AssetStudioImportedModelFactory modelFactory;
+    private readonly OfficialUnityResourceExtractor resourceExtractor = new();
+    private readonly SpringBoneExporter springBoneExporter = new();
+    private readonly UnityRuntimeNativeMeshExporter nativeMeshExporter = new();
+    private readonly UnityRuntimeTextureExporter textureExporter = new();
+    private readonly IReadOnlyDictionary<string, float> characterHeightMetersById;
+    private BundleHashIndex bundleHashes = new(null);
+    private BundleDependencyIndex bundleDependencies = new(null);
+
+    public PartPackageExporter(
+        IReadOnlyDictionary<string, float>? characterHeightMetersById = null,
+        bool convertModelTextures = false
+    )
+    {
+        this.characterHeightMetersById = characterHeightMetersById ?? DefaultCharacterHeightMetersById;
+        modelFactory = new AssetStudioImportedModelFactory(convertModelTextures);
+    }
+
+    public PartPackageExportBatchResult ExportAll(
+        string masterDirectory,
+        string assetRoot,
+        string outputDirectory,
+        string? manifestPath = null,
+        int shardCount = 1,
+        int shardIndex = 0,
+        string? claimDirectory = null,
+        string? compiledContentStore = null,
+        string? sharedContentStore = null,
+        string? workListPath = null,
+        string? bundleHashIndex = null,
+        string? bundleDependencyIndex = null,
+        bool restoreKtx2 = false
+    )
+    {
+        var stopwatch = Stopwatch.StartNew();
+        bundleHashes = new BundleHashIndex(bundleHashIndex);
+        bundleDependencies = new BundleDependencyIndex(bundleDependencyIndex);
+        var manifest = PartPackageExportManifest.Load(manifestPath);
+        var sparseInput = File.Exists(Path.Combine(assetRoot, ".haruki-sparse-input"));
+        var partEntries = LoadPartEntries(masterDirectory, assetRoot, workListPath)
+            .Where(entry => entry.BundlePath is not null && entry.Status != "missing")
+            .Where(entry => PartPackageWorkPlanner.HasRequiredBundleFiles(entry, sparseInput))
+            .ToList();
+        var results = new List<PartPackageExportResult>();
+        var claims = string.IsNullOrWhiteSpace(claimDirectory)
+            ? null
+            : new PartPackageWorkClaims(claimDirectory);
+        var compiledCache = string.IsNullOrWhiteSpace(compiledContentStore) ||
+            string.IsNullOrWhiteSpace(sharedContentStore)
+                ? null
+                : new CompiledPartCache(
+                    compiledContentStore,
+                    sharedContentStore,
+                    assetRoot,
+                    bundleHashIndex,
+                    bundleDependencyIndex,
+                    restoreKtx2
+                );
+        var built = 0;
+        var restored = 0;
+        var manifestSkipped = 0;
+        AssetStudioLoadedBundle? cachedBundle = null;
+        PartBuildCore? cachedCore = null;
+        try
+        {
+            foreach (var entry in SelectWorkEntries(
+                SelectRepresentativePartEntries(partEntries),
+                shardCount,
+                shardIndex,
+                claims
+            ))
+            {
+                var packageDirectory = Path.Combine(outputDirectory, entry.PackagePath.Replace('/', Path.DirectorySeparatorChar));
+                var runtimePath = Path.Combine(packageDirectory, "part-runtime.json");
+                var runtimeOutputPath = RuntimeJsonWriter.PrimaryPath(runtimePath);
+                var stamp = PartPackageInputStamp.From(entry);
+                if (manifest.CanSkip(entry.PackagePath, runtimeOutputPath, stamp) &&
+                    RuntimePackageCanSkip(runtimePath, outputDirectory))
+                {
+                    DeletePartExportError(packageDirectory);
+                    results.Add(new PartPackageExportResult(entry, runtimeOutputPath, Array.Empty<string>()));
+                    manifestSkipped += 1;
+                    continue;
+                }
+
+                var resolvedInput = ResolveInput(entry);
+                if (compiledCache?.TryRestore(
+                        entry,
+                        resolvedInput,
+                        assetRoot,
+                        outputDirectory,
+                        characterHeightMetersById,
+                        out var restoredResult
+                    ) == true)
+                {
+                    DeletePartExportError(packageDirectory);
+                    manifest.Update(entry.PackagePath, stamp);
+                    results.Add(restoredResult!);
+                    restored += 1;
+                    continue;
+                }
+
+                PartPackageExportResult result;
+                try
+                {
+                    result = ExportWithMaterialDependencyRetry(
+                        entry,
+                        assetRoot,
+                        outputDirectory,
+                        characterHeightMetersById,
+                        ref cachedBundle,
+                        ref cachedCore
+                    );
+                    compiledCache?.Store(
+                        entry,
+                        resolvedInput,
+                        result,
+                        cachedBundle?.DependencyMode ?? BundleLoadDependencyMode.Default
+                    );
+                    manifest.Update(entry.PackagePath, stamp);
+                    built += 1;
+                }
+                catch (Exception ex)
+                {
+                    Directory.CreateDirectory(packageDirectory);
+                    var errorPath = Path.Combine(packageDirectory, "part-export-error.json");
+                    File.WriteAllText(errorPath, JsonSerializer.Serialize(new
+                    {
+                        packagePath = entry.PackagePath,
+                        sourcePackagePath = entry.SourcePackagePath,
+                        costume3dId = entry.Costume3dId,
+                        partType = entry.PartType,
+                        unit = entry.Unit,
+                        colorId = entry.ColorId,
+                        bundlePath = entry.BundlePath,
+                        colorVariationBundlePath = entry.ColorVariationBundlePath,
+                        error = ex.Message,
+                        exceptionType = ex.GetType().FullName,
+                    }, WriteJsonOptions));
+                    Console.Error.WriteLine($"Part package export skipped: {entry.PackagePath}: {ex.Message}");
+                    result = new PartPackageExportResult(
+                        entry,
+                        errorPath,
+                        new[] { $"export failed: {ex.Message}" },
+                        Succeeded: false
+                    );
+                }
+                results.Add(result);
+            }
+        }
+        finally
+        {
+            cachedBundle?.Dispose();
+        }
+        if (claims is null && string.IsNullOrWhiteSpace(workListPath))
+        {
+            manifest.Save();
+        }
+
+        stopwatch.Stop();
+        return new PartPackageExportBatchResult(
+            results,
+            built,
+            restored,
+            manifestSkipped,
+            compiledCache?.BundleHashIndexHits ?? 0,
+            compiledCache?.FileHashComputations ?? 0,
+            stopwatch.ElapsedMilliseconds
+        );
+    }
+
+    private static IEnumerable<PartRegistryEntry> SelectWorkEntries(
+        IReadOnlyList<PartRegistryEntry> entries,
+        int shardCount,
+        int shardIndex,
+        PartPackageWorkClaims? claims
+    )
+    {
+        foreach (var group in entries.GroupBy(ShardKey, StringComparer.Ordinal))
+        {
+            if (!IsInShard(group.Key, shardCount, shardIndex) ||
+                (claims is not null && !claims.TryClaim(group.Key)))
+            {
+                continue;
+            }
+            foreach (var entry in group)
+            {
+                yield return entry;
+            }
+        }
+    }
+
+    private static IReadOnlyList<PartRegistryEntry> SelectRepresentativePartEntries(IReadOnlyList<PartRegistryEntry> entries)
+    {
+        return entries
+            .GroupBy(entry => entry.PackagePath, StringComparer.Ordinal)
+            .Select(group => group
+                .OrderBy(entry => entry.Costume3dId)
+                .ThenBy(entry => entry.Unit ?? string.Empty, StringComparer.Ordinal)
+                .First())
+            .OrderBy(entry => entry.PartType, StringComparer.Ordinal)
+            .ThenBy(ResolveBundleFamilySortKey, StringComparer.Ordinal)
+            .ThenBy(entry => entry.BaseSourceKey ?? entry.SourceKey ?? entry.PackagePath, StringComparer.Ordinal)
+            .ThenBy(entry => entry.PackagePath, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    private static string ResolveBundleFamilySortKey(PartRegistryEntry entry)
+    {
+        if (string.IsNullOrWhiteSpace(entry.BundlePath))
+        {
+            return entry.PackagePath;
+        }
+        var directory = Path.GetDirectoryName(entry.BundlePath) ?? string.Empty;
+        if (ResolveRuntimePartType(entry) == "body")
+        {
+            return directory;
+        }
+        var stem = Path.GetFileNameWithoutExtension(entry.BundlePath);
+        return Path.Combine(directory, BundleDependencyResolver.ResolveFamilyStem(stem));
+    }
+
+    private static string ShardKey(PartRegistryEntry entry)
+    {
+        return entry.BaseSourceKey ?? entry.SourceKey ?? entry.PackagePath;
+    }
+
+    private static string BuildCoreKey(string value)
+    {
+        return Convert.ToHexString(
+            SHA256.HashData(Encoding.UTF8.GetBytes(value))
+        ).ToLowerInvariant();
+    }
+
+    private static bool IsInShard(string shardKey, int shardCount, int shardIndex)
+    {
+        if (shardCount <= 1)
+        {
+            return true;
+        }
+
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(shardKey));
+        var value = BitConverter.ToUInt64(hash, 0);
+        return (int)(value % (ulong)shardCount) == shardIndex;
+    }
+
+    public PartPackageExportResult ExportOne(
+        string masterDirectory,
+        string assetRoot,
+        string outputDirectory,
+        int costume3dId,
+        string partType,
+        string? unit
+    )
+    {
+        var characterHeightMetersById = CharacterHeightResolver.LoadMetersByCharacterId(masterDirectory);
+        var normalizedPartType = NormalizePartType(partType);
+        var entry = LoadPartEntries(masterDirectory, assetRoot)
+            .Where(entry => entry.Costume3dId == costume3dId)
+            .Where(entry => string.Equals(ResolveRuntimePartType(entry), normalizedPartType, StringComparison.OrdinalIgnoreCase))
+            .Where(entry => unit is null || string.Equals(entry.Unit, unit, StringComparison.OrdinalIgnoreCase))
+            .OrderBy(entry => entry.Unit ?? string.Empty, StringComparer.OrdinalIgnoreCase)
+            .FirstOrDefault()
+            ?? throw new InvalidOperationException($"No part registry entry matched costume3dId={costume3dId}, partType={partType}, unit={unit ?? "<any>"}.");
+
+        if (entry.BundlePath is null)
+        {
+            throw new InvalidOperationException($"Matched part has no bundle path: costume3dId={costume3dId}, partType={partType}.");
+        }
+
+        return Export(entry, assetRoot, outputDirectory, characterHeightMetersById);
+    }
+
+    public PartPackageExportResult Export(
+        PartRegistryEntry entry,
+        string assetRoot,
+        string outputDirectory,
+        IReadOnlyDictionary<string, float>? characterHeightMetersById = null
+    )
+    {
+        var input = ResolveInput(entry);
+        var dependencyPaths = ResolveDependencyBundlePaths(assetRoot, input);
+        using var loadedBundle = AssetStudioLoadedBundle.Load(
+            input,
+            dependencyBundlePaths: dependencyPaths
+        );
+        PartBuildCore? core = null;
+        try
+        {
+            return Export(entry, assetRoot, outputDirectory, characterHeightMetersById, loadedBundle, ref core);
+        }
+        catch (MissingMaterialReferenceException ex)
+        {
+            using var fallbackBundle = AssetStudioLoadedBundle.Load(
+                input,
+                BundleLoadDependencyMode.FullDirectory,
+                dependencyPaths
+            );
+            core = null;
+            var result = Export(entry, assetRoot, outputDirectory, characterHeightMetersById, fallbackBundle, ref core);
+            return AddWarning(result, BuildMaterialDependencyFallbackWarning(ex));
+        }
+    }
+
+    private PartPackageExportResult ExportWithMaterialDependencyRetry(
+        PartRegistryEntry entry,
+        string assetRoot,
+        string outputDirectory,
+        IReadOnlyDictionary<string, float> characterHeightMetersById,
+        ref AssetStudioLoadedBundle? cachedBundle,
+        ref PartBuildCore? cachedCore
+    )
+    {
+        var input = ResolveInput(entry);
+        var dependencyPaths = ResolveDependencyBundlePaths(assetRoot, input);
+        if (cachedBundle is null || !cachedBundle.TrySelectInput(input))
+        {
+            cachedBundle?.Dispose();
+            cachedBundle = AssetStudioLoadedBundle.Load(
+                input,
+                dependencyBundlePaths: dependencyPaths
+            );
+            cachedCore = null;
+        }
+
+        try
+        {
+            return Export(entry, assetRoot, outputDirectory, characterHeightMetersById, cachedBundle, ref cachedCore);
+        }
+        catch (MissingMaterialReferenceException ex) when (cachedBundle.DependencyMode != BundleLoadDependencyMode.FullDirectory)
+        {
+            cachedBundle.Dispose();
+            cachedBundle = AssetStudioLoadedBundle.Load(
+                input,
+                BundleLoadDependencyMode.FullDirectory,
+                dependencyPaths
+            );
+            cachedCore = null;
+            PartPackageExportResult result;
+            try
+            {
+                result = Export(entry, assetRoot, outputDirectory, characterHeightMetersById, cachedBundle, ref cachedCore);
+            }
+            catch (MissingMaterialReferenceException fallbackEx)
+            {
+                throw new InvalidOperationException(
+                    $"missing_after_fallback: {fallbackEx.Message}",
+                    fallbackEx
+                );
+            }
+            return AddWarning(result, BuildMaterialDependencyFallbackWarning(ex));
+        }
+    }
+
+    private PartPackageExportResult Export(
+        PartRegistryEntry entry,
+        string assetRoot,
+        string outputDirectory,
+        IReadOnlyDictionary<string, float>? characterHeightMetersById,
+        AssetStudioLoadedBundle loadedBundle,
+        ref PartBuildCore? cachedCore
+    )
+    {
+        var packageDirectory = Path.Combine(outputDirectory, entry.PackagePath.Replace('/', Path.DirectorySeparatorChar));
+        Directory.CreateDirectory(packageDirectory);
+        var normalizedType = ResolveRuntimePartType(entry);
+        var input = loadedBundle.Input;
+
+        var buildKey = ShardKey(entry);
+        var rebuiltCore = false;
+        if (cachedCore is null ||
+            !string.Equals(cachedCore.Key, buildKey, StringComparison.Ordinal) ||
+            !string.Equals(cachedCore.Input.ResolvedBundlePath, input.ResolvedBundlePath, StringComparison.Ordinal))
+        {
+            var resourceName = normalizedType switch
+            {
+                "body" => "body",
+                "head" or "hair" => "face",
+                "head_optional" => "optional",
+                _ => throw new InvalidOperationException($"Unsupported runtime part type '{normalizedType}'."),
+            };
+            var officialResource = resourceExtractor.Extract(
+                input,
+                loadedBundle.PrimaryObjects,
+                resourceName
+            );
+            var inventory = parser.Parse(
+                input,
+                officialResource.Objects,
+                loadedBundle.Objects,
+                loadedBundle.AssetsFileCount
+            );
+            var imported = modelFactory.CreateImportedModel(input, officialResource.RootGameObject);
+            var baseTextures = textureExporter.ExportPartTextures(
+                packageDirectory,
+                outputDirectory,
+                normalizedType,
+                inventory
+            );
+            var springBone = springBoneExporter.Export(input, officialResource.Objects);
+            var runtimeSpringBone = BuildPartSpringBone(normalizedType, springBone);
+            var nativeMeshes = ExportNativeMeshes(normalizedType, imported, runtimeSpringBone);
+            var builtMaterialSlots = BuildMaterialSlots(
+                normalizedType,
+                inventory,
+                baseTextures,
+                imported,
+                nativeMeshes
+            );
+            var morphChannelBindings = normalizedType is "head" or "hair"
+                ? ReadHeadMorphBindings(imported)
+                : Array.Empty<HeadMorphChannel>();
+            var nativeDeduplication = DeduplicateNativeMeshes(nativeMeshes, builtMaterialSlots.Slots);
+            cachedCore = new PartBuildCore(
+                buildKey,
+                input,
+                inventory,
+                springBone,
+                runtimeSpringBone,
+                nativeDeduplication.NativeMeshes,
+                builtMaterialSlots,
+                nativeDeduplication.Warnings,
+                baseTextures,
+                morphChannelBindings
+            );
+            rebuiltCore = true;
+        }
+        var core = cachedCore;
+        var overrideTextures = entry.ColorVariationBundlePath is not null
+            ? modelFactory.CreateImportedTextures(entry.ColorVariationBundlePath)
+            : Array.Empty<ImportedTexture>();
+        var textures = textureExporter.ExportPartTextures(
+            packageDirectory,
+            outputDirectory,
+            normalizedType,
+            core.Inventory,
+            overrideTextures,
+            core.BaseTextures
+        );
+        var colorVariationSlots = ApplyColorVariationTextureOverrides(
+            normalizedType,
+            core.MaterialSlots.Slots,
+            overrideTextures,
+            textures
+        );
+        var partIdentity = new PartRuntimeIdentity(
+            Costume3dId: entry.Costume3dId,
+            PartType: normalizedType,
+            CharacterId: entry.CharacterId,
+            Unit: entry.Unit,
+            Name: entry.Name,
+            ColorId: entry.ColorId,
+            ColorName: entry.ColorName,
+            Costume3dGroupId: entry.Costume3dGroupId,
+            ModelAssetbundleName: entry.ModelAssetbundleName,
+            HeadCostume3dAssetbundleType: entry.HeadCostume3dAssetbundleType
+        );
+        var source = BuildSource(entry, input, assetRoot, normalizedType, core.Inventory);
+        var mount = BuildMount(entry, core.Inventory, normalizedType, core.SpringBone);
+        var runtimeManifest = BuildManifest(
+            entry,
+            input,
+            core.Inventory,
+            normalizedType,
+            characterHeightMetersById
+        );
+        var materialSlots = FilterMaterialSlotsForNativeMeshes(
+            normalizedType,
+            colorVariationSlots,
+            core.NativeMeshes
+        );
+        var textureRoles = BuildTextureRoles(materialSlots);
+        var coreWarnings = core.NativeMeshes.Warnings
+            .Concat(core.RuntimeSpringBone.Warnings)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var deltaWarnings = entry.Warnings
+            .Concat(core.MaterialSlots.Warnings)
+            .Concat(core.NativeDeduplicationWarnings)
+            .Distinct(StringComparer.Ordinal)
+            .ToList();
+        var coreKey = BuildCoreKey(ShardKey(entry));
+        var coreRuntimeRelativePath = $"parts/_cores/{normalizedType}/{coreKey}/part-runtime-core.msgpack.br";
+        var coreRuntimePath = Path.Combine(
+            outputDirectory,
+            coreRuntimeRelativePath.Replace('/', Path.DirectorySeparatorChar)
+        );
+        if (rebuiltCore || !RuntimeJsonWriter.OutputsExist(coreRuntimePath))
+        {
+            WriteJson(
+                coreRuntimePath,
+                new PartRuntimeCorePackage(
+                    Version: "0415-part-core-3",
+                    NativeMeshes: core.NativeMeshes,
+                    SpringBone: core.RuntimeSpringBone,
+                    CharacterControllers: new PjskSekaiRuntimeCharacterControllers(
+                        Hair: core.SpringBone.CharacterHair,
+                        Eye: core.SpringBone.CharacterEye
+                    ),
+                    MorphChannelBindings: core.MorphChannelBindings,
+                    Warnings: coreWarnings
+                )
+            );
+        }
+        var package = new PartRuntimeDeltaPackage(
+            Version: "0415-part-delta-3",
+            CorePath: coreRuntimeRelativePath,
+            Part: partIdentity,
+            Source: source,
+            Mount: mount,
+            Manifest: runtimeManifest,
+            MaterialSlots: materialSlots,
+            TextureRoles: textureRoles,
+            CharacterTextures: textures,
+            Warnings: deltaWarnings
+        );
+
+        var runtimePath = Path.Combine(packageDirectory, "part-runtime.json");
+        WriteJson(runtimePath, package);
+        DeletePartExportError(packageDirectory);
+        return new PartPackageExportResult(
+            entry,
+            RuntimeJsonWriter.PrimaryPath(runtimePath),
+            coreWarnings.Concat(deltaWarnings).Distinct(StringComparer.Ordinal).ToList(),
+            CoreRuntimePath: RuntimeJsonWriter.PrimaryPath(coreRuntimePath),
+            TextureHashes: textures.Values
+                .Select(path => Path.GetFileNameWithoutExtension(path) ?? string.Empty)
+                .Where(hash => hash.Length == 64 && hash.All(Uri.IsHexDigit))
+                .Select(hash => hash.ToLowerInvariant())
+                .Distinct(StringComparer.Ordinal)
+                .ToList()
+        );
+    }
+
+    private static void DeletePartExportError(string packageDirectory)
+    {
+        var errorPath = Path.Combine(packageDirectory, "part-export-error.json");
+        if (File.Exists(errorPath))
+        {
+            File.Delete(errorPath);
+        }
+    }
+
+    private ResolvedBundleInput ResolveInput(PartRegistryEntry entry)
+    {
+        if (entry.BundlePath is null)
+        {
+            throw new InvalidOperationException($"Part entry {entry.Costume3dId}/{entry.PartType} has no bundle path.");
+        }
+
+        var normalizedType = ResolveRuntimePartType(entry);
+        var input = normalizedType == "body"
+            ? resolver.ResolveBody(entry.BundlePath)
+            : resolver.ResolveHead(entry.BundlePath);
+        return input with { CharacterId = entry.CharacterId.ToString("00") };
+    }
+
+    private IReadOnlyList<string> ResolveDependencyBundlePaths(
+        string assetRoot,
+        ResolvedBundleInput input
+    )
+    {
+        var logicalBundleName = BundleDependencyIndex.LogicalName(
+            assetRoot,
+            input.ResolvedBundlePath
+        );
+        return bundleDependencies.ResolveExistingBundlePaths(assetRoot, logicalBundleName);
+    }
+
+    private static PartPackageExportResult AddWarning(PartPackageExportResult result, string warning)
+    {
+        return result with
+        {
+            Warnings = result.Warnings
+                .Append(warning)
+                .Distinct(StringComparer.Ordinal)
+                .ToList()
+        };
+    }
+
+    private static string BuildMaterialDependencyFallbackWarning(MissingMaterialReferenceException ex)
+    {
+        return $"Recovered missing material reference {ex.MaterialKey} by loading the full source bundle directory.";
+    }
+
+    private static PartRuntimeSpringBone BuildPartSpringBone(string partType, SpringBoneExport springBone)
+    {
+        var combined = partType == "body"
+            ? new CombinedSpringBoneExport(1, springBone, EmptySpringBone("Head"))
+            : new CombinedSpringBoneExport(1, EmptySpringBone("Body"), springBone);
+        var candidate = new VrmSpringBoneCandidateBuilder().Build(combined);
+        var setup = BuildSinglePartRuntimeSetup(partType, springBone, candidate);
+        return new PartRuntimeSpringBone(
+            PartKind: ToRuntimePartKind(partType),
+            PrefabGraph: springBone.PrefabGraph,
+            Managers: setup.Managers,
+            Bones: setup.Bones,
+            ExtraBones: springBone.ExtraBones,
+            Colliders: setup.Colliders,
+            ColliderBindings: setup.ColliderBindings,
+            ManagerColliderCaches: setup.ManagerColliderCaches,
+            ActiveRootProfile: setup.ActiveRootProfile,
+            FUnit: springBone.FUnit,
+            ConstraintSetup: setup.ConstraintSetup,
+            Warnings: springBone.Warnings.Concat(candidate.Warnings).Distinct(StringComparer.Ordinal).ToList()
+        );
+    }
+
+    private static PjskSpringBoneRuntimeUnitySetup BuildSinglePartRuntimeSetup(
+        string partType,
+        SpringBoneExport springBone,
+        VrmSpringBoneCandidate candidate
+    )
+    {
+        var partKind = ToRuntimePartKind(partType);
+        var managers = springBone.Managers.Select(manager => BuildRuntimeManager(partKind, manager, springBone)).ToList();
+        var bones = springBone.Bones.Select(bone => BuildRuntimeBone(partKind, bone)).ToList();
+        var colliders = candidate.VrmExtensionDraft.Colliders
+            .Where(collider => string.Equals(collider.PartKind, partKind, StringComparison.OrdinalIgnoreCase))
+            .Select(collider => new PjskSpringBoneRuntimeCollider(
+                PartKind: collider.PartKind,
+                Index: collider.Index,
+                PathId: collider.SourcePathId,
+                ScriptName: collider.ScriptName,
+                NodeName: collider.NodeName,
+                NodePath: collider.NodePath,
+                PoseRoot: collider.PoseRoot,
+                Enabled: collider.Enabled,
+                LinkedRenderer: collider.LinkedRenderer,
+                LinkedRendererEnabled: collider.LinkedRendererEnabled,
+                Shape: collider.Shape
+            ))
+            .ToList();
+        var bindings = candidate.VrmExtensionDraft.ColliderGroups
+            .Where(group => string.Equals(group.PartKind, partKind, StringComparison.OrdinalIgnoreCase))
+            .Select(group => new PjskSpringBoneRuntimeColliderBinding(
+                SourceKind: group.SourceKind ?? "direct",
+                PartKind: group.PartKind,
+                SourceSpringBonePathId: group.SourceSpringBonePathId,
+                ColliderFlag: group.ColliderFlag,
+                MatchedPrefixes: group.MatchedPrefixes,
+                CollidersByRoot: group.CollidersByRoot,
+                DefaultRoot: group.DefaultRoot,
+                SourceColliderPathIds: group.SourceColliderPathIds,
+                Colliders: group.Colliders
+            ))
+            .Concat(BuildDeferredColliderFlagBindings(partKind, bones))
+            .ToList();
+        var activeRoots = springBone.PrefabGraph.Transforms
+            .Select(transform => FirstPathSegment(transform.TransformPath))
+            .Where(root => !string.IsNullOrWhiteSpace(root))
+            .Cast<string>()
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(root => root, StringComparer.Ordinal)
+            .ToList();
+        var defaultRoot = activeRoots.FirstOrDefault() ?? (partType == "body" ? "body" : "face");
+        var bindingDecisions = PjskSekaiRuntimeExtensionBuilder.BuildBindingDecisions(bones, bindings);
+        return new PjskSpringBoneRuntimeUnitySetup(
+            Version: "0414-part-1",
+            UnityVersion: "2022.3.21f1",
+            CoordinateSpace: new PjskUnityRuntimeCoordinateSpace(
+                Source: "unity-left-handed",
+                Viewer: "three-js-right-handed",
+                PositionConversion: "viewer_mirror_x",
+                RotationConversion: "viewer_negate_quaternion_yz",
+                ScaleConversion: "identity",
+                Notes: new[] { "Single-part package; viewer composer must merge active parts before simulation." }
+            ),
+            PrefabGraphs: new[] { springBone.PrefabGraph },
+            BodyHeadAssembly: null,
+            RootSelectionProfile: new PjskSpringBoneRootSelectionProfile(
+                Policy: "single_part_active_roots",
+                DefaultBodyRoot: defaultRoot,
+                RootCandidates: activeRoots.Select((root, index) => new PjskSpringBoneRootCandidate(
+                    Root: root,
+                    PartKind: partKind,
+                    StaticActive: true,
+                    DefaultPriority: index,
+                    ManagerPathIds: managers.Where(manager => string.Equals(FirstPathSegment(manager.NodePath), root, StringComparison.OrdinalIgnoreCase)).Select(manager => manager.PathId).ToList(),
+                    BonePathIds: bones.Where(bone => string.Equals(FirstPathSegment(bone.NodePath), root, StringComparison.OrdinalIgnoreCase)).Select(bone => bone.PathId).ToList(),
+                    ColliderIndexes: colliders.Where(collider => string.Equals(FirstPathSegment(collider.NodePath), root, StringComparison.OrdinalIgnoreCase)).Select(collider => collider.Index).ToList(),
+                    RendererPathIds: springBone.PrefabGraph.Renderers.Where(renderer => string.Equals(FirstPathSegment(renderer.TransformPath), root, StringComparison.OrdinalIgnoreCase)).Select(renderer => renderer.PathId).ToList(),
+                    Reason: "single-part root"
+                )).ToList()
+            ),
+            SetupPlan: new PjskSpringBoneSetupPlan(
+                DiscoveryMode: "single_part_runtime_package",
+                RootPolicy: "official_model_combine_setup; manager ownership is rebuilt from composed hierarchy",
+                ManagerPathIds: managers.Select(manager => manager.PathId).ToList(),
+                OrderedSteps: new[] { "mount part graph", "merge active part springbone", "rebuild SpringManager ownership from composed hierarchy", "repair constraints after composition", "rebind current body colliders", "reset spring runtime" },
+                DirectBindingCount: bindings.Count(binding => binding.SourceKind == "direct"),
+                ColliderFlagBindingCount: bindings.Count(binding => binding.SourceKind == "colliderFlag")
+            ),
+            BindingDecisions: bindingDecisions,
+            ActiveRootProfile: new PjskSpringBoneActiveRootProfile(
+                DefaultBodyRoot: defaultRoot,
+                ActiveRoots: activeRoots.Count == 0 ? new[] { defaultRoot } : activeRoots,
+                InactiveRoots: Array.Empty<string>()
+            ),
+            FUnit: springBone.FUnit,
+            ConstraintSetup: PjskSekaiRuntimeExtensionBuilder.BuildConstraintSetup(
+                "single_part_runtime_package",
+                new[] { springBone.PrefabGraph }
+            ),
+            ManagerColliderCaches: BuildManagerColliderCaches(managers, colliders),
+            Managers: managers,
+            Bones: bones,
+            Colliders: colliders,
+            ColliderBindings: bindings,
+            Warnings: candidate.Warnings
+        );
+    }
+
+    private static IReadOnlyList<PjskSpringBoneRuntimeColliderBinding> BuildDeferredColliderFlagBindings(
+        string partKind,
+        IReadOnlyList<PjskSpringBoneRuntimeBone> bones
+    )
+    {
+        if (!string.Equals(partKind, "Head", StringComparison.OrdinalIgnoreCase))
+        {
+            return Array.Empty<PjskSpringBoneRuntimeColliderBinding>();
+        }
+
+        return bones
+            .Where(bone => bone.ColliderFlag > 0)
+            .Select(bone =>
+            {
+                var prefixes = ResolveColliderFlagPrefixes(bone.ColliderFlag);
+                return new PjskSpringBoneRuntimeColliderBinding(
+                    SourceKind: "deferred_body_colliderFlag",
+                    PartKind: partKind,
+                    SourceSpringBonePathId: bone.PathId,
+                    ColliderFlag: bone.ColliderFlag,
+                    MatchedPrefixes: prefixes,
+                    CollidersByRoot: prefixes.Count == 0
+                        ? null
+                        : new Dictionary<string, IReadOnlyList<int>>
+                        {
+                            ["body"] = Array.Empty<int>()
+                        },
+                    DefaultRoot: "body",
+                    SourceColliderPathIds: Array.Empty<long>(),
+                    Colliders: Array.Empty<int>()
+                );
+            })
+            .ToList();
+    }
+
+    private static IReadOnlyList<string> ResolveColliderFlagPrefixes(int colliderFlag)
+    {
+        var prefixes = new List<string>();
+        if ((colliderFlag & 1) != 0)
+        {
+            prefixes.Add("CL_Hip");
+        }
+        if ((colliderFlag & 2) != 0)
+        {
+            prefixes.Add("CL_Chest");
+        }
+        if ((colliderFlag & 4) != 0)
+        {
+            prefixes.Add("CL_Left_Arm");
+        }
+        if ((colliderFlag & 8) != 0)
+        {
+            prefixes.Add("CL_Right_Arm");
+        }
+        if ((colliderFlag & 16) != 0)
+        {
+            prefixes.Add("CL_Left_Elbow");
+        }
+        if ((colliderFlag & 32) != 0)
+        {
+            prefixes.Add("CL_Right_Elbow");
+        }
+        return prefixes;
+    }
+
+    private PjskUnityRuntimeNativeMeshSet ExportNativeMeshes(
+        string partType,
+        IImported imported,
+        PartRuntimeSpringBone springBone
+    )
+    {
+        var nativeMeshes = nativeMeshExporter.ExportSinglePart(
+            partType == "body" ? "Body" : partType == "head_optional" ? "Accessory" : "Head",
+            imported,
+            springBone.PrefabGraph,
+            springBone.ActiveRootProfile.ActiveRoots
+        );
+        ValidateExactSkinBindings(partType, nativeMeshes);
+        return nativeMeshes;
+    }
+
+    private static void ValidateExactSkinBindings(
+        string partType,
+        PjskUnityRuntimeNativeMeshSet nativeMeshes
+    )
+    {
+        if (string.Equals(partType, "head_optional", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+        if (nativeMeshes.Meshes.Count == 0)
+        {
+            var diagnostics = nativeMeshes.Warnings.Count == 0
+                ? "no renderer diagnostics were emitted"
+                : string.Join(" ", nativeMeshes.Warnings.Take(8));
+            throw new InvalidOperationException(
+                $"Official {partType} resource exported no runtime meshes. Refusing to publish an incomplete part package. Diagnostics: {diagnostics}"
+            );
+        }
+        var skippedBindings = nativeMeshes.Warnings
+            .Where(warning => warning.Contains(" skipped:", StringComparison.OrdinalIgnoreCase))
+            .Take(4)
+            .ToList();
+        if (skippedBindings.Count > 0)
+        {
+            throw new InvalidOperationException(
+                $"Official {partType} resource has rejected renderer or skin bindings. Refusing to publish a partial part package: {string.Join(" ", skippedBindings)}"
+            );
+        }
+
+        foreach (var mesh in nativeMeshes.Meshes)
+        {
+            if (mesh.RendererTransformPathId is null)
+            {
+                throw new InvalidOperationException(
+                    $"Runtime mesh '{mesh.MeshPath}' has no exact renderer Transform PathID. Refusing to publish an ambiguous part package."
+                );
+            }
+            if (mesh.BonePathIds.Count != mesh.BonePaths.Count)
+            {
+                throw new InvalidOperationException(
+                    $"Runtime mesh '{mesh.MeshPath}' has {mesh.BonePaths.Count} bone paths but {mesh.BonePathIds.Count} bone PathIDs. Refusing to publish an incomplete part package."
+                );
+            }
+            if (!string.IsNullOrWhiteSpace(mesh.RootBonePath) && mesh.RootBonePathId is null)
+            {
+                throw new InvalidOperationException(
+                    $"Runtime mesh '{mesh.MeshPath}' has root bone '{mesh.RootBonePath}' without an exact PathID. Refusing to publish an ambiguous part package."
+                );
+            }
+            if (mesh.RootBonePathId is not null && string.IsNullOrWhiteSpace(mesh.RootBonePath))
+            {
+                throw new InvalidOperationException(
+                    $"Runtime mesh '{mesh.MeshPath}' has root bone PathID {mesh.RootBonePathId} without a resolved transform path. Refusing to publish an incomplete part package."
+                );
+            }
+        }
+    }
+
+    private sealed record BuiltMaterialSlots(
+        IReadOnlyList<PjskSekaiRuntimeMaterialSlot> Slots,
+        IReadOnlyList<string> Warnings
+    );
+
+    private sealed record PartBuildCore(
+        string Key,
+        ResolvedBundleInput Input,
+        BundleInventory Inventory,
+        SpringBoneExport SpringBone,
+        PartRuntimeSpringBone RuntimeSpringBone,
+        PjskUnityRuntimeNativeMeshSet NativeMeshes,
+        BuiltMaterialSlots MaterialSlots,
+        IReadOnlyList<string> NativeDeduplicationWarnings,
+        IReadOnlyDictionary<string, string> BaseTextures,
+        IReadOnlyList<HeadMorphChannel> MorphChannelBindings
+    );
+
+    private sealed record NativeMeshDeduplicationResult(
+        PjskUnityRuntimeNativeMeshSet NativeMeshes,
+        IReadOnlyList<string> Warnings
+    );
+
+    private static NativeMeshDeduplicationResult DeduplicateNativeMeshes(
+        PjskUnityRuntimeNativeMeshSet nativeMeshes,
+        IReadOnlyList<PjskSekaiRuntimeMaterialSlot> materialSlots
+    )
+    {
+        var materialSlotByKey = materialSlots
+            .GroupBy(slot => slot.MaterialKey, StringComparer.Ordinal)
+            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
+        var warnings = new List<string>();
+        var meshes = nativeMeshes.Meshes
+            .GroupBy(mesh => $"{mesh.PartKind}::{mesh.MeshPath}::{mesh.RendererTransformPath}", StringComparer.OrdinalIgnoreCase)
+            .Select(group =>
+            {
+                if (group.Count() == 1)
+                {
+                    return group.First();
+                }
+
+                var ranked = group
+                    .Select(mesh => new
+                    {
+                        Mesh = mesh,
+                        Score = ScoreNativeMeshMaterialCompleteness(mesh, materialSlotByKey),
+                    })
+                    .OrderByDescending(candidate => candidate.Score)
+                    .ThenBy(candidate => candidate.Mesh.RendererPathId)
+                    .ToList();
+                var kept = ranked[0];
+                var dropped = ranked.Skip(1)
+                    .Select(candidate => string.Join(",", candidate.Mesh.Submeshes.Select(submesh => submesh.MaterialKey).Distinct(StringComparer.Ordinal)))
+                    .ToList();
+                warnings.Add(
+                    $"Duplicate native mesh '{kept.Mesh.RendererTransformPath}' kept material(s) {string.Join(",", kept.Mesh.Submeshes.Select(submesh => submesh.MaterialKey).Distinct(StringComparer.Ordinal))} and dropped {string.Join("; ", dropped)} by material texture completeness."
+                );
+                return kept.Mesh;
+            })
+            .ToList();
+
+        return new NativeMeshDeduplicationResult(
+            nativeMeshes with { Meshes = meshes },
+            warnings
+        );
+    }
+
+    private static int ScoreNativeMeshMaterialCompleteness(
+        PjskUnityRuntimeNativeMesh mesh,
+        IReadOnlyDictionary<string, PjskSekaiRuntimeMaterialSlot> materialSlotByKey
+    )
+    {
+        var score = 0;
+        foreach (var submesh in mesh.Submeshes)
+        {
+            if (!materialSlotByKey.TryGetValue(submesh.MaterialKey, out var slot))
+            {
+                continue;
+            }
+            score += string.IsNullOrWhiteSpace(slot.MainTex) ? 0 : 1;
+            score += string.IsNullOrWhiteSpace(slot.ShadowTex) ? 0 : 2;
+            score += string.IsNullOrWhiteSpace(slot.ValueTex) ? 0 : 4;
+            score += string.IsNullOrWhiteSpace(slot.FaceShadowTex) ? 0 : 2;
+        }
+        return score;
+    }
+
+    private static IReadOnlyList<PjskSekaiRuntimeMaterialSlot> FilterMaterialSlotsForNativeMeshes(
+        string partType,
+        IReadOnlyList<PjskSekaiRuntimeMaterialSlot> materialSlots,
+        PjskUnityRuntimeNativeMeshSet nativeMeshes
+    )
+    {
+        if (partType == "head_optional" || nativeMeshes.Meshes.Count == 0)
+        {
+            return materialSlots;
+        }
+
+        var visibleMaterialKeys = nativeMeshes.Meshes
+            .SelectMany(mesh => mesh.Submeshes)
+            .Select(submesh => submesh.MaterialKey)
+            .ToHashSet(StringComparer.Ordinal);
+        return materialSlots
+            .Where(slot => visibleMaterialKeys.Contains(slot.MaterialKey))
+            .ToList();
+    }
+
+    private static BuiltMaterialSlots BuildMaterialSlots(
+        string partType,
+        BundleInventory inventory,
+        IReadOnlyDictionary<string, string> textures,
+        IImported imported,
+        PjskUnityRuntimeNativeMeshSet nativeMeshes
+    )
+    {
+        var materialLookup = MaterialIdentityLookup.FromInventory(inventory.Materials);
+        var warnings = new List<string>();
+        var slots = new List<PjskSekaiRuntimeMaterialSlot>();
+        foreach (var mesh in inventory.SkinnedMeshes.Concat(inventory.StaticMeshes))
+        {
+            foreach (var slot in mesh.MaterialSlots)
+            {
+                MaterialInventory material;
+                RuntimeMaterialIdentity identity;
+                if (slot.MaterialPathId == 0)
+                {
+                    var resolvedMaterialName = ResolveNativeSubmeshMaterialName(nativeMeshes, mesh, slot)
+                        ?? ResolveImportedSubmeshMaterialName(imported, mesh, slot);
+                    if (string.IsNullOrWhiteSpace(resolvedMaterialName))
+                    {
+                        warnings.Add($"Skipped empty material slot {mesh.MeshName}[{slot.SlotIndex}]: no native/imported material was present.");
+                        continue;
+                    }
+                    material = BuildSyntheticMaterialInventory(partType, imported, slot, resolvedMaterialName);
+                    identity = RuntimeMaterialIdentityResolver.Resolve(partType, slot.SlotIndex, slot.MaterialFileId, slot.MaterialPathId, material.Name);
+                }
+                else
+                {
+                    material = materialLookup.Require(slot);
+                    identity = new RuntimeMaterialIdentity(slot.MaterialKey, slot.MaterialFileId, slot.MaterialPathId);
+                }
+
+                var materialName = slot.MaterialName ?? material.Name;
+                var mainTex = FindTextureSlot(material, "_MainTex");
+                var shadowTex = FindTextureSlot(material, "_ShadowTex");
+                var valueTex = FindTextureSlot(material, "_ValueTex");
+                var faceShadowTex = FindTextureSlot(material, "_FaceShadowTex");
+                var materialKind = partType == "body"
+                    ? ClassifyBodyMaterialKind(materialName)
+                    : partType == "head_optional" ? "accessory" : ClassifyHeadMaterialKind(materialName, faceShadowTex is not null);
+                slots.Add(new PjskSekaiRuntimeMaterialSlot(
+                    Part: partType,
+                    MeshName: mesh.MeshName,
+                    SlotIndex: slot.SlotIndex,
+                    MaterialKey: identity.MaterialKey,
+                    MaterialFileId: identity.MaterialFileId,
+                    MaterialPathId: identity.MaterialPathId,
+                    MaterialName: materialName,
+                    MaterialKind: materialKind,
+                    MainTex: RewriteTexturePath(mainTex, textures),
+                    ShadowTex: RewriteTexturePath(shadowTex, textures),
+                    ValueTex: RewriteTexturePath(valueTex, textures),
+                    FaceShadowTex: RewriteTexturePath(faceShadowTex, textures),
+                    RenderOrder: ResolveRenderOrder(materialKind),
+                    ShaderPipeline: partType == "body" ? "sekai_csh_toon" : "character_tint_with_weak_sdf",
+                    IsAccessory: partType == "head_optional",
+                    Lighting: SekaiMaterialMetadata.BuildLightingSettings(material),
+                    RawMaterial: SekaiMaterialMetadata.BuildRawMaterialProperties(material, textures)
+                ));
+            }
+        }
+        var distinctSlots = slots
+            .DistinctBy(slot => $"{slot.MeshName}::{slot.SlotIndex}::{slot.MaterialKey}", StringComparer.Ordinal)
+            .ToList();
+        foreach (var slot in distinctSlots.Where(slot =>
+            slot.MaterialKind is "eye" or "eyelash" or "eyebrow"
+        ))
+        {
+            var mask = slot.RawMaterial?.TextureProperties.FirstOrDefault(texture =>
+                texture.Name.Equals("_EyelashMaskTex", StringComparison.OrdinalIgnoreCase)
+            );
+            if (mask is not { TexturePathId: not 0 } || string.IsNullOrWhiteSpace(mask.Uri))
+            {
+                warnings.Add(
+                    $"Unresolved _EyelashMaskTex dependency for {slot.MeshName}[{slot.SlotIndex}] " +
+                    $"{slot.MaterialName ?? slot.MaterialKey} " +
+                    $"({mask?.TextureFileId ?? 0}:{mask?.TexturePathId ?? 0})."
+                );
+            }
+        }
+        AddNativeMaterialSlotAliases(distinctSlots, nativeMeshes, warnings);
+        return new BuiltMaterialSlots(
+            Slots: distinctSlots
+                .DistinctBy(slot => $"{slot.MeshName}::{slot.SlotIndex}::{slot.MaterialKey}", StringComparer.Ordinal)
+                .ToList(),
+            Warnings: warnings
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(warning => warning, StringComparer.Ordinal)
+                .ToList()
+        );
+    }
+
+    private static void AddNativeMaterialSlotAliases(
+        List<PjskSekaiRuntimeMaterialSlot> slots,
+        PjskUnityRuntimeNativeMeshSet nativeMeshes,
+        List<string> warnings
+    )
+    {
+        foreach (var nativeMesh in nativeMeshes.Meshes)
+        {
+            foreach (var nativeSubmesh in nativeMesh.Submeshes)
+            {
+                var exact = slots.Any(slot =>
+                    string.Equals(slot.MeshName, nativeMesh.MeshName, StringComparison.OrdinalIgnoreCase) &&
+                    slot.SlotIndex == nativeSubmesh.SlotIndex &&
+                    string.Equals(slot.MaterialKey, nativeSubmesh.MaterialKey, StringComparison.Ordinal));
+                if (exact)
+                {
+                    continue;
+                }
+
+                var source = slots.FirstOrDefault(slot =>
+                    slot.SlotIndex == nativeSubmesh.SlotIndex &&
+                    string.Equals(slot.MaterialKey, nativeSubmesh.MaterialKey, StringComparison.Ordinal));
+                if (source is null)
+                {
+                    warnings.Add($"Native submesh material slot missing for {nativeMesh.MeshName}[{nativeSubmesh.SlotIndex}] ({nativeSubmesh.MaterialKey}).");
+                    continue;
+                }
+
+                slots.Add(source with { MeshName = nativeMesh.MeshName });
+            }
+        }
+    }
+
+    private static MaterialInventory BuildSyntheticMaterialInventory(
+        string partType,
+        IImported imported,
+        RenderMaterialSlotInventory slot,
+        string materialName
+    )
+    {
+        var importedMaterial = imported.MaterialList.FirstOrDefault(material =>
+            string.Equals(material.Name, materialName, StringComparison.OrdinalIgnoreCase))
+            ?? throw new InvalidOperationException(
+                $"Renderer material slot {slot.SlotIndex} has an empty material reference; imported material '{materialName}' was not found."
+            );
+        var identity = RuntimeMaterialIdentityResolver.Resolve(
+            partType,
+            slot.SlotIndex,
+            slot.MaterialFileId,
+            slot.MaterialPathId,
+            importedMaterial.Name
+        );
+        return new MaterialInventory(
+            MaterialFileId: identity.MaterialFileId,
+            MaterialPathId: identity.MaterialPathId,
+            MaterialKey: identity.MaterialKey,
+            Name: importedMaterial.Name,
+            ShaderName: null,
+            TextureSlots: BuildSyntheticTextureSlots(importedMaterial),
+            ColorProperties: new[]
+            {
+                new ColorPropertyInventory(
+                    "_Color",
+                    importedMaterial.Diffuse.R,
+                    importedMaterial.Diffuse.G,
+                    importedMaterial.Diffuse.B,
+                    Math.Clamp(1.0f - importedMaterial.Transparency, 0.0f, 1.0f)
+                ),
+            },
+            FloatProperties: new[]
+            {
+                new FloatPropertyInventory("_Transparency", importedMaterial.Transparency),
+            }
+        );
+    }
+
+    private static string? ResolveNativeSubmeshMaterialName(
+        PjskUnityRuntimeNativeMeshSet nativeMeshes,
+        RenderMeshInventory mesh,
+        RenderMaterialSlotInventory slot
+    )
+    {
+        var nativeMesh = nativeMeshes.Meshes.FirstOrDefault(candidate =>
+            string.Equals(candidate.MeshName, mesh.MeshName, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(Path.GetFileName(candidate.MeshPath), mesh.MeshName, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(LastPathSegment(candidate.RendererTransformPath), mesh.MeshName, StringComparison.OrdinalIgnoreCase));
+        var nativeSubmesh = nativeMesh?.Submeshes.FirstOrDefault(submesh => submesh.SlotIndex == slot.SlotIndex);
+        return string.IsNullOrWhiteSpace(nativeSubmesh?.MaterialName) ? null : nativeSubmesh.MaterialName;
+    }
+
+    private static string? ResolveImportedSubmeshMaterialName(
+        IImported imported,
+        RenderMeshInventory mesh,
+        RenderMaterialSlotInventory slot
+    )
+    {
+        var importedMesh = imported.MeshList.FirstOrDefault(candidate =>
+            string.Equals(Path.GetFileName(candidate.Path), mesh.MeshName, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(candidate.Path, mesh.MeshName, StringComparison.OrdinalIgnoreCase) ||
+            string.Equals(Path.GetFileNameWithoutExtension(candidate.Path), Path.GetFileNameWithoutExtension(mesh.MeshName), StringComparison.OrdinalIgnoreCase));
+        if (importedMesh is null || slot.SlotIndex < 0 || slot.SlotIndex >= importedMesh.SubmeshList.Count)
+        {
+            return slot.MaterialName;
+        }
+
+        var materialName = importedMesh.SubmeshList[slot.SlotIndex].Material;
+        return string.IsNullOrWhiteSpace(materialName) ? slot.MaterialName : materialName;
+    }
+
+    private static IReadOnlyList<TextureSlotInventory> BuildSyntheticTextureSlots(ImportedMaterial material)
+    {
+        var textureNames = material.Textures
+            .Select(texture => texture.Name)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        return new[]
+        {
+            new TextureSlotInventory("_MainTex", SelectTexture(textureNames, "_C", "main", "diffuse") ?? textureNames.FirstOrDefault()),
+            new TextureSlotInventory("_ShadowTex", SelectTexture(textureNames, "_S", "shadow")),
+            new TextureSlotInventory("_ValueTex", SelectTexture(textureNames, "_V", "value")),
+            new TextureSlotInventory("_FaceShadowTex", SelectTexture(textureNames, "faceshadow", "face_shadow")),
+        }
+        .Where(slot => !string.IsNullOrWhiteSpace(slot.TextureName))
+        .ToList();
+    }
+
+    private static string? SelectTexture(IReadOnlyList<string> textureNames, params string[] markers)
+    {
+        return textureNames.FirstOrDefault(name =>
+            markers.Any(marker => name.Contains(marker, StringComparison.OrdinalIgnoreCase)));
+    }
+
+    private static IReadOnlyList<PjskSekaiRuntimeTextureRole> BuildTextureRoles(IReadOnlyList<PjskSekaiRuntimeMaterialSlot> slots)
+    {
+        var roles = new List<PjskSekaiRuntimeTextureRole>();
+        foreach (var slot in slots)
+        {
+            AddTextureRole(roles, slot, "main", slot.MainTex);
+            AddTextureRole(roles, slot, "shadow", slot.ShadowTex);
+            AddTextureRole(roles, slot, "value", slot.ValueTex);
+            AddTextureRole(roles, slot, "faceShadow", slot.FaceShadowTex);
+        }
+        return roles;
+    }
+
+    private static IReadOnlyList<PjskSekaiRuntimeMaterialSlot> ApplyColorVariationTextureOverrides(
+        string partType,
+        IReadOnlyList<PjskSekaiRuntimeMaterialSlot> slots,
+        IReadOnlyList<ImportedTexture> overrideTextures,
+        IReadOnlyDictionary<string, string> textures
+    )
+    {
+        if (overrideTextures.Count == 0 || slots.Count == 0)
+        {
+            return slots;
+        }
+
+        var overrideMain = FindOverrideTexturePath(overrideTextures, textures, "_C", "main", "diffuse");
+        var overrideShadow = FindOverrideTexturePath(overrideTextures, textures, "_S", "shadow");
+        var overrideValue = FindOverrideTexturePath(overrideTextures, textures, "_H", "_V", "value");
+        var overrideFaceShadow = FindOverrideTexturePath(overrideTextures, textures, "faceshadow", "face_shadow");
+
+        if (overrideMain is null && overrideShadow is null && overrideValue is null && overrideFaceShadow is null)
+        {
+            return slots;
+        }
+
+        return slots
+            .Select(slot => ShouldApplyColorVariationOverride(partType, slot)
+                ? slot with
+                {
+                    MainTex = overrideMain ?? slot.MainTex,
+                    ShadowTex = overrideShadow ?? slot.ShadowTex,
+                    ValueTex = overrideValue ?? slot.ValueTex,
+                    FaceShadowTex = overrideFaceShadow ?? slot.FaceShadowTex,
+                    RawMaterial = ApplyRawTextureOverrides(
+                        slot.RawMaterial,
+                        overrideMain,
+                        overrideShadow,
+                        overrideValue,
+                        overrideFaceShadow
+                    ),
+                }
+                : slot)
+            .ToList();
+    }
+
+    private static RawMaterialProperties? ApplyRawTextureOverrides(
+        RawMaterialProperties? rawMaterial,
+        string? main,
+        string? shadow,
+        string? value,
+        string? faceShadow
+    )
+    {
+        if (rawMaterial is null)
+        {
+            return null;
+        }
+        var overrides = new Dictionary<string, string?>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["_MainTex"] = main,
+            ["_ShadowTex"] = shadow,
+            ["_ValueTex"] = value,
+            ["_FaceShadowTex"] = faceShadow,
+        };
+        return rawMaterial with
+        {
+            TextureProperties = rawMaterial.TextureProperties
+                .Select(texture =>
+                    overrides.TryGetValue(texture.Name, out var uri) &&
+                    !string.IsNullOrWhiteSpace(uri)
+                        ? texture with { Uri = uri }
+                        : texture
+                )
+                .ToList(),
+        };
+    }
+
+    private static bool ShouldApplyColorVariationOverride(string partType, PjskSekaiRuntimeMaterialSlot slot)
+    {
+        if (partType.Equals("head_optional", StringComparison.OrdinalIgnoreCase))
+        {
+            return slot.MaterialKind.Equals("accessory", StringComparison.OrdinalIgnoreCase);
+        }
+        if (partType is "head" or "hair")
+        {
+            return slot.MaterialKind.Equals("hair", StringComparison.OrdinalIgnoreCase);
+        }
+        return partType.Equals(slot.Part, StringComparison.OrdinalIgnoreCase) &&
+            !slot.MaterialKind.Equals("face", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string? FindOverrideTexturePath(
+        IReadOnlyList<ImportedTexture> overrideTextures,
+        IReadOnlyDictionary<string, string> textures,
+        params string[] markers
+    )
+    {
+        var textureName = SelectTexture(
+            overrideTextures
+                .Select(texture => texture.Name)
+                .Where(name => !string.IsNullOrWhiteSpace(name))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList(),
+            markers
+        );
+        if (string.IsNullOrWhiteSpace(textureName))
+        {
+            return null;
+        }
+        return textures.TryGetValue(textureName, out var path)
+            ? path
+            : textures.TryGetValue(Path.GetFileNameWithoutExtension(textureName), out var stemPath) ? stemPath : null;
+    }
+
+    private static object BuildManifest(
+        PartRegistryEntry entry,
+        ResolvedBundleInput input,
+        BundleInventory inventory,
+        string partType,
+        IReadOnlyDictionary<string, float>? characterHeightMetersById
+    )
+    {
+        return new
+        {
+            id = $"{partType}-{entry.CharacterId:00}-{entry.Costume3dId}-{entry.Unit ?? "default"}",
+            displayName = entry.Name,
+            characterId = entry.CharacterId.ToString("00"),
+            characterHeightMeters = CharacterHeightResolver.ResolveMeters(characterHeightMetersById, entry.CharacterId),
+            materialPipeline = "embedded",
+            source = new
+            {
+                bundleRoot = input.ResolvedBundlePath,
+                meshUrl = "part-runtime.msgpack.br",
+                manifestUrl = "part-runtime.msgpack.br",
+            },
+            rootNodeName = inventory.Roots.FirstOrDefault()?.Name,
+            attachNode = entry.AttachNode,
+            proxy = partType == "body"
+                ? BuildPartBodyProxy(SekaiMaterialMetadata.BuildBodyProxy(inventory.Materials))
+                : BuildPartHeadProxy(SekaiMaterialMetadata.BuildHeadProxy(inventory.Materials)),
+        };
+    }
+
+    private static bool RuntimePackageCanSkip(
+        string runtimePath,
+        string outputDirectory
+    )
+    {
+        if (!RuntimeJsonWriter.OutputsExist(runtimePath))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = RuntimeJsonWriter.ReadJsonDocument(runtimePath);
+            if (!document.RootElement.TryGetProperty("version", out var version) ||
+                version.GetString() != "0415-part-delta-3" ||
+                !document.RootElement.TryGetProperty("corePath", out var corePathNode) ||
+                string.IsNullOrWhiteSpace(corePathNode.GetString()))
+            {
+                return false;
+            }
+            var coreRelativePath = corePathNode.GetString()!;
+            if (!coreRelativePath.EndsWith(".msgpack.br", StringComparison.OrdinalIgnoreCase) ||
+                Path.IsPathRooted(coreRelativePath) ||
+                coreRelativePath.Split('/', '\\').Any(segment => segment is "." or ".."))
+            {
+                return false;
+            }
+            var corePath = Path.Combine(
+                outputDirectory,
+                coreRelativePath.Replace('/', Path.DirectorySeparatorChar)
+            );
+            if (!RuntimeJsonWriter.OutputsExist(corePath) ||
+                !document.RootElement.TryGetProperty("manifest", out var manifest) ||
+                !manifest.TryGetProperty("characterHeightMeters", out var height) ||
+                height.ValueKind != JsonValueKind.Number ||
+                height.GetSingle() <= 0f)
+            {
+                return false;
+            }
+            if (!document.RootElement.TryGetProperty("part", out var part) ||
+                !part.TryGetProperty("partType", out var partTypeNode))
+            {
+                return false;
+            }
+            if (!document.RootElement.TryGetProperty("source", out var source) ||
+                !source.TryGetProperty("logicalBundleName", out var logicalBundleName) ||
+                string.IsNullOrWhiteSpace(logicalBundleName.GetString()) ||
+                !source.TryGetProperty("physicalBundleSha256", out var physicalBundleSha256) ||
+                physicalBundleSha256.GetString()?.Length != 64 ||
+                !source.TryGetProperty("dependencyBundleNames", out var dependencies) ||
+                dependencies.ValueKind != JsonValueKind.Array ||
+                !source.TryGetProperty("unityResourceName", out var resourceName) ||
+                string.IsNullOrWhiteSpace(resourceName.GetString()) ||
+                !source.TryGetProperty("unityObjectType", out var objectType) ||
+                objectType.GetString() != "GameObject")
+            {
+                return false;
+            }
+            if (source.TryGetProperty("colorVariationBundlePath", out var colorVariationPath) &&
+                !string.IsNullOrWhiteSpace(colorVariationPath.GetString()) &&
+                (!source.TryGetProperty("colorVariationLogicalBundleName", out var colorLogicalName) ||
+                 string.IsNullOrWhiteSpace(colorLogicalName.GetString()) ||
+                 !source.TryGetProperty("colorVariationPhysicalBundleSha256", out var colorSha256) ||
+                 colorSha256.GetString()?.Length != 64 ||
+                 !source.TryGetProperty("colorVariationDependencyBundleNames", out var colorDependencies) ||
+                 colorDependencies.ValueKind != JsonValueKind.Array))
+            {
+                return false;
+            }
+            var partType = partTypeNode.GetString();
+            if (partType is not ("head" or "hair"))
+            {
+                return true;
+            }
+            if (!HasResolvedEyelashMasks(document.RootElement))
+            {
+                return false;
+            }
+            using var coreDocument = RuntimeJsonWriter.ReadJsonDocument(corePath);
+            return coreDocument.RootElement.TryGetProperty("version", out var coreVersion) &&
+                coreVersion.GetString() == "0415-part-core-3";
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private static bool HasResolvedEyelashMasks(JsonElement runtime)
+    {
+        if (!runtime.TryGetProperty("materialSlots", out var slots) ||
+            slots.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+        foreach (var slot in slots.EnumerateArray())
+        {
+            if (!slot.TryGetProperty("materialKind", out var kindNode) ||
+                kindNode.GetString() is not ("eye" or "eyelash" or "eyebrow"))
+            {
+                continue;
+            }
+            if (!slot.TryGetProperty("rawMaterial", out var rawMaterial) ||
+                !rawMaterial.TryGetProperty("textureProperties", out var textures) ||
+                textures.ValueKind != JsonValueKind.Array)
+            {
+                return false;
+            }
+            var resolvedMask = false;
+            foreach (var texture in textures.EnumerateArray())
+            {
+                if (!texture.TryGetProperty("name", out var name) ||
+                    !string.Equals(
+                        name.GetString(),
+                        "_EyelashMaskTex",
+                        StringComparison.OrdinalIgnoreCase
+                    ) ||
+                    !texture.TryGetProperty("texturePathId", out var pathId) ||
+                    pathId.GetInt64() == 0)
+                {
+                    continue;
+                }
+                resolvedMask = true;
+                if (!texture.TryGetProperty("uri", out var uri) ||
+                    string.IsNullOrWhiteSpace(uri.GetString()))
+                {
+                    return false;
+                }
+            }
+            if (!resolvedMask)
+            {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static PartRuntimeMount BuildMount(
+        PartRegistryEntry entry,
+        BundleInventory inventory,
+        string partType,
+        SpringBoneExport springBone
+    )
+    {
+        var accessoryTransformAdjustments = partType == "head_optional"
+            ? springBone.AccessoryTransformAdjustments.ToDictionary(
+                adjustment => adjustment.FaceId,
+                adjustment => new PartRuntimeAccessoryTransformAdjustment(
+                    Position: adjustment.Position,
+                    RotationEulerDegrees: adjustment.RotationEulerDegrees,
+                    Scale: adjustment.Scale
+                ),
+                StringComparer.Ordinal
+            )
+            : null;
+        return new PartRuntimeMount(
+            MountKind: partType switch
+            {
+                "body" => "character_root",
+                "head_optional" => "attach_node",
+                _ => "head_origin",
+            },
+            RootNodeName: inventory.Roots.FirstOrDefault()?.Name,
+            AttachNode: entry.AttachNode,
+            ExpectedSkeletonId: entry.CharacterId.ToString("00"),
+            Notes: partType == "head_optional"
+                ? new[] { "Viewer must verify attachNode exists in the current composed prefab graph before mounting." }
+                : new[] { "Viewer composer mounts this part and rebuilds SpringBone runtime after changes." },
+            AccessoryTransformAdjustments: accessoryTransformAdjustments is { Count: > 0 }
+                ? accessoryTransformAdjustments
+                : null
+        );
+    }
+
+    private IReadOnlyList<PartRegistryEntry> LoadPartEntries(
+        string masterDirectory,
+        string assetRoot,
+        string? workListPath = null
+    )
+    {
+        if (!string.IsNullOrWhiteSpace(workListPath))
+        {
+            return PartPackageWorkPlanner.Load(workListPath).Entries;
+        }
+        var output = new CostumeRegistryExporter().ExportInMemory(masterDirectory, assetRoot);
+        return output.PartRegistry.Entries;
+    }
+
+    private static PjskSpringBoneRuntimeManager BuildRuntimeManager(string partKind, SpringMonoBehaviourEntry manager, SpringBoneExport part)
+    {
+        var bonePathIds = part.Bones
+            .Where(bone => ReadPathId(bone.Raw["m_manager"]) == manager.PathId)
+            .Select(bone => bone.PathId)
+            .ToList();
+        return new PjskSpringBoneRuntimeManager(
+            PartKind: partKind,
+            PathId: manager.PathId,
+            NodeName: manager.GameObject?.Name,
+            NodePath: manager.GameObject?.TransformPath,
+            PoseRoot: FirstPathSegment(manager.GameObject?.TransformPath),
+            ActiveSelf: manager.GameObject?.ActiveSelf,
+            ActiveInHierarchy: manager.GameObject?.ActiveInHierarchy,
+            Enabled: ReadBool(manager.Raw, "m_Enabled", defaultValue: true),
+            AutomaticUpdates: ReadBool(manager.Raw, "automaticUpdates", defaultValue: true),
+            EnableLengthLimits: ReadBool(manager.Raw, "enableLengthLimits", defaultValue: true),
+            EnableAngleLimits: ReadBool(manager.Raw, "enableAngleLimits", defaultValue: true),
+            EnableCollision: ReadBool(manager.Raw, "enableCollision", defaultValue: true),
+            CollideWithGround: ReadBool(manager.Raw, "collideWithGround", defaultValue: false),
+            GroundHeight: ReadFloat(manager.Raw, "groundHeight", 0f),
+            IsSumOfForcesOnBone: ReadBool(manager.Raw, "isSumOfForcesOnBone", defaultValue: true),
+            IsPaused: ReadBool(manager.Raw, "isPaused", defaultValue: false),
+            DynamicRatio: ReadFloat(manager.Raw, "dynamicRatio", 1f),
+            SimulationFrameRate: (int)ReadFloat(manager.Raw, "simulationFrameRate", 60f),
+            SlowMotionScale: ReadFloat(manager.Raw, "slowMotionScale", 1f),
+            Bounce: ReadFloat(manager.Raw, "bounce", 0f),
+            Friction: ReadFloat(manager.Raw, "friction", 0f),
+            AnimatedBoneNames: Array.Empty<string>(),
+            RawGravity: ReadVector(manager.Raw, "gravity"),
+            ForceProviders: PjskSekaiRuntimeExtensionBuilder.BuildRuntimeForceProviders(part, manager),
+            BonePathIds: bonePathIds
+        );
+    }
+
+    private static PjskSpringBoneRuntimeBone BuildRuntimeBone(string partKind, SpringBoneEntry bone)
+    {
+        return new PjskSpringBoneRuntimeBone(
+            PartKind: partKind,
+            PathId: bone.PathId,
+            NodeName: bone.GameObject?.Name,
+            NodePath: bone.GameObject?.TransformPath,
+            PoseRoot: FirstPathSegment(bone.GameObject?.TransformPath),
+            ActiveSelf: bone.GameObject?.ActiveSelf,
+            ActiveInHierarchy: bone.GameObject?.ActiveInHierarchy,
+            Enabled: ReadBool(bone.Raw, "m_Enabled", defaultValue: true),
+            PivotNodePath: bone.PivotNode?.TransformPath,
+            PivotNodeName: bone.PivotNode?.Name,
+            PivotSourcePathId: bone.PivotNode?.PathId,
+            HitRadius: bone.Radius ?? 0f,
+            Stiffness: bone.StiffnessForce ?? 0f,
+            DragForce: bone.DragForce ?? 0f,
+            GravityPower: ReadFloat(bone.Raw, "gravityPower", 0f),
+            GravityDir: ReadVectorArray(bone.Raw, "gravityDir"),
+            RawStiffnessForce: bone.StiffnessForce,
+            RawDragForce: bone.DragForce,
+            RawSpringForce: bone.SpringForce,
+            RawWindInfluence: bone.WindInfluence,
+            RawAngularStiffness: ReadNullableFloat(bone.Raw, "angularStiffness"),
+            RawSpringConstant: ReadNullableFloat(bone.Raw, "SpringConstant") ??
+                ReadNullableFloat(bone.Raw, "springConstant"),
+            LengthLimitTargets: bone.LengthLimitTargets.Select(target => new VrmSpringBoneLengthLimitTargetCandidate(target.Name, target.TransformPath, target.PathId)).ToList(),
+            RawAngleLimits: new VrmSpringBoneAngleLimitsCandidate(
+                Y: ReadAxisLimit(bone.Raw, "yAngleLimits"),
+                Z: ReadAxisLimit(bone.Raw, "zAngleLimits")
+            ),
+            DirectColliderPathIds: bone.Colliders.Select(collider => collider.PathId).ToList(),
+            ColliderFlag: (int)ReadFloat(bone.Raw, "colliderFlag", 0f)
+        );
+    }
+
+    private static VrmSpringBoneAxisLimitCandidate? ReadAxisLimit(JsonObject raw, string key)
+    {
+        if (!raw.TryGetPropertyValue(key, out var value) || value is not JsonObject axis)
+        {
+            return null;
+        }
+
+        return new VrmSpringBoneAxisLimitCandidate(
+            Active: ReadOptionalBool(axis, "active") ??
+                ReadOptionalBool(axis, "enabled") ??
+                ReadOptionalBool(axis, "Active") ??
+                ReadOptionalBool(axis, "Enabled") ??
+                ReadOptionalBool(axis, "m_Enabled") ??
+                true,
+            Min: ReadNullableFloat(axis, "min"),
+            Max: ReadNullableFloat(axis, "max")
+        );
+    }
+
+    private static bool? ReadOptionalBool(JsonObject raw, string name)
+    {
+        if (!raw.TryGetPropertyValue(name, out var value) || value is null)
+        {
+            return null;
+        }
+
+        return bool.TryParse(value.ToString(), out var parsed) ? parsed : null;
+    }
+
+    private static IReadOnlyList<PjskSpringBoneRuntimeManagerColliderCache> BuildManagerColliderCaches(
+        IReadOnlyList<PjskSpringBoneRuntimeManager> managers,
+        IReadOnlyList<PjskSpringBoneRuntimeCollider> colliders
+    )
+    {
+        return managers.Select(manager => new PjskSpringBoneRuntimeManagerColliderCache(
+            ManagerPathId: manager.PathId,
+            PartKind: manager.PartKind,
+            SourcePoseRoot: manager.PoseRoot,
+            RuntimeRoot: manager.PoseRoot ?? "unknown",
+            ManagerNodeName: manager.NodeName,
+            ManagerNodePath: manager.NodePath,
+            SpringBonePathIds: manager.BonePathIds,
+            SphereColliderIndexes: colliders.Where(collider => collider.Shape.Sphere is not null).Select(collider => collider.Index).ToList(),
+            CapsuleColliderIndexes: colliders.Where(collider => collider.Shape.Capsule is not null).Select(collider => collider.Index).ToList(),
+            PanelColliderIndexes: colliders.Where(collider => collider.Shape.Panel is not null).Select(collider => collider.Index).ToList(),
+            Reason: "single-part package cache; viewer composer must re-filter after body collider merge"
+        )).ToList();
+    }
+
+    private static SpringBoneExport EmptySpringBone(string partKind)
+    {
+        return new SpringBoneExport(
+            Version: 1,
+            BundlePath: string.Empty,
+            PartKind: partKind,
+            PrefabGraph: new SpringPrefabGraph(
+                1,
+                partKind,
+                string.Empty,
+                Array.Empty<SpringPrefabGameObject>(),
+                Array.Empty<SpringPrefabTransform>(),
+                Array.Empty<SpringPrefabRenderer>(),
+                Array.Empty<SpringPrefabAnimator>(),
+                Array.Empty<SpringPrefabMonoBehaviour>(),
+                Array.Empty<SpringPrefabConstraint>(),
+                new SpringPrefabConstraintCapability(
+                    RequestedTypes: Array.Empty<string>(),
+                    SupportedTypes: Array.Empty<string>(),
+                    MissingTypes: Array.Empty<string>()
+                ),
+                Array.Empty<long>()
+            ),
+            Managers: Array.Empty<SpringMonoBehaviourEntry>(),
+            Bones: Array.Empty<SpringBoneEntry>(),
+            SphereColliders: Array.Empty<SpringColliderEntry>(),
+            CapsuleColliders: Array.Empty<SpringColliderEntry>(),
+            PanelColliders: Array.Empty<SpringColliderEntry>(),
+            ForceProviders: Array.Empty<SpringMonoBehaviourEntry>(),
+            SpringBonePivots: Array.Empty<SpringMonoBehaviourEntry>(),
+            ExtraBones: Array.Empty<SpringExtraBoneEntry>(),
+            AccessoryTransformAdjustments: Array.Empty<SpringAccessoryTransformAdjustment>(),
+            FUnit: EmptyFUnitSummary(),
+            CharacterHair: null,
+            CharacterEye: null,
+            Warnings: Array.Empty<string>()
+        );
+    }
+
+    private static SpringFUnitSummary EmptyFUnitSummary()
+    {
+        return new SpringFUnitSummary(
+            Present: false,
+            ScriptCount: 0,
+            SpringManagerCount: 0,
+            SpringBoneCount: 0,
+            SphereColliderCount: 0,
+            CapsuleColliderCount: 0,
+            PanelColliderCount: 0,
+            DetectedScripts: Array.Empty<string>(),
+            Policy: "metadata_only; do not merge with UTJ/Sekai SpringBone runtime"
+        );
+    }
+
+    private static string NormalizePartType(string partType)
+    {
+        return partType.ToLowerInvariant() switch
+        {
+            "accessory" => "head_optional",
+            "head_optional" => "head_optional",
+            var value => value,
+        };
+    }
+
+    private static string ResolveRuntimePartType(PartRegistryEntry entry)
+    {
+        if (string.Equals(entry.HeadCostume3dAssetbundleType, "head_only", StringComparison.OrdinalIgnoreCase))
+        {
+            return "head_optional";
+        }
+
+        return NormalizePartType(entry.PartType);
+    }
+
+    private static string ToRuntimePartKind(string partType)
+    {
+        return partType == "body" ? "Body" : "Head";
+    }
+
+    private static string? SelectHeadRootName(BundleInventory inventory)
+    {
+        return inventory.Roots.FirstOrDefault(root => string.Equals(root.Name, "face", StringComparison.OrdinalIgnoreCase))?.Name
+            ?? inventory.Roots.FirstOrDefault()?.Name;
+    }
+
+    private static string? SelectAccessoryRootName(BundleInventory inventory)
+    {
+        return inventory.Roots.FirstOrDefault(root => string.Equals(root.Name, "optional", StringComparison.OrdinalIgnoreCase))?.Name
+            ?? inventory.Roots.FirstOrDefault()?.Name;
+    }
+
+    private PartRuntimeSource BuildSource(
+        PartRegistryEntry entry,
+        ResolvedBundleInput input,
+        string assetRoot,
+        string normalizedType,
+        BundleInventory inventory
+    )
+    {
+        var logicalBundleName = BundleDependencyIndex.LogicalName(assetRoot, input.ResolvedBundlePath);
+        var resourceName = normalizedType switch
+        {
+            "body" => "body",
+            "head" or "hair" => SelectHeadRootName(inventory),
+            "head_optional" => SelectAccessoryRootName(inventory),
+            _ => null,
+        } ?? throw new InvalidOperationException(
+            $"No Unity GameObject resource was resolved for {entry.PackagePath}."
+        );
+        return new PartRuntimeSource(
+            BundlePath: input.ResolvedBundlePath,
+            ColorVariationBundlePath: entry.ColorVariationBundlePath,
+            AssetRootRelativeBundlePath: TryRelativePath(assetRoot, input.ResolvedBundlePath),
+            LogicalBundleName: logicalBundleName,
+            PhysicalBundleSha256: bundleHashes.GetHex(assetRoot, input.ResolvedBundlePath),
+            DependencyBundleNames: bundleDependencies.GetClosure(logicalBundleName),
+            ColorVariationLogicalBundleName: entry.ColorVariationBundlePath is null
+                ? null
+                : BundleDependencyIndex.LogicalName(assetRoot, entry.ColorVariationBundlePath),
+            ColorVariationPhysicalBundleSha256: entry.ColorVariationBundlePath is null
+                ? null
+                : bundleHashes.GetHex(assetRoot, entry.ColorVariationBundlePath),
+            ColorVariationDependencyBundleNames: entry.ColorVariationBundlePath is null
+                ? Array.Empty<string>()
+                : bundleDependencies.GetClosure(
+                    BundleDependencyIndex.LogicalName(assetRoot, entry.ColorVariationBundlePath)
+                ),
+            UnityResourceName: resourceName,
+            UnityObjectType: "GameObject"
+        );
+    }
+
+    private static string? FirstPathSegment(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+        var normalized = path.Replace('\\', '/').Trim('/');
+        var slash = normalized.IndexOf('/');
+        return slash < 0 ? normalized : normalized[..slash];
+    }
+
+    private static string? LastPathSegment(string? path)
+    {
+        if (string.IsNullOrWhiteSpace(path))
+        {
+            return null;
+        }
+        var normalized = path.Replace('\\', '/').Trim('/');
+        var slash = normalized.LastIndexOf('/');
+        return slash < 0 ? normalized : normalized[(slash + 1)..];
+    }
+
+    private static string? TryRelativePath(string root, string path)
+    {
+        try
+        {
+            return Path.GetRelativePath(Path.GetFullPath(root), Path.GetFullPath(path)).Replace('\\', '/');
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private static TextureSlotInventory? FindTextureSlot(MaterialInventory? material, string slotName)
+    {
+        return material?.TextureSlots
+            .FirstOrDefault(slot => string.Equals(slot.SlotName, slotName, StringComparison.OrdinalIgnoreCase));
+    }
+
+    private static string? RewriteTexturePath(TextureSlotInventory? textureSlot, IReadOnlyDictionary<string, string> textures)
+    {
+        var textureName = textureSlot?.TextureName;
+        if (string.IsNullOrWhiteSpace(textureName))
+        {
+            return null;
+        }
+        if (!string.IsNullOrWhiteSpace(textureSlot?.TextureKey) &&
+            textures.TryGetValue(textureSlot.TextureKey, out var referencedPath))
+        {
+            return referencedPath;
+        }
+
+        return textures.TryGetValue(textureName, out var path)
+            ? path
+            : textures.TryGetValue(Path.GetFileNameWithoutExtension(textureName), out var stemPath) ? stemPath : null;
+    }
+
+    private static void AddTextureRole(List<PjskSekaiRuntimeTextureRole> roles, PjskSekaiRuntimeMaterialSlot slot, string role, string? uri)
+    {
+        if (string.IsNullOrWhiteSpace(uri))
+        {
+            return;
+        }
+        roles.Add(new PjskSekaiRuntimeTextureRole(
+            Part: slot.Part,
+            MaterialKey: slot.MaterialKey,
+            MaterialFileId: slot.MaterialFileId,
+            MaterialPathId: slot.MaterialPathId,
+            MaterialName: slot.MaterialName,
+            MaterialKind: slot.MaterialKind,
+            Role: role,
+            Uri: uri
+        ));
+    }
+
+    private static string ClassifyBodyMaterialKind(string materialName)
+    {
+        var lower = materialName.ToLowerInvariant();
+        return lower.Contains("skin") ? "skin" : "body";
+    }
+
+    private static string ClassifyHeadMaterialKind(string materialName, bool hasFaceShadowTex)
+    {
+        var name = materialName.ToLowerInvariant();
+        if (name.Contains("eyelash"))
+        {
+            return "eyelash";
+        }
+        if (name.Contains("eyebrow"))
+        {
+            return "eyebrow";
+        }
+        if (name.Contains("eye_highlight") || name.Contains("_ehl_"))
+        {
+            return "eyelight";
+        }
+        if (name.Contains("_eye"))
+        {
+            return "eye";
+        }
+        if (name.Contains("_hair_"))
+        {
+            return "hair";
+        }
+        if (name.Contains("_acc_"))
+        {
+            return "accessory";
+        }
+        if (hasFaceShadowTex)
+        {
+            return "face_sdf";
+        }
+        return "face";
+    }
+
+    private static int ResolveRenderOrder(string materialKind)
+    {
+        return materialKind switch
+        {
+            "face_sdf" => 10,
+            "hair" or "accessory" => 12,
+            "eyelash" or "eyebrow" => 20,
+            "eye" => 24,
+            "eyelight" => 28,
+            _ => 0,
+        };
+    }
+
+    private float ResolveCharacterHeightMeters(string characterId)
+    {
+        return characterHeightMetersById.TryGetValue(characterId.PadLeft(2, '0'), out var height)
+            ? height
+            : 1.00f;
+    }
+
+    private static object BuildPartBodyProxy(BodyProxySettings proxy)
+    {
+        return new
+        {
+            bodyColor = proxy.BodyColor,
+            shadowColor = proxy.ShadowColor,
+            bodyScale = proxy.BodyScale,
+            torsoLength = proxy.TorsoLength,
+            shoulderWidth = proxy.ShoulderWidth,
+        };
+    }
+
+    private static object BuildPartHeadProxy(HeadProxySettings proxy)
+    {
+        return new
+        {
+            faceColor = proxy.FaceColor,
+            faceShadeColor = proxy.FaceShadeColor,
+            skinColorDefault = proxy.SkinColorDefault,
+            skinColor1 = proxy.SkinColor1,
+            skinColor2 = proxy.SkinColor2,
+            hairColor = proxy.HairColor,
+            hairShadowColor = proxy.HairShadowColor,
+            headRadius = proxy.HeadRadius,
+            faceDepth = proxy.FaceDepth,
+            hairArc = proxy.HairArc,
+        };
+    }
+
+    private static readonly IReadOnlyDictionary<string, float> DefaultCharacterHeightMetersById =
+        new Dictionary<string, float>
+        {
+            ["01"] = 1.61f,
+            ["02"] = 1.59f,
+            ["03"] = 1.66f,
+            ["04"] = 1.59f,
+            ["05"] = 1.58f,
+            ["06"] = 1.63f,
+            ["07"] = 1.56f,
+            ["08"] = 1.68f,
+            ["09"] = 1.56f,
+            ["10"] = 1.60f,
+            ["11"] = 1.74f,
+            ["12"] = 1.78f,
+            ["13"] = 1.72f,
+            ["14"] = 1.52f,
+            ["15"] = 1.56f,
+            ["16"] = 1.80f,
+            ["17"] = 1.54f,
+            ["18"] = 1.62f,
+            ["19"] = 1.58f,
+            ["20"] = 1.63f,
+            ["21"] = 1.58f,
+            ["22"] = 1.52f,
+            ["23"] = 1.56f,
+            ["24"] = 1.62f,
+            ["25"] = 1.67f,
+            ["26"] = 1.75f,
+        };
+
+    private static IReadOnlyList<HeadMorphChannel> ReadHeadMorphBindings(IImported importedHead)
+    {
+        return importedHead.MorphList
+            .Where(morph => morph.Path.EndsWith("/Face", StringComparison.OrdinalIgnoreCase) || string.Equals(morph.Path, "face/Face", StringComparison.OrdinalIgnoreCase))
+            .SelectMany(morph => morph.Channels.Select(channel => new HeadMorphChannel(
+                Name: channel.Name,
+                SourceName: channel.Name,
+                NameHash: Fnv1A32(channel.Name),
+                CurveHash: Fnv1A32($"blendShape.{channel.Name}")
+            )))
+            .DistinctBy(channel => channel.Name, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static uint Fnv1A32(string value)
+    {
+        const uint offsetBasis = 2166136261;
+        const uint prime = 16777619;
+        var hash = offsetBasis;
+        foreach (var c in value)
+        {
+            hash ^= c;
+            hash *= prime;
+        }
+        return hash;
+    }
+
+    private static bool ReadBool(System.Text.Json.Nodes.JsonObject raw, string name, bool defaultValue)
+    {
+        return raw[name] is { } node && bool.TryParse(node.ToString(), out var value) ? value : defaultValue;
+    }
+
+    private static float ReadFloat(System.Text.Json.Nodes.JsonObject raw, string name, float defaultValue)
+    {
+        return raw[name] is { } node &&
+            float.TryParse(node.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : defaultValue;
+    }
+
+    private static float? ReadNullableFloat(System.Text.Json.Nodes.JsonObject raw, string name)
+    {
+        return raw[name] is { } node &&
+            float.TryParse(node.ToString(), NumberStyles.Float, CultureInfo.InvariantCulture, out var value)
+            ? value
+            : null;
+    }
+
+    private static SpringVector3? ReadVector(System.Text.Json.Nodes.JsonObject raw, string name)
+    {
+        var node = raw[name]?.AsObject();
+        if (node is null)
+        {
+            return null;
+        }
+        return new SpringVector3(
+            ReadFloat(node, "x", ReadFloat(node, "X", 0f)),
+            ReadFloat(node, "y", ReadFloat(node, "Y", 0f)),
+            ReadFloat(node, "z", ReadFloat(node, "Z", 0f))
+        );
+    }
+
+    private static float[] ReadVectorArray(System.Text.Json.Nodes.JsonObject raw, string name)
+    {
+        var vector = ReadVector(raw, name);
+        return vector is null ? new[] { 0f, -1f, 0f } : new[] { vector.X, vector.Y, vector.Z };
+    }
+
+    private static void WriteJson<T>(string path, T value)
+    {
+        RuntimeJsonWriter.Write(
+            path,
+            value,
+            WriteJsonOptions,
+            binaryArraySchema: RuntimeBinaryArraySchema.PartRuntime
+        );
+    }
+
+    private static long? ReadPathId(System.Text.Json.Nodes.JsonNode? node)
+    {
+        var value = node?["m_PathID"]?.ToString();
+        return long.TryParse(value, out var pathId) ? pathId : null;
+    }
+}
+
+public sealed record PartPackageExportResult(
+    PartRegistryEntry Entry,
+    string RuntimePath,
+    IReadOnlyList<string> Warnings,
+    bool Succeeded = true,
+    string? CoreRuntimePath = null,
+    IReadOnlyList<string>? TextureHashes = null
+);
+
+public sealed record PartPackageExportBatchResult(
+    IReadOnlyList<PartPackageExportResult> Results,
+    int Built,
+    int Restored,
+    int ManifestSkipped,
+    int BundleHashIndexHits,
+    int FileHashComputations,
+    long ElapsedMilliseconds
+);
+
+public sealed record PartPackageWorkerSummary(
+    int Built,
+    int Restored,
+    int ManifestSkipped,
+    int BundleHashIndexHits,
+    int FileHashComputations,
+    long ElapsedMilliseconds
+)
+{
+    public static PartPackageWorkerSummary From(PartPackageExportBatchResult batch) => new(
+        batch.Built,
+        batch.Restored,
+        batch.ManifestSkipped,
+        batch.BundleHashIndexHits,
+        batch.FileHashComputations,
+        batch.ElapsedMilliseconds
+    );
+}

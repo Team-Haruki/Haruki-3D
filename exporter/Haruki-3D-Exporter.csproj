@@ -1,0 +1,96 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**;Tests/**</DefaultItemExcludes>
+    <AssetStudioRoot Condition="'$(AssetStudioRoot)' == '' and '$(OS)' == 'Windows_NT'">D:\github\AssetStudio-Haruki</AssetStudioRoot>
+    <AssetStudioRoot Condition="'$(AssetStudioRoot)' == ''">/mnt/d/github/AssetStudio-Haruki</AssetStudioRoot>
+    <AssetStudioCliOutput>$(AssetStudioRoot)/AssetStudioCLI/bin/Release/net8.0</AssetStudioCliOutput>
+    <EnableDefaultCompileItems Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'">false</EnableDefaultCompileItems>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' != 'true'">
+    <PackageReference Include="K4os.Compression.LZ4" Version="1.3.8" />
+    <PackageReference Include="ZstdSharp.Port" Version="0.8.6" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="Services/ConversionOptionsParser.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/BundleDependencyResolver.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/BundleDependencyIndex.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/BundleHashIndex.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/MaterialIdentityLookup.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/MasterDataReader.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/RuntimeMaterialIdentity.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/RuntimeJsonWriter.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/RuntimeTextureStore.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/PartPackageWorkClaims.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/PartPackageWorkPlanner.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/PartPackageExportManifest.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/SekaiMaterialMetadata.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/TextureCompactor.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/MvSourceSetExporter.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/SekaiBundleDecryptor.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/ContentAddressedFile.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/ContentAddressedStore.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Models/ConversionOptions.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Models/CostumeRegistryModels.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Models/ExporterConfig.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Models/InventoryModels.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Models/ManifestModels.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Models/MasterCostumeModels.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Models/ParseResult.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Models/ResolvedBundleInput.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Models/MvSourceSetModels.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/CostumeRegistryExporter.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/RuntimeRoleCatalogExporter.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Services/CharacterHeightResolver.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Tests/ConfigParserSmoke.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+    <Compile Include="Tests/PartMaterialMetadataSmoke.cs" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' == 'true'" />
+  </ItemGroup>
+
+  <ItemGroup Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' != 'true'">
+    <Reference Include="AssetStudio">
+      <HintPath>$(AssetStudioRoot)/AssetStudio/bin/Release/net8.0/AssetStudio.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="AssetStudioUtility">
+      <HintPath>$(AssetStudioRoot)/AssetStudioUtility/bin/Release/net8.0/AssetStudioUtility.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="AssetStudioFBXWrapper">
+      <HintPath>$(AssetStudioRoot)/AssetStudioFBXWrapper/bin/Release/net8.0/AssetStudioFBXWrapper.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="SixLabors.ImageSharp">
+      <HintPath>$(AssetStudioCliOutput)/SixLabors.ImageSharp.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="Texture2DDecoderWrapper">
+      <HintPath>$(AssetStudioCliOutput)/Texture2DDecoderWrapper.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+  </ItemGroup>
+
+  <Target Name="CopyAssetStudioRuntimeDependenciesToBuild" AfterTargets="Build" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' != 'true'">
+    <ItemGroup>
+      <AssetStudioManaged Include="$(AssetStudioCliOutput)/*.dll" />
+      <AssetStudioNative Include="$(AssetStudioRoot)/AssetStudioCore/Libraries/linux-x64/*.so" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AssetStudioManaged)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(AssetStudioNative)" DestinationFolder="$(TargetDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+  <Target Name="CopyAssetStudioRuntimeDependenciesToPublish" AfterTargets="Publish" Condition="'$(HARUKI_EXPORTER_CONFIG_TEST)' != 'true'">
+    <ItemGroup>
+      <AssetStudioManaged Include="$(AssetStudioCliOutput)/*.dll" />
+      <AssetStudioNative Include="$(AssetStudioRoot)/AssetStudioCore/Libraries/linux-x64/*.so" />
+    </ItemGroup>
+    <Copy SourceFiles="@(AssetStudioManaged)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+    <Copy SourceFiles="@(AssetStudioNative)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" />
+  </Target>
+
+</Project>

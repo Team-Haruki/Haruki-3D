@@ -1,0 +1,5 @@
+bin/
+obj/
+.DS_Store
+haruki-3d-exporter.config.json
+.mv-sample/
