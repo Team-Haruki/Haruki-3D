@@ -1,0 +1,12 @@
+# OS junk
+.DS_Store
+
+# Editor state
+.idea/
+.vscode/
+
+# contract round-trip build outputs (engine/ and exporter/ keep their own .gitignore)
+contract/**/bin/
+contract/**/obj/
+contract/**/node_modules/
+contract/roundtrip/out/
