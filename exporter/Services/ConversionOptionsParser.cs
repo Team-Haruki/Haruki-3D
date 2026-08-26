@@ -24,6 +24,8 @@ public static class ConversionOptionsParser
         "  --part-package-process-concurrency runs role or full part exports across N workers; 0 = auto CPU count\n" +
         "  --part-package-workers and --part-package-core-count are aliases for --part-package-process-concurrency\n" +
         "  --part-package-shard-count and --part-package-shard-index run one deterministic package shard\n" +
+        "  --part-package-claim-directory coordinates cooperating exporter processes through atomic claim files so each package group is exported once\n" +
+        "  --part-package-work-list limits a worker to a planner-written work list JSON and writes worker metrics to <work-list>.summary.json\n" +
         "  --assetstudio-log-level controls AssetStudio logs: warning, info, or debug\n" +
         "  --convert-model-textures controls AssetStudio model texture conversion: true or false\n" +
         "  --compact-textures deduplicates package textures by exact SHA-256 and rewrites runtime package paths\n" +

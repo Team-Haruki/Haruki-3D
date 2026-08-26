@@ -1,18 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PROJECT_DOTNET_ROOT="${PJSK_DOTNET_ROOT:-/home/storyxy3/.dotnet}"
-export DOTNET_ROOT="$PROJECT_DOTNET_ROOT"
+if [[ -n "${PJSK_DOTNET_ROOT:-}" ]]; then
+  export DOTNET_ROOT="$PJSK_DOTNET_ROOT"
+  DOTNET_BIN="${PJSK_DOTNET_ROOT}/dotnet"
+else
+  DOTNET_BIN="$(command -v dotnet || true)"
+fi
 export HOME="${HARUKI_DOTNET_HOME:-/tmp/haruki-3d-exporter-home}"
 export DOTNET_CLI_HOME="${DOTNET_CLI_HOME:-$HOME}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 export NUGET_PACKAGES="${NUGET_PACKAGES:-/tmp/haruki-3d-exporter-nuget/packages}"
-DOTNET_BIN="${PROJECT_DOTNET_ROOT}/dotnet"
 mkdir -p "$HOME" "$NUGET_PACKAGES"
 
-if [[ ! -x "$DOTNET_BIN" ]]; then
-  echo "dotnet not found at ${DOTNET_BIN}" >&2
+if [[ -z "$DOTNET_BIN" || ! -x "$DOTNET_BIN" ]]; then
+  echo "dotnet not found; set PJSK_DOTNET_ROOT to a .NET SDK root or install dotnet on PATH" >&2
   exit 127
 fi
 
