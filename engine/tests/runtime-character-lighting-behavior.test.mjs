@@ -1,0 +1,340 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import * as THREE from "three";
+
+import {
+  CharacterLightingRuntime,
+  createSekaiBodyMaterial,
+  createSekaiFaceMaterial,
+  previewLightDefaults,
+} from "../dist/haruki-3d-engine-internal.js";
+
+function shaderMaterial(kind, uniforms) {
+  const material = new THREE.ShaderMaterial({ uniforms });
+  material.userData.pjskMaterialKind = kind;
+  return material;
+}
+
+test("character lighting owns material view state across templates and loaded slots", () => {
+  const body = shaderMaterial("body", {
+    uBodyDebugMode: { value: 0 },
+    uShadowWidthOverride: { value: -1 },
+    uValueShadowInfluence: { value: 0 },
+  });
+  const hair = shaderMaterial("hair", {
+    uHairShadowEnabled: { value: 1 },
+    uShadowWidthOverride: { value: -1 },
+    uValueShadowInfluence: { value: 0 },
+  });
+  const face = shaderMaterial("face_sdf", {
+    uFaceSdfEnabled: { value: 0 },
+    uFaceDebugMode: { value: 0 },
+  });
+  face.userData.pjskFaceSdfCapable = true;
+  const bodySlot = new THREE.Group();
+  const headSlot = new THREE.Group();
+  headSlot.add(new THREE.Mesh(new THREE.BufferGeometry(), [hair, face]));
+  const debug = {
+    hairShadowMode: "sekai_head_position",
+    body: [{ resolvedKind: "body", shaderBodyDebugMode: 0 }],
+    head: [
+      { resolvedKind: "hair", shaderHairShadowEnabled: 1 },
+      { resolvedKind: "face_sdf", faceSdfCapable: true, shaderFaceSdfEnabled: 0 },
+    ],
+  };
+  const runtime = new CharacterLightingRuntime({
+    bodyMaterial: body,
+    hairMaterial: hair,
+    faceMaterial: face,
+    bodySlot,
+    headSlot,
+    directionalLight: new THREE.DirectionalLight(),
+    fillLight: new THREE.AmbientLight(),
+    debug,
+  });
+
+  runtime.setBodyDebugMode("toon_luma");
+  runtime.setFaceSdfEnabled(true);
+  runtime.setHairShadowMode("off");
+  runtime.setToonShadowPreview(0.25, 0.75);
+
+  assert.equal(body.uniforms.uBodyDebugMode.value, 24);
+  assert.equal(face.uniforms.uFaceSdfEnabled.value, 1);
+  assert.equal(hair.uniforms.uHairShadowEnabled.value, 0);
+  assert.equal(body.uniforms.uShadowWidthOverride.value, 0.25);
+  assert.equal(hair.uniforms.uValueShadowInfluence.value, 0.75);
+  assert.equal(debug.hairShadowMode, "off");
+  assert.deepEqual(runtime.getBindingView(), {
+    bodyDebugMode: 24,
+    faceDebugMode: 0,
+    faceSdfEnabled: true,
+    shadowWidthOverride: 0.25,
+    valueShadowInfluence: 0.75,
+    proximityHairShadowEnabled: false,
+  });
+});
+
+test("face SDF follows the official costume-shop scene direction by default", () => {
+  const runtime = new CharacterLightingRuntime({
+    bodyMaterial: shaderMaterial("body", {}),
+    hairMaterial: shaderMaterial("hair", {}),
+    faceMaterial: shaderMaterial("face_sdf", {}),
+    bodySlot: new THREE.Group(),
+    headSlot: new THREE.Group(),
+    directionalLight: new THREE.DirectionalLight(),
+    fillLight: new THREE.AmbientLight(),
+    debug: { hairShadowMode: "off", body: [], head: [] },
+  });
+  const sceneDirection = new THREE.Vector3(-0.7, 0.25, 0.65).normalize();
+
+  assert.ok(runtime.resolveFaceShadowLightDirection(
+    sceneDirection,
+    new THREE.Vector3(1, 0, 0),
+    new THREE.Vector3(0, 0, 1)
+  ).distanceTo(sceneDirection) < 1e-8);
+});
+
+test("face basis reapplies the dynamic CostumeShop shadow limiter to loaded face materials", () => {
+  const face = createSekaiFaceMaterial({
+    baseColor: "#ffffff",
+    warmColor: "#808080",
+    lightDirection: new THREE.Vector3(0, 0, 1),
+    lightIntensity: 1,
+    ambientIntensity: 1,
+    useFaceShadowLimiter: false,
+    faceShadowLimitRange: 0.5,
+  });
+  const loadedFace = face.clone();
+  loadedFace.userData.pjskMaterialKind = "face_sdf";
+  const headSlot = new THREE.Group();
+  headSlot.add(new THREE.Mesh(new THREE.BufferGeometry(), loadedFace));
+  const runtime = new CharacterLightingRuntime({
+    bodyMaterial: shaderMaterial("body", {}),
+    hairMaterial: shaderMaterial("hair", {}),
+    faceMaterial: face,
+    bodySlot: new THREE.Group(),
+    headSlot,
+    directionalLight: new THREE.DirectionalLight(),
+    fillLight: new THREE.AmbientLight(),
+    debug: { hairShadowMode: "off", body: [], head: [] },
+  });
+
+  runtime.updateFaceBasis(
+    new THREE.Vector3(-0.7, 0.25, 0.65).normalize(),
+    new THREE.Vector2(-0.7, 0.25),
+    new THREE.Vector3()
+  );
+
+  for (const material of [face, loadedFace]) {
+    assert.equal(material.uniforms.uUseFaceShadowLimiter.value, 1);
+    assert.equal(material.uniforms.uFaceShadowLimitRange.value, 0);
+  }
+});
+
+function bodyTemplate(baseColor) {
+  return createSekaiBodyMaterial({
+    baseColor,
+    shadowColor: "#222222",
+    lightDirection: new THREE.Vector3(0, 1, 0),
+    lightIntensity: 1,
+    ambientIntensity: 1,
+    shadowThreshold: 0.5,
+    shadowWeight: 1,
+  });
+}
+
+test("preview light updates lights, proxy colors, and material controller state together", () => {
+  const body = bodyTemplate("#111111");
+  const hair = bodyTemplate("#222222");
+  const face = createSekaiFaceMaterial({
+    baseColor: "#333333",
+    warmColor: "#444444",
+    lightDirection: new THREE.Vector3(0, 0, 1),
+    lightIntensity: 1,
+    ambientIntensity: 1,
+  });
+  const directionalLight = new THREE.DirectionalLight();
+  const fillLight = new THREE.AmbientLight();
+  const loadedFace = createSekaiFaceMaterial({
+    baseColor: "#555555",
+    warmColor: "#444444",
+    lightDirection: new THREE.Vector3(0, 0, 1),
+    lightIntensity: 1,
+    ambientIntensity: 1,
+    shadowWeight: 1,
+    useLambert: true,
+  });
+  loadedFace.userData.pjskMaterialKind = "face";
+  const headSlot = new THREE.Group();
+  headSlot.add(new THREE.Mesh(new THREE.BufferGeometry(), loadedFace));
+  const runtime = new CharacterLightingRuntime({
+    bodyMaterial: body,
+    hairMaterial: hair,
+    faceMaterial: face,
+    bodySlot: new THREE.Group(),
+    headSlot,
+    directionalLight,
+    fillLight,
+    debug: { hairShadowMode: "off", body: [], head: [] },
+  });
+  runtime.updateControllerColors({
+    ambientColor: "#123456",
+    ambientIntensity: 0.75,
+    specularColor: "#654321",
+    specularIntensity: 0.5,
+  });
+  runtime.updateGlobalShadowColor("#334455", 0.6);
+
+  const next = {
+    ...previewLightDefaults,
+    x: 2,
+    y: 3,
+    z: 4,
+    intensity: 1.25,
+    ambient: 0.4,
+  };
+  runtime.updatePreviewLight(
+    next,
+    { proxy: { bodyColor: "#abcdef", shadowColor: "#102030" } },
+    {
+      proxy: {
+        hairColor: "#fedcba",
+        hairShadowColor: "#302010",
+        faceColor: "#ffeedd",
+        faceShadeColor: "#ddccbb",
+      },
+    },
+    new THREE.Vector2(0.25, 0.75),
+    new THREE.Vector3(1, 0, 0)
+  );
+  const gammaHex = color => color.getHexString(THREE.LinearSRGBColorSpace);
+  assert.equal(gammaHex(body.uniforms.uControllerAmbientColor.value), "123456");
+  assert.equal(body.uniforms.uControllerAmbientIntensity.value, 0.75);
+  assert.equal(gammaHex(body.uniforms.uControllerSpecularColor.value), "654321");
+  assert.equal(body.uniforms.uControllerSpecularIntensity.value, 0.5);
+  assert.equal(gammaHex(body.uniforms.uGlobalShadowColor.value), "334455");
+  assert.equal(body.uniforms.uGlobalShadowAlpha.value, 0.6);
+
+  assert.deepEqual(directionalLight.position.toArray(), [2, 3, 4]);
+  assert.equal(directionalLight.intensity, 1.25);
+  assert.equal(fillLight.intensity, 0.4);
+  assert.equal(gammaHex(body.uniforms.uBaseColor.value), "abcdef");
+  assert.equal(gammaHex(hair.uniforms.uBaseColor.value), "fedcba");
+  assert.equal(gammaHex(face.uniforms.uBaseColor.value), "ffeedd");
+  assert.equal(face.uniforms.uUseLambert.value, 1);
+  assert.equal(face.uniforms.uShadowWeight.value, previewLightDefaults.shadowWeight);
+  assert.equal(loadedFace.uniforms.uUseLambert.value, 1);
+  assert.equal(loadedFace.uniforms.uShadowWeight.value, previewLightDefaults.shadowWeight);
+  assert.equal(gammaHex(body.uniforms.uControllerAmbientColor.value), "123456");
+  assert.deepEqual(face.uniforms.uHeadDotDirectionalLight.value.toArray(), [0.25, 0.75]);
+  assert.deepEqual(face.uniforms.uLightDirection.value.toArray(), [1, 0, 0]);
+});
+
+test("character master skin colors override every loaded skin-capable material", () => {
+  const body = bodyTemplate("#111111");
+  const hair = bodyTemplate("#222222");
+  const face = createSekaiFaceMaterial({
+    baseColor: "#333333",
+    warmColor: "#444444",
+    lightDirection: new THREE.Vector3(0, 0, 1),
+    lightIntensity: 1,
+    ambientIntensity: 1,
+  });
+  const loaded = bodyTemplate("#555555");
+  const bodySlot = new THREE.Group();
+  bodySlot.add(new THREE.Mesh(new THREE.BufferGeometry(), loaded));
+  const debug = {
+    hairShadowMode: "off",
+    body: [{
+      shaderSkinColorDefault: "#111111",
+      shaderSkinColor1: "#222222",
+      shaderSkinColor2: "#333333",
+    }],
+    head: [],
+  };
+  const runtime = new CharacterLightingRuntime({
+    bodyMaterial: body,
+    hairMaterial: hair,
+    faceMaterial: face,
+    bodySlot,
+    headSlot: new THREE.Group(),
+    directionalLight: new THREE.DirectionalLight(),
+    fillLight: new THREE.AmbientLight(),
+    debug,
+  });
+
+  runtime.setCharacterSkinColors({
+    default: "#feefe0",
+    shadow1: "#efafbb",
+    shadow2: "#e07889",
+  });
+
+  const gammaHex = color => color.getHexString(THREE.LinearSRGBColorSpace);
+  for (const material of [body, hair, face, loaded]) {
+    assert.equal(gammaHex(material.uniforms.uSkinColorDefault.value), "feefe0");
+    assert.equal(gammaHex(material.uniforms.uSkinColor1.value), "efafbb");
+    assert.equal(gammaHex(material.uniforms.uSkinColor2.value), "e07889");
+  }
+  assert.deepEqual(debug.skinColors, {
+    default: "#feefe0",
+    shadow1: "#efafbb",
+    shadow2: "#e07889",
+  });
+  assert.deepEqual(
+    debug.body.map(entry => [
+      entry.shaderSkinColorDefault,
+      entry.shaderSkinColor1,
+      entry.shaderSkinColor2,
+    ]),
+    [["#feefe0", "#efafbb", "#e07889"]]
+  );
+});
+
+test("body shader starts with the captured CostumeShop controller state", () => {
+  const body = bodyTemplate("#111111");
+
+  assert.deepEqual(body.uniforms.uControllerAmbientColor.value.toArray(), [0.5, 0.5, 0.5]);
+  assert.equal(body.uniforms.uControllerAmbientIntensity.value, 1);
+  assert.deepEqual(body.uniforms.uControllerRimColor.value.toArray(), [0.5, 0.5, 0.5]);
+  assert.deepEqual(body.uniforms.uControllerShadowRimColor.value.toArray(), [0, 0, 0]);
+  assert.equal(body.uniforms.uControllerRimColorWeight.value, 1);
+  assert.equal(body.uniforms.uControllerShadowRimColorWeight.value, 1);
+  assert.equal(body.uniforms.uControllerRimRange.value, 7);
+  assert.equal(
+    body.uniforms.uControllerRimEdgeSmoothness.value,
+    0.0010000000474974513
+  );
+  assert.equal(body.uniforms.uControllerRimEmission.value, 0);
+  assert.equal(body.uniforms.uControllerRimLightInfluence.value, 1);
+  assert.equal(body.uniforms.uControllerRimShadowSharpness.value, 0.5);
+  assert.equal(body.uniforms.uFinalSaturation, undefined);
+  assert.equal(body.uniforms.uBrightness, undefined);
+  assert.equal(body.uniforms.uHighlightRolloff, undefined);
+  assert.doesNotMatch(body.fragmentShader, /sekaiApplyHighlightRolloff/);
+});
+
+test("face shader uses the same captured controller lighting path as body", () => {
+  const face = createSekaiFaceMaterial({
+    baseColor: "#333333",
+    warmColor: "#222222",
+    lightDirection: new THREE.Vector3(0, 0, 1),
+    lightIntensity: 1,
+    ambientIntensity: 1,
+  });
+
+  assert.deepEqual(face.uniforms.uControllerAmbientColor.value.toArray(), [0.5, 0.5, 0.5]);
+  assert.deepEqual(face.uniforms.uControllerSpecularColor.value.toArray(), [1, 1, 1]);
+  assert.deepEqual(face.uniforms.uControllerRimColor.value.toArray(), [0.5, 0.5, 0.5]);
+  assert.deepEqual(face.uniforms.uControllerShadowRimColor.value.toArray(), [0, 0, 0]);
+  assert.equal(face.uniforms.uControllerRimRange.value, 7);
+  assert.equal(face.uniforms.uControllerRimEdgeSmoothness.value, 0.0010000000474974513);
+  assert.equal(face.uniforms.uControllerRimLightInfluence.value, 1);
+  assert.equal(face.uniforms.uControllerRimShadowSharpness.value, 0.5);
+  assert.equal(face.uniforms.uFinalSaturation, undefined);
+  assert.equal(face.uniforms.uBrightness, undefined);
+  assert.equal(face.uniforms.uHighlightRolloff, undefined);
+  assert.doesNotMatch(face.fragmentShader, /sekaiApplyHighlightRolloff/);
+  assert.match(face.fragmentShader, /color \+= rimAdd/);
+  assert.match(face.fragmentShader, /color \+= rimAdd \* uControllerRimEmission/);
+  assert.match(face.fragmentShader, /uControllerSpecularColor/);
+});

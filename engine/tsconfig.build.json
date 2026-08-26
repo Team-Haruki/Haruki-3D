@@ -1,0 +1,28 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "declarationDir": "dist/types",
+    "stripInternal": true
+  },
+  "include": [
+    "src/index.ts",
+    "src/internal.ts",
+    "src/base/**/*.ts",
+    "src/costume_shop/**/*.ts",
+    "src/mv/**/*.ts",
+    "src/kernel/**/*.ts",
+    "src/capture/**/*.ts",
+    "src/host/**/*.ts",
+    "src/engine/**/*.ts",
+    "src/runtime/**/*.ts",
+    "src/parts/**/*.ts",
+    "src/data/**/*.ts",
+    "src/config/**/*.ts",
+    "src/materials/**/*.ts"
+  ],
+  "exclude": [
+    "src/captureHarness.ts"
+  ]
+}

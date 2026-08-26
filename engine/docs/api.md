@@ -1,0 +1,432 @@
+# Haruki 3D Browser API
+
+The default package entry is the stable browser rendering boundary. It owns
+runtime loading, character assembly, animation, SpringBone, camera state, and
+WebGL rendering. The product owns layout, controls, command parsing,
+localization, loading indicators, and user-facing errors.
+
+This API renders the CostumeShop-style single-character preview. The package
+also exposes explicit `base`, `costume_shop`, and `mv` subpaths. Full 3DMV is a
+separate original-Unity WebGL/WASM runtime; consumers must not treat the
+CostumeShop API as a translated 3DMV player.
+
+The CostumeShop browser interface does not accept raw Unity bundles and does
+not call the Docker capture service. The MV Host starts an original Unity build,
+which owns its StreamingAssets and AssetBundle loading.
+
+## Browser Requirements
+
+- a modern Chrome, Firefox, or Safari release
+- WebGL 2
+- ES modules, `fetch`, WebAssembly, and `requestAnimationFrame`
+
+The CostumeShop engine uses Three.js/WebGL; MV uses Unity WebGL/WASM. Neither
+requires WebGPU. Feature-detect WebGL 2 before creating either runtime and show
+the product's own unsupported-browser message when it is unavailable.
+
+## Install And Import
+
+Build or consume the package with an ESM-aware bundler. Deploy the generated
+JavaScript and WASM assets together.
+
+```ts
+import {
+  createHaruki3DKernel,
+  previewLightDefaults,
+  type Haruki3DKernel,
+  type Haruki3DKernelOptions,
+  type HarukiRenderRecipe,
+} from "haruki-3d-engine";
+```
+
+The public entry intentionally exports only the kernel factory, its public
+types, and the default preview light. Do not import from
+`haruki-3d-engine/internal` in a product page.
+
+Use the named entries when integrating more than one rendering context:
+
+```ts
+import {
+  createCostumeShopKernel,
+} from "haruki-3d-engine/costume_shop";
+import {
+  createHarukiMvRuntime,
+  resolveUnityWebGLBuild,
+} from "haruki-3d-engine/mv";
+```
+
+`haruki-3d-engine/base` is the shared assembly/runtime boundary. Product pages
+normally use `costume_shop` or `mv` rather than constructing Base directly.
+
+## 3DMV Integration
+
+The MV module can load Unity's generated loader itself or receive an already
+loaded `createUnityInstance` function. It does not invent a release identifier
+or translate the Unity scene into Three.js.
+
+```ts
+const build = resolveUnityWebGLBuild({
+  buildBaseUrl: "/mv/Build",
+  streamingAssetsUrl: "/mv/StreamingAssets",
+  buildName: "live",
+});
+const mv = createHarukiMvRuntime({
+  canvas,
+  loaderUrl: build.loaderUrl,
+  build: build.config,
+  onProgress(progress) {
+    console.log(progress);
+  },
+});
+
+await mv.prepare();
+mv.sendMessage(bridgeObjectName, loadMethodName, JSON.stringify(request));
+
+// On page/component disposal:
+await mv.destroy();
+```
+
+The Unity project's actual bridge object and method names remain its contract;
+the strings above only illustrate forwarding. `destroy()` calls Unity `Quit()`
+exactly once and waits for an in-flight initialization before releasing it.
+See [mv.md](mv.md) for the generated-build, hosting-header, and Unity-side
+coordinator contract.
+
+## Minimal Integration
+
+```html
+<div id="viewer">
+  <canvas id="pjsk-3d"></canvas>
+</div>
+```
+
+```css
+#viewer {
+  width: 100%;
+  aspect-ratio: 7 / 5;
+}
+
+#pjsk-3d {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+```
+
+```ts
+import { createHaruki3DKernel } from "haruki-3d-engine";
+
+const canvas = document.querySelector<HTMLCanvasElement>("#pjsk-3d")!;
+const host = document.querySelector<HTMLElement>("#viewer")!;
+
+const kernel = createHaruki3DKernel({
+  canvas,
+  assetBaseUrl: "/assets/pjsk-3d/jp/",
+});
+
+const resize = () => {
+  const { width, height } = host.getBoundingClientRect();
+  kernel.resize(width, height);
+};
+const observer = new ResizeObserver(resize);
+observer.observe(host);
+resize();
+
+await kernel.prepare({
+  roleId: "14:theme_park",
+  bodyCostume3dId: 28,
+  headCostume3dId: 114,
+  hairCostume3dId: 214,
+  headOptionalCostume3dId: null,
+});
+await kernel.load({
+  roleId: "14:theme_park",
+  bodyCostume3dId: 28,
+  headCostume3dId: 114,
+  hairCostume3dId: 214,
+  headOptionalCostume3dId: null,
+});
+kernel.play();
+
+// On page/component disposal:
+// observer.disconnect();
+// kernel.destroy();
+```
+
+`load()` resolves after the selected character has been assembled and one
+initial frame has been rendered. Call `play()` afterwards to start continuous
+animation.
+
+## Public API
+
+### `createHaruki3DKernel(options)`
+
+```ts
+type Haruki3DKernelOptions = {
+  canvas: HTMLCanvasElement;
+  assetBaseUrl: string;
+  initialLight?: PreviewLightState;
+  ktx2TranscoderPath?: string;
+};
+```
+
+| Field | Meaning |
+| --- | --- |
+| `canvas` | Caller-owned canvas used for WebGL output. |
+| `assetBaseUrl` | Stable final Exporter runtime root for exactly one region. |
+| `initialLight` | Optional initial character light; defaults to `previewLightDefaults`. |
+| `ktx2TranscoderPath` | Optional Basis transcoder directory; defaults to `/basis/`. |
+
+`assetBaseUrl` is fixed for the lifetime of the kernel. To switch region or
+runtime version, destroy the old kernel and create a new one with the new base
+URL.
+
+### `kernel.load(recipe)`
+
+`prepare(recipe)` performs the same package download, decode, assembly, and
+GPU preparation without rendering the initial frame. A following `load()` of
+the same recipe reuses that completed preparation. Call it while the surrounding
+page is loading when the next preview is already known.
+
+```ts
+type HarukiRenderRecipe = {
+  roleId: string;
+  bodyCostume3dId: number;
+  headCostume3dId: number;
+  headPackagePath?: string | null;
+  hairCostume3dId: number;
+  headOptionalCostume3dId?: number | null;
+};
+```
+
+| Field | Meaning |
+| --- | --- |
+| `roleId` | Runtime role in `<characterId>:<unit>` form, for example `14:theme_park`. |
+| `bodyCostume3dId` | Exact body `costume3dId` from the selected runtime registry. |
+| `headCostume3dId` | Exact head/accessory `costume3dId` from the selected runtime registry. |
+| `headPackagePath` | Exact registry package path when a raw head ID has multiple independent sources. |
+| `hairCostume3dId` | Exact hair `costume3dId` from the selected runtime registry. |
+| `headOptionalCostume3dId` | Optional separately mounted head accessory, or `null`. |
+
+All part IDs are positive integer runtime IDs. They are not the normalized
+outfit, accessory, hair, or color IDs accepted by Haruki Bot commands. A
+product backend should resolve user-facing selections into one complete
+`HarukiRenderRecipe`; the browser should not reimplement masterdata grouping,
+color selection, role aliases, or head/hair compatibility.
+
+`headPackagePath` is required when independent head or accessory sources share
+the same raw ID. Ambiguous IDs are rejected instead of selecting a source by
+registry order.
+
+`load()` is the single character mutation seam:
+
+- the first recipe loads the role package and selected parts;
+- a same-role recipe preserves compatible animation playback and rebuilds the
+  complete character/SpringBone graph with the new parts;
+- a cross-role recipe releases the previous role and reconstructs the new one;
+- recipe mutations are serialized at the character-mutation boundary, while
+  queued intermediate selections are superseded by the newest request;
+- if a newer request arrives while the current one is still downloading, the
+  stale request is aborted before it mutates the character hierarchy.
+
+Callers do not choose between the underlying loader, wardrobe, composer, or
+model-combine paths.
+
+### Lifecycle Methods
+
+```ts
+interface Haruki3DKernel {
+  load(recipe: HarukiRenderRecipe): Promise<void>;
+  play(): void;
+  pause(): void;
+  resize(width: number, height: number): void;
+  destroy(): Promise<void>;
+}
+```
+
+- `play()` starts the render loop and advances the runtime in fixed 60 Hz
+  steps. Repeated calls are harmless.
+- `pause()` stops scheduling frames without releasing the loaded character.
+- `resize(width, height)` accepts CSS-pixel dimensions, updates the camera and
+  renders one frame. The engine caps output device pixel ratio at `2`.
+- `destroy()` is idempotent and returns one shared promise. It stops rendering
+  immediately, waits for any in-flight load, then releases Three.js, WebGL,
+  texture, geometry, animation, and SpringBone resources. Await it when the
+  caller needs deterministic cleanup.
+
+The canvas and its CSS remain caller-owned. The kernel does not install a
+`ResizeObserver`, pointer handlers, OrbitControls, page visibility handlers,
+or product UI.
+
+For page visibility handling, pause only when the product wants to stop
+animation work:
+
+```ts
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) kernel.pause();
+  else kernel.play();
+});
+```
+
+Calls that mutate the loaded character are serialized inside the engine.
+Concurrent `prepare()` calls for the exact same recipe share one request, and
+a failed preparation can be retried. The current public API does not advertise
+request cancellation or byte-level progress because an aborted fetch alone
+cannot safely roll back a partially applied character mutation.
+
+## Runtime Asset Contract
+
+The runtime root must be one final Exporter output for one region. The kernel
+loads:
+
+- `parts/by-role/<characterId>/<unit>/part-registry.msgpack.br`
+- `parts/by-role/<characterId>/<unit>/runtime-role-catalog.msgpack.br`
+- `parts/compat/by-unit/<unit>/head-hair-compatibility.msgpack.br`
+- referenced `part-runtime.msgpack.br` core/delta packages and textures
+- referenced role runtime and Unity motion packages
+
+Raw Unity bundles, masterdata JSON, Bot normalized IDs, and Capture PNGs are
+not browser-kernel inputs.
+
+### Static Server Headers
+
+Same-origin hosting is the simplest deployment. For a separate asset origin,
+allow the web origin with CORS.
+
+Runtime asset paths are stable and updated incrementally. Refresh the role and
+part registries whenever the corresponding region masterdata is refreshed. The
+role Catalog carries that region's `masterVersion`; it is not a 3D release ID.
+Use these response headers:
+
+| File | `Content-Type` | Cache policy |
+| --- | --- | --- |
+| `.js` / `.mjs` | `text/javascript` | `public, max-age=2592000` |
+| `.wasm` | `application/wasm` | `public, max-age=2592000` |
+| `.ktx2` | `image/ktx2` | `public, max-age=2592000` |
+| `runtime-role-catalog.msgpack.br` | `application/msgpack` | revalidate |
+| other `.msgpack.br` | `application/msgpack` | `public, max-age=2592000` |
+| entry HTML | `text/html` | revalidate |
+
+Serve `.msgpack.br` as already-compressed binary data:
+
+```http
+Content-Type: application/msgpack
+```
+
+Do **not** attach `Content-Encoding: br`. The `.br` bytes are part of the
+runtime format and are decompressed by the engine; browser-level Brotli
+decoding would cause a second decompression attempt.
+
+The optional response header below lets the engine reuse parsed role metadata
+when the URL is fetched again:
+
+```http
+X-Haruki-File-Version: <stable-version-for-this-file>
+Access-Control-Expose-Headers: X-Haruki-File-Version
+```
+
+Without it the runtime still works; only the small in-memory parsed-metadata
+reuse is skipped.
+
+The role catalog is the lightweight discovery document. The kernel revalidates
+it first, then appends its `masterVersion` to stable registry, compatibility,
+role-runtime, and motion URLs. This gives each masterdata generation a distinct
+browser cache key while keeping its files reusable for one month. Hashed part
+packages and texture CAS objects keep their content-addressed URLs.
+
+Use stable per-region runtime URLs and the browser's normal HTTP cache:
+
+```text
+/assets/pjsk-3d/<region>/
+```
+
+The asset host may additionally provide `ETag` or `Last-Modified`. The kernel
+does not create IndexedDB, Cache Storage, a service worker, or a second
+persistent asset cache. Browser storage and eviction remain the browser's
+responsibility.
+
+Check a deployed asset origin with the repository's dependency-free header
+probe. Pass the web origin when assets are cross-origin so CORS and exposed
+version headers are checked too:
+
+```bash
+npm run check:web-headers -- \
+  --origin https://viewer.example \
+  https://assets.example/jp/parts/by-role/5/light_sound/part-registry.msgpack.br \
+  https://viewer.example/assets/brotli_wasm_bg-NfWIZley.wasm
+```
+
+The capture HTTP service uses the same one-month policy for runtime and engine
+files. Capture API responses and generated PNG endpoints remain `no-store`.
+
+Run the browser-kernel startup smoke test locally with Chromium:
+
+```bash
+PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH=/usr/bin/chromium npm run test:browser:chromium
+```
+
+CI runs the same test in Chromium, Firefox, and WebKit. WebKit is a useful
+Safari-engine approximation; release-critical Safari behavior still needs a
+real macOS Safari check. Linux Firefox needs a virtual display for WebGL, so
+run the full local matrix with `xvfb-run -a npm run test:browser`.
+
+For a real final Exporter output, run the opt-in end-to-end suite. It builds an
+isolated container on `127.0.0.1:60008`, mounts the runtime read-only, builds
+the no-UI consumer example, exercises KTX2/MessagePack/Brotli loading, part and
+role switches, failed-request recovery, and forced WebGL context loss, then
+removes its container and capture directory:
+
+```bash
+HARUKI_RUNTIME_E2E_ROOT=/path/to/pjsk-3d-output \
+  npm run test:browser:runtime:local
+```
+
+Override `HARUKI_RUNTIME_E2E_PORT` if `60008` is occupied. The software WebGL
+backends used by automated Chromium and WebKit expose forced context loss but
+may not emit a restore event; that case is reported as skipped. Firefox's
+software backend currently completes the restore path. A real GPU and macOS
+Safari remain the final context-restoration checks.
+
+## Error Handling
+
+Creation throws synchronously for an empty `assetBaseUrl` or a WebGL setup
+failure. `load()` rejects for invalid recipes, missing runtime files,
+incompatible parts, ambiguous head sources, decode failures, or WebGL/runtime
+errors.
+
+```ts
+try {
+  await kernel.load(recipe);
+  kernel.play();
+} catch (error) {
+  kernel.pause();
+  showViewerError(error instanceof Error ? error.message : String(error));
+}
+```
+
+Error strings are diagnostic and may change. Map them to stable product error
+codes in the product backend or UI boundary instead of treating English text
+as an API enum. A later valid `load()` may retry the kernel; destroy and
+recreate it after a WebGL context loss or runtime-version switch.
+
+## Capture Service Boundary
+
+The Docker capture service is not part of the public browser API. It uses
+`HarukiCaptureAdapter` from `haruki-3d-engine/internal` for phase seeking,
+warmup, capture framing, opt-in debug snapshots, and PNG output. Normal
+service captures do not request snapshots; direct internal Adapter/Harness
+diagnostics may set `includeDebugSnapshots` to `true` and read the result in
+the capture page. PNG encoding is performed by Chromium's DevTools screenshot
+command after the capture frame is ready.
+
+The server endpoints remain:
+
+```http
+POST /capture
+GET /captures/<imageId>.png
+GET /healthz
+```
+
+Product pages should use `createHaruki3DKernel`; repository capture code and
+tests may use the internal entry. This keeps one rendering implementation
+without exposing capture-only controls as a permanent Web API.

@@ -1,0 +1,61 @@
+{
+  "name": "haruki-3d-engine",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "module": "./dist/haruki-3d-engine.js",
+  "types": "./dist/types/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/types/index.d.ts",
+      "import": "./dist/haruki-3d-engine.js"
+    },
+    "./internal": {
+      "types": "./dist/types/internal.d.ts",
+      "import": "./dist/haruki-3d-engine-internal.js"
+    },
+    "./base": {
+      "types": "./dist/types/base/index.d.ts",
+      "import": "./dist/haruki-3d-engine-base.js"
+    },
+    "./costume_shop": {
+      "types": "./dist/types/costume_shop/index.d.ts",
+      "import": "./dist/haruki-3d-engine-costume-shop.js"
+    },
+    "./mv": {
+      "types": "./dist/types/mv/index.d.ts",
+      "import": "./dist/haruki-3d-engine-mv.js"
+    }
+  },
+  "scripts": {
+    "dev:capture": "vite --config vite.capture.config.ts",
+    "build": "npm run build:lib && npm run build:types && npm run build:capture",
+    "build:types": "tsc -p tsconfig.build.json",
+    "build:lib": "vite build",
+    "build:capture": "vite build --config vite.capture.config.ts",
+    "build:consumer": "vite build --config vite.consumer.config.ts",
+    "build:mv:unity": "bash scripts/build-unity-mv.sh",
+    "preview:capture": "vite preview --config vite.capture.config.ts",
+    "test": "node --test tests/*.test.mjs",
+    "test:config": "node --test tests/config.test.mjs",
+    "test:browser": "playwright test",
+    "test:browser:chromium": "playwright test --project=chromium",
+    "test:browser:runtime": "playwright test --config=playwright.runtime.config.mjs",
+    "test:browser:runtime:local": "bash scripts/run-runtime-browser-e2e.sh",
+    "test:mv:browser": "node scripts/smoke-unity-mv.mjs",
+    "test:consumer": "npm run build && npm run build:consumer && node scripts/check-consumer-build.mjs",
+    "check:web-headers": "node scripts/check-web-asset-headers.mjs",
+    "capture:server": "node capture-server.mjs"
+  },
+  "dependencies": {
+    "@msgpack/msgpack": "^3.1.3",
+    "brotli-wasm": "^3.0.1",
+    "three": "^0.178.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.61.1",
+    "@types/three": "^0.178.1",
+    "typescript": "^5.8.3",
+    "vite": "^8.1.5"
+  }
+}

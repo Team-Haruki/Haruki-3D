@@ -1,0 +1,39 @@
+{
+  "capture": {
+    "runtimeRoot": "/data/runtime",
+    "outputDir": "/data/captures",
+    "width": 1024,
+    "height": 1024,
+    "scale": 1.6666667,
+    "timeoutMs": 45000,
+    "phase": 0.5,
+    "clip": "motion_loop",
+    "warmupFrames": 60,
+    "warmupMode": "runtime",
+    "springRuntimeMode": "unity-prefab",
+    "cameraPreset": "capture",
+    "cameraProfile": "full-body",
+    "faceSdfEnabled": true,
+    "projectedShadow": {
+      "width": 0.72,
+      "height": 1.06,
+      "opacity": 0.28,
+      "crossSize": 0.46,
+      "crossOpacity": 0.22,
+      "floorY": 0,
+      "adjustShadow": false,
+      "adjustAlpha": true,
+      "invisibleHeight": 1.65
+    },
+    "tempTtl": "6h",
+    "tempMaxBytes": "2.5GB",
+    "gcInterval": "1h"
+  },
+  "chromium": {
+    "executable": "chromium"
+  },
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080
+  }
+}

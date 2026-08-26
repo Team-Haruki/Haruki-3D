@@ -1,0 +1,56 @@
+import { expect, test } from "@playwright/test";
+
+test.use({ viewport: { width: 1024, height: 1024 }, deviceScaleFactor: 5 / 3 });
+
+test("capture kernel boots with WebGL and no page errors", async ({ page }) => {
+  const pageErrors = [];
+  const consoleErrors = [];
+  page.on("pageerror", error => pageErrors.push(error.message));
+  page.on("console", message => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+
+  await page.goto("/capture.html?captureBase=/runtime/jp/");
+  await expect.poll(async () => ({
+    ready: await page.locator("body").getAttribute("data-capture-ready"),
+    captureError: await page.locator("body").getAttribute("data-capture-error"),
+    pageErrors,
+    consoleErrors,
+  })).toEqual({ ready: "true", captureError: null, pageErrors: [], consoleErrors: [] });
+
+  const state = await page.evaluate(() => {
+    const canvas = document.querySelector("canvas");
+    return {
+      hasCanvas: canvas instanceof HTMLCanvasElement,
+      drawingBufferSize: canvas ? [canvas.width, canvas.height] : null,
+      devicePixelRatio: window.devicePixelRatio,
+      hasRequestHandler: typeof window.__HARUKI_CAPTURE_REQUEST__ === "function",
+      hasWebGL: Boolean(
+        canvas?.getContext("webgl2")
+        ?? canvas?.getContext("webgl")
+        ?? canvas?.getContext("experimental-webgl")
+      ),
+      captureError: document.body.dataset.captureError ?? "",
+    };
+  });
+
+  expect(state).toMatchObject({
+    hasCanvas: true,
+    drawingBufferSize: [1024, 1024],
+    hasRequestHandler: true,
+    hasWebGL: true,
+    captureError: "",
+  });
+  expect(state.devicePixelRatio).toBeCloseTo(5 / 3, 6);
+  expect(pageErrors).toEqual([]);
+  expect(consoleErrors).toEqual([]);
+
+  const screenshot = await page.screenshot();
+  const expectedPhysicalViewport = 1024 * state.devicePixelRatio;
+  const minimumPhysicalViewport = Math.floor(expectedPhysicalViewport);
+  const maximumPhysicalViewport = Math.ceil(expectedPhysicalViewport);
+  for (const size of [screenshot.readUInt32BE(16), screenshot.readUInt32BE(20)]) {
+    expect(size).toBeGreaterThanOrEqual(minimumPhysicalViewport);
+    expect(size).toBeLessThanOrEqual(maximumPhysicalViewport);
+  }
+});

@@ -1,0 +1,47 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build engine
+        run: npm run build
+
+      - name: Test engine
+        run: npm test
+
+      - name: Test package consumer build
+        run: npm run test:consumer
+
+      - name: Install browser test engines
+        run: npx playwright install --with-deps chromium firefox webkit
+
+      - name: Test Chrome, Firefox, and WebKit
+        run: xvfb-run -a npm run test:browser

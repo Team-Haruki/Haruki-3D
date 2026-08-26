@@ -1,0 +1,23 @@
+{
+  "name": "Haruki.MV.Tests",
+  "rootNamespace": "Haruki.MV.Tests",
+  "references": [
+    "Haruki.MV.Runtime",
+    "Haruki.MV.Editor",
+    "Unity.Mathematics",
+    "Unity.Timeline",
+    "Unity.UGUI",
+    "Unity.RenderPipelines.Core.Runtime",
+    "Unity.RenderPipelines.Universal.Runtime"
+  ],
+  "includePlatforms": ["Editor"],
+  "excludePlatforms": [],
+  "allowUnsafeCode": false,
+  "overrideReferences": false,
+  "precompiledReferences": [],
+  "autoReferenced": false,
+  "defineConstraints": ["UNITY_INCLUDE_TESTS"],
+  "versionDefines": [],
+  "noEngineReferences": false,
+  "optionalUnityReferences": ["TestAssemblies"]
+}
