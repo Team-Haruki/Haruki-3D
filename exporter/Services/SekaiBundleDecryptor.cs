@@ -4,21 +4,45 @@ public sealed class SekaiBundleDecryptor
 {
     private static readonly byte[] SekaiMagic = { 0x10, 0x00, 0x00, 0x00 };
 
+    // Unity bundle signatures accepted by AssetStudio's FileReader.CheckFileType.
+    private static readonly byte[][] UnityBundleSignatures =
+    {
+        "UnityFS"u8.ToArray(),
+        "UnityWeb"u8.ToArray(),
+        "UnityRaw"u8.ToArray(),
+        "UnityArchive"u8.ToArray(),
+    };
+
+    // Longest recognized header prefix: "UnityArchive".
+    private const int HeaderProbeLength = 12;
+
     public DecryptedBundleHandle PrepareReadableBundle(string bundlePath)
     {
         using var source = File.Open(bundlePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        Span<byte> header = stackalloc byte[4];
-        var read = source.Read(header);
-        source.Position = 0;
+        Span<byte> header = stackalloc byte[HeaderProbeLength];
+        var probe = ReadHeaderProbe(source, header);
 
-        if (read == 4 && header.SequenceEqual(SekaiMagic))
+        if (IsSekaiWrapped(probe))
         {
             var tempPath = CreateTempSiblingPath(bundlePath);
-            using var target = File.Create(tempPath);
-            DecryptTo(source, target);
-            return new DecryptedBundleHandle(tempPath, deleteOnDispose: true);
+            try
+            {
+                using var target = File.Create(tempPath);
+                DecryptTo(source, target);
+                EnsureRecognizedUnityBundle(target, bundlePath);
+                return new DecryptedBundleHandle(tempPath, deleteOnDispose: true);
+            }
+            catch
+            {
+                File.Delete(tempPath);
+                throw;
+            }
         }
 
+        if (!IsRecognizedUnityBundle(probe))
+        {
+            ThrowUnrecognizedBundle(probe, bundlePath, deobfuscated: false);
+        }
         return new DecryptedBundleHandle(bundlePath, deleteOnDispose: false);
     }
 
@@ -48,7 +72,11 @@ public sealed class SekaiBundleDecryptor
             foreach (var sourcePath in sourcePaths)
             {
                 var targetPath = Path.Combine(workspacePath, NormalizeReadableFileName(sourcePath));
-                PrepareReadableBundleFile(sourcePath, targetPath);
+                PrepareReadableBundleFile(
+                    sourcePath,
+                    targetPath,
+                    isPrimary: string.Equals(sourcePath, normalizedPrimary, StringComparison.Ordinal)
+                );
             }
         }
         catch
@@ -63,26 +91,91 @@ public sealed class SekaiBundleDecryptor
         );
     }
 
-    private void PrepareReadableBundleFile(string sourcePath, string targetPath)
-    {
-        PrepareReadablePlainBundleFile(sourcePath, targetPath);
-    }
-
-    private void PrepareReadablePlainBundleFile(string sourcePath, string targetPath)
+    private void PrepareReadableBundleFile(string sourcePath, string targetPath, bool isPrimary)
     {
         using var source = File.Open(sourcePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite);
-        Span<byte> header = stackalloc byte[4];
-        var read = source.Read(header);
-        source.Position = 0;
+        Span<byte> header = stackalloc byte[HeaderProbeLength];
+        var probe = ReadHeaderProbe(source, header);
 
-        if (read == 4 && header.SequenceEqual(SekaiMagic))
+        if (IsSekaiWrapped(probe))
         {
             using var target = File.Create(targetPath);
             DecryptTo(source, target);
+            EnsureRecognizedUnityBundle(target, sourcePath);
             return;
         }
 
+        if (!IsRecognizedUnityBundle(probe))
+        {
+            if (isPrimary)
+            {
+                ThrowUnrecognizedBundle(probe, sourcePath, deobfuscated: false);
+            }
+            // Zero-byte non-primary siblings are legitimate sparse-input placeholders swept
+            // in by directory-based dependency resolution; AssetStudio ignores them as
+            // resources. Other unrecognized siblings are also swept in by that directory
+            // scan and classified by AssetStudio as ignorable resource files, so copy them
+            // through with a warning instead of aborting the unrelated primary bundle.
+            if (probe.Length > 0)
+            {
+                WarnUnrecognizedSiblingBundle(probe, sourcePath);
+            }
+        }
+
         File.Copy(sourcePath, targetPath, overwrite: true);
+    }
+
+    private static ReadOnlySpan<byte> ReadHeaderProbe(Stream source, Span<byte> header)
+    {
+        var read = source.ReadAtLeast(header, header.Length, throwOnEndOfStream: false);
+        source.Position = 0;
+        return header[..read];
+    }
+
+    private static bool IsSekaiWrapped(ReadOnlySpan<byte> probe) =>
+        probe.Length >= SekaiMagic.Length && probe[..SekaiMagic.Length].SequenceEqual(SekaiMagic);
+
+    private static bool IsRecognizedUnityBundle(ReadOnlySpan<byte> probe)
+    {
+        foreach (var signature in UnityBundleSignatures)
+        {
+            if (probe.Length >= signature.Length && probe[..signature.Length].SequenceEqual(signature))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static void EnsureRecognizedUnityBundle(Stream decrypted, string bundlePath)
+    {
+        Span<byte> header = stackalloc byte[HeaderProbeLength];
+        var probe = ReadHeaderProbe(decrypted, header);
+        if (!IsRecognizedUnityBundle(probe))
+        {
+            ThrowUnrecognizedBundle(probe, bundlePath, deobfuscated: true);
+        }
+    }
+
+    private static void ThrowUnrecognizedBundle(ReadOnlySpan<byte> probe, string bundlePath, bool deobfuscated)
+    {
+        var firstBytes = probe.Length == 0 ? "(empty file)" : $"0x{Convert.ToHexString(probe)}";
+        throw new InvalidDataException(
+            $"Unrecognized bundle format for '{bundlePath}'" +
+            (deobfuscated ? " after PJSK wrapper deobfuscation" : string.Empty) +
+            $": first bytes {firstBytes} match neither the known PJSK obfuscation wrapper nor a " +
+            "Unity bundle signature (UnityFS/UnityWeb/UnityRaw/UnityArchive). " +
+            "The game may have shipped a new bundle obfuscation format."
+        );
+    }
+
+    private static void WarnUnrecognizedSiblingBundle(ReadOnlySpan<byte> probe, string bundlePath)
+    {
+        Console.Error.WriteLine(
+            $"Unrecognized sibling bundle copied through as a resource file: '{bundlePath}': " +
+            $"first bytes 0x{Convert.ToHexString(probe)} match neither the known PJSK obfuscation " +
+            "wrapper nor a Unity bundle signature (UnityFS/UnityWeb/UnityRaw/UnityArchive)."
+        );
     }
 
     private static string NormalizeReadableFileName(string sourcePath)

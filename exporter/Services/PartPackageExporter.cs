@@ -60,6 +60,10 @@ public sealed class PartPackageExporter
         bundleDependencies = new BundleDependencyIndex(bundleDependencyIndex);
         var manifest = PartPackageExportManifest.Load(manifestPath);
         var sparseInput = File.Exists(Path.Combine(assetRoot, ".haruki-sparse-input"));
+        if (sparseInput)
+        {
+            manifest.EnsureUsableForSparseInput();
+        }
         var partEntries = LoadPartEntries(masterDirectory, assetRoot, workListPath)
             .Where(entry => entry.BundlePath is not null && entry.Status != "missing")
             .Where(entry => PartPackageWorkPlanner.HasRequiredBundleFiles(entry, sparseInput))

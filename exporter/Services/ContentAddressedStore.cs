@@ -47,13 +47,19 @@ public sealed class ContentAddressedStore
             UnchangedFileCount: unchangedFileCount,
             ReusedBytes: reusedBytes
         );
-        File.WriteAllBytes(
+        ContentAddressedFile.Replace(
             Path.Combine(outputDirectory, StateFileName),
-            JsonSerializer.SerializeToUtf8Bytes(nextState, JsonOptions)
+            temporaryPath => File.WriteAllBytes(
+                temporaryPath,
+                JsonSerializer.SerializeToUtf8Bytes(nextState, JsonOptions)
+            )
         );
-        File.WriteAllBytes(
+        ContentAddressedFile.Replace(
             Path.Combine(outputDirectory, "content-addressed-store-report.json"),
-            JsonSerializer.SerializeToUtf8Bytes(report, JsonOptions)
+            temporaryPath => File.WriteAllBytes(
+                temporaryPath,
+                JsonSerializer.SerializeToUtf8Bytes(report, JsonOptions)
+            )
         );
         return report;
 
@@ -119,12 +125,22 @@ public sealed class ContentAddressedStore
             return new Dictionary<string, ContentAddressedStoreStateEntry>(StringComparer.Ordinal);
         }
 
-        return JsonSerializer.Deserialize<Dictionary<string, ContentAddressedStoreStateEntry>>(
-            File.ReadAllText(path),
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
-        ) is { } state
-            ? new Dictionary<string, ContentAddressedStoreStateEntry>(state, StringComparer.Ordinal)
-            : new Dictionary<string, ContentAddressedStoreStateEntry>(StringComparer.Ordinal);
+        try
+        {
+            return JsonSerializer.Deserialize<Dictionary<string, ContentAddressedStoreStateEntry>>(
+                File.ReadAllText(path),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+            ) is { } state
+                ? state
+                    .Where(pair => pair.Value is { Hash.Length: 64, Extension: not null })
+                    .ToDictionary(pair => pair.Key, pair => pair.Value, StringComparer.Ordinal)
+                : new Dictionary<string, ContentAddressedStoreStateEntry>(StringComparer.Ordinal);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+        {
+            Console.Error.WriteLine($"Content-addressed store state ignored ({path}): {ex.Message}");
+            return new Dictionary<string, ContentAddressedStoreStateEntry>(StringComparer.Ordinal);
+        }
     }
 
     private static bool IsReadOnly(string path)

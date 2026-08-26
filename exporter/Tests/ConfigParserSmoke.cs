@@ -307,6 +307,114 @@ Expect(
     "MV source exporter classifies per-part V2 bundles and V1 fallbacks for the WebGL rebuild"
 );
 
+var canaryRoot = Path.Combine(tempDir, "bundle-canary");
+Directory.CreateDirectory(canaryRoot);
+var unknownWrapperPath = Path.Combine(canaryRoot, "unknown-wrapper.bundle");
+File.WriteAllBytes(unknownWrapperPath, new byte[] { 0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04 });
+var rejectedUnknownWrapper = false;
+try
+{
+    new SekaiBundleDecryptor().PrepareReadableBundle(unknownWrapperPath).Dispose();
+}
+catch (InvalidDataException ex) when (
+    ex.Message.Contains(unknownWrapperPath) &&
+    ex.Message.Contains("DEADBEEF"))
+{
+    rejectedUnknownWrapper = true;
+}
+Expect(rejectedUnknownWrapper,
+    "unrecognized bundle obfuscation fails loudly naming the file path and first header bytes");
+var fakeWrappedPath = Path.Combine(canaryRoot, "fake-wrapped.bundle");
+var fakeWrappedBytes = new byte[132];
+fakeWrappedBytes[0] = 0x10;
+File.WriteAllBytes(fakeWrappedPath, fakeWrappedBytes);
+var rejectedFakeWrapped = false;
+try
+{
+    new SekaiBundleDecryptor().PrepareReadableBundle(fakeWrappedPath).Dispose();
+}
+catch (InvalidDataException ex) when (ex.Message.Contains(fakeWrappedPath))
+{
+    rejectedFakeWrapped = true;
+}
+Expect(rejectedFakeWrapped,
+    "known PJSK wrapper magic with an unrecognized payload fails loudly after deobfuscation");
+Expect(!Directory.EnumerateFiles(canaryRoot, ".pjskbundle2parts.*").Any(),
+    "rejected wrapped bundles do not leak decrypted temp files");
+var canaryPrimaryPath = Path.Combine(canaryRoot, "0001.bundle");
+var canarySparseSibling = Path.Combine(canaryRoot, "0001a.bundle");
+File.WriteAllBytes(canaryPrimaryPath, wrappedMvBundle);
+File.WriteAllBytes(canarySparseSibling, Array.Empty<byte>());
+using (var canaryWorkspace = new SekaiBundleDecryptor().PrepareReadableWorkspace(
+    canaryPrimaryPath,
+    new[] { canaryPrimaryPath, canarySparseSibling }
+))
+{
+    Expect(
+        File.ReadAllBytes(canaryWorkspace.PrimaryPath).AsSpan(0, 7).SequenceEqual("UnityFS"u8),
+        "the known PJSK wrapper still deobfuscates to a Unity bundle inside workspaces"
+    );
+    Expect(
+        File.Exists(Path.Combine(canaryWorkspace.DirectoryPath, "0001a.bundle")),
+        "zero-byte sparse sibling placeholders keep passing through workspaces"
+    );
+}
+var canaryGarbageSibling = Path.Combine(canaryRoot, "0001b.bundle");
+File.WriteAllBytes(canaryGarbageSibling, new byte[] { 0xDE, 0xAD, 0xBE, 0xEF, 0x05, 0x06, 0x07, 0x08 });
+var siblingWarningWriter = new StringWriter();
+var originalErrorWriter = Console.Error;
+Console.SetError(siblingWarningWriter);
+try
+{
+    using var garbageSiblingWorkspace = new SekaiBundleDecryptor().PrepareReadableWorkspace(
+        canaryPrimaryPath,
+        new[] { canaryPrimaryPath, canaryGarbageSibling }
+    );
+    Expect(
+        File.ReadAllBytes(Path.Combine(garbageSiblingWorkspace.DirectoryPath, "0001b.bundle"))
+            .AsSpan(0, 4).SequenceEqual(new byte[] { 0xDE, 0xAD, 0xBE, 0xEF }),
+        "non-empty unrecognized sibling bundles copy through workspaces unchanged"
+    );
+}
+finally
+{
+    Console.SetError(originalErrorWriter);
+}
+var siblingWarning = siblingWarningWriter.ToString();
+Expect(
+    siblingWarning.Contains(canaryGarbageSibling) && siblingWarning.Contains("DEADBEEF05060708"),
+    "unrecognized sibling copy-through warns on stderr naming the file and first header bytes");
+var rejectedGarbageWorkspacePrimary = false;
+try
+{
+    new SekaiBundleDecryptor().PrepareReadableWorkspace(
+        canaryGarbageSibling,
+        new[] { canaryGarbageSibling }
+    ).Dispose();
+}
+catch (InvalidDataException ex) when (
+    ex.Message.Contains(canaryGarbageSibling) &&
+    ex.Message.Contains("DEADBEEF05060708"))
+{
+    rejectedGarbageWorkspacePrimary = true;
+}
+Expect(rejectedGarbageWorkspacePrimary,
+    "unrecognized primary bundles still fail loudly inside workspaces");
+var rejectedWrappedGarbageSibling = false;
+try
+{
+    new SekaiBundleDecryptor().PrepareReadableWorkspace(
+        canaryPrimaryPath,
+        new[] { canaryPrimaryPath, fakeWrappedPath }
+    ).Dispose();
+}
+catch (InvalidDataException ex) when (ex.Message.Contains(fakeWrappedPath))
+{
+    rejectedWrappedGarbageSibling = true;
+}
+Expect(rejectedWrappedGarbageSibling,
+    "wrapped siblings with unrecognized payloads still fail loudly after deobfuscation");
+
 var hashAssetRoot = Path.Combine(tempDir, "hash-assets");
 var indexedBundle = Path.Combine(hashAssetRoot, "live_pv", "model", "body.bundle");
 Directory.CreateDirectory(Path.GetDirectoryName(indexedBundle)!);
@@ -468,6 +576,87 @@ catch (InvalidOperationException)
 }
 Expect(rejectedEmptyManifest,
     "manifest rebuild refuses to replace an existing registry with an empty one");
+var corruptManifestPath = Path.Combine(sparseManifestRoot, "corrupt-manifest.json");
+var corruptManifestEntry = PartEntry(
+    sparseManifestRoot,
+    "corrupt-manifest-part",
+    5,
+    "corrupt-manifest-source"
+);
+var corruptManifestRuntimePath = Path.Combine(
+    sparseManifestOutput,
+    corruptManifestEntry.PackagePath,
+    "part-runtime.msgpack.br"
+);
+Directory.CreateDirectory(Path.GetDirectoryName(corruptManifestRuntimePath)!);
+File.WriteAllBytes(corruptManifestRuntimePath, new byte[] { 1 });
+var corruptManifestStamp = PartPackageInputStamp.From(corruptManifestEntry);
+var trackedManifest = PartPackageExportManifest.Load(corruptManifestPath);
+trackedManifest.Update(corruptManifestEntry.PackagePath, corruptManifestStamp);
+trackedManifest.Save();
+Expect(
+    PartPackageExportManifest.Load(corruptManifestPath).CanSkip(
+        corruptManifestEntry.PackagePath,
+        corruptManifestRuntimePath,
+        corruptManifestStamp
+    ),
+    "saved part package manifest round-trips input stamps"
+);
+Expect(!Directory.EnumerateFiles(sparseManifestRoot, "*.tmp").Any(),
+    "atomic manifest saves clean up their temporary files");
+File.WriteAllText(corruptManifestPath, "{\"parts/body/corrupt\":");
+Expect(
+    !PartPackageExportManifest.Load(corruptManifestPath).CanSkip(
+        corruptManifestEntry.PackagePath,
+        corruptManifestRuntimePath,
+        corruptManifestStamp
+    ),
+    "corrupt part package manifest is treated as absent so packages rebuild"
+);
+var recoveredManifest = PartPackageExportManifest.Load(corruptManifestPath);
+recoveredManifest.Update(corruptManifestEntry.PackagePath, corruptManifestStamp);
+recoveredManifest.Save();
+Expect(
+    PartPackageExportManifest.Load(corruptManifestPath).CanSkip(
+        corruptManifestEntry.PackagePath,
+        corruptManifestRuntimePath,
+        corruptManifestStamp
+    ),
+    "a corrupt part package manifest is replaced by the next save"
+);
+File.WriteAllText(corruptManifestPath, "{\"parts/body/corrupt\":");
+var rejectedSparseCorruptManifest = false;
+try
+{
+    PartPackageExportManifest.Rebuild(
+        corruptManifestPath,
+        sparseManifestOutput,
+        new[] { corruptManifestEntry },
+        sparseInput: true
+    );
+}
+catch (InvalidOperationException ex) when (
+    ex.Message.Contains("Sparse incremental input cannot preserve part package stamps from a corrupt manifest") &&
+    ex.Message.Contains(corruptManifestPath) &&
+    ex.Message.Contains("Restore the manifest or run a full export"))
+{
+    rejectedSparseCorruptManifest = true;
+}
+Expect(rejectedSparseCorruptManifest,
+    "sparse incremental input fails loudly instead of dropping stamps from a corrupt manifest");
+PartPackageExportManifest.Rebuild(
+    corruptManifestPath,
+    sparseManifestOutput,
+    new[] { corruptManifestEntry }
+);
+Expect(
+    PartPackageExportManifest.Load(corruptManifestPath).CanSkip(
+        corruptManifestEntry.PackagePath,
+        corruptManifestRuntimePath,
+        corruptManifestStamp
+    ),
+    "a full export without the sparse marker still tolerates and replaces a corrupt manifest"
+);
 var serializedWorkListPath = Path.Combine(plannerRoot, "worker.json");
 File.WriteAllText(serializedWorkListPath, JsonSerializer.Serialize(new PartPackageWorkList(
     new Dictionary<string, float> { ["5"] = 1.56f },
@@ -1232,6 +1421,18 @@ using (var changedRuntime = RuntimeJsonWriter.ReadJsonDocument(
 {
     Expect(changedRuntime.RootElement.GetProperty("version").GetString() == "changed", "atomic runtime writes replace only the requested region path");
 }
+var casStatePath = Path.Combine(casRegionB, "content-addressed-store-state.json");
+File.WriteAllText(casStatePath, "{\"parts/_sources/body/source/part-runtime.msgpack.br\": {\"length\": 4,");
+var corruptStateCasReport = new ContentAddressedStore().Compact(casRegionB, sharedCas);
+Expect(corruptStateCasReport.UnchangedFileCount == 0,
+    "corrupt CAS state is treated as a first run with full re-verification instead of failing");
+Expect(corruptStateCasReport.TextureFileCount == 1 && corruptStateCasReport.PartRuntimeFileCount == 1,
+    "corrupt-state CAS recovery still compacts every scanned file");
+var recoveredCasReport = new ContentAddressedStore().Compact(casRegionB, sharedCas);
+Expect(recoveredCasReport.UnchangedFileCount == 2,
+    "CAS state is rebuilt atomically after corrupt-state recovery");
+Expect(!Directory.EnumerateFiles(casRegionB, "*.tmp").Any(),
+    "atomic CAS state and report writes clean up their temporary files");
 
 var registryMasterDir = Path.Combine(tempDir, "registry-master");
 var registryAssetRoot = Path.Combine(tempDir, "registry-assets");
@@ -2266,6 +2467,13 @@ Expect(partPackageExporterSource.Contains("DeletePartExportError"), "part packag
 Expect(partPackageExporterSource.Contains("IsInShard"), "part package exporter can filter deterministic shards");
 Expect(partPackageManifestSource.Contains("public static void Rebuild"), "part package exporter rebuilds one canonical worker manifest");
 Expect(partPackageManifestSource.Contains("HARUKI_3D_MISSING_BUNDLE="), "sparse export reports exact missing bundle keys for targeted updater recovery");
+Expect(partPackageManifestSource.Contains("RecoveredFromCorruption"), "part package manifest records corrupt-manifest recovery without serializing it");
+Expect(partPackageExporterSource.Contains("manifest.EnsureUsableForSparseInput()"), "sparse incremental export refuses to reuse stamps from a corrupt manifest");
+Expect(partPackageManifestSource.Contains("ContentAddressedFile.Replace"), "part package manifest saves atomically through the shared temp+rename helper");
+Expect(!partPackageManifestSource.Contains("File.WriteAllText(manifestPath"), "part package manifest never writes the final manifest path directly");
+var contentAddressedStoreSource = File.ReadAllText(Path.Combine(repoRoot, "Services", "ContentAddressedStore.cs"));
+Expect(contentAddressedStoreSource.Contains("ContentAddressedFile.Replace"), "CAS state and report files publish atomically through the shared temp+rename helper");
+Expect(!contentAddressedStoreSource.Contains("File.WriteAllBytes(\n            Path.Combine"), "CAS state and report files are never written to their final paths directly");
 Expect(!partPackageExporterSource.Contains("bundle-open-summary.json"), "part package exporter omits per-package debug summaries from production output");
 Expect(partPackageExporterSource.Contains("missing_after_fallback"), "part package exporter marks material failures after full-directory fallback");
 Expect(assetStudioLoadedBundleSource.Contains("ResolveLoadBundlePaths"), "loaded bundle uses shared dependency resolver");

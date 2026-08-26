@@ -14,13 +14,19 @@ public sealed class PartPackageExportManifest
     private readonly string? manifestPath;
     private readonly Dictionary<string, PartPackageInputStamp> packages;
 
+    // Not serialized: records that Load() replaced an unreadable manifest with an
+    // empty one, so sparse-input runs can refuse to drop reusable stamps.
+    public bool RecoveredFromCorruption { get; }
+
     private PartPackageExportManifest(
         string? manifestPath,
-        Dictionary<string, PartPackageInputStamp> packages
+        Dictionary<string, PartPackageInputStamp> packages,
+        bool recoveredFromCorruption = false
     )
     {
         this.manifestPath = manifestPath;
         this.packages = packages;
+        RecoveredFromCorruption = recoveredFromCorruption;
     }
 
     public static PartPackageExportManifest Load(string? manifestPath)
@@ -33,14 +39,37 @@ public sealed class PartPackageExportManifest
             );
         }
 
-        var packages = JsonSerializer.Deserialize<Dictionary<string, PartPackageInputStamp>>(
-            File.ReadAllText(manifestPath),
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
-        ) ?? new Dictionary<string, PartPackageInputStamp>(StringComparer.Ordinal);
-        return new PartPackageExportManifest(
-            manifestPath,
-            new Dictionary<string, PartPackageInputStamp>(packages, StringComparer.Ordinal)
-        );
+        try
+        {
+            var packages = JsonSerializer.Deserialize<Dictionary<string, PartPackageInputStamp>>(
+                File.ReadAllText(manifestPath),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+            ) ?? new Dictionary<string, PartPackageInputStamp>(StringComparer.Ordinal);
+            return new PartPackageExportManifest(
+                manifestPath,
+                new Dictionary<string, PartPackageInputStamp>(packages, StringComparer.Ordinal)
+            );
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
+        {
+            Console.Error.WriteLine($"Part package manifest ignored ({manifestPath}): {ex.Message}");
+            return new PartPackageExportManifest(
+                manifestPath,
+                new Dictionary<string, PartPackageInputStamp>(StringComparer.Ordinal),
+                recoveredFromCorruption: true
+            );
+        }
+    }
+
+    public void EnsureUsableForSparseInput()
+    {
+        if (RecoveredFromCorruption)
+        {
+            throw new InvalidOperationException(
+                "Sparse incremental input cannot preserve part package stamps from a corrupt " +
+                $"manifest ({manifestPath}). Restore the manifest or run a full export."
+            );
+        }
     }
 
     public bool CanSkip(string packagePath, string runtimePath, PartPackageInputStamp stamp)
@@ -68,12 +97,7 @@ public sealed class PartPackageExportManifest
             return;
         }
 
-        var parent = Path.GetDirectoryName(manifestPath);
-        if (!string.IsNullOrWhiteSpace(parent))
-        {
-            Directory.CreateDirectory(parent);
-        }
-        File.WriteAllText(manifestPath, JsonSerializer.Serialize(packages, JsonOptions));
+        WriteManifestAtomic(manifestPath, packages);
     }
 
     public static void Rebuild(
@@ -84,6 +108,10 @@ public sealed class PartPackageExportManifest
     )
     {
         var previous = Load(manifestPath);
+        if (sparseInput)
+        {
+            previous.EnsureUsableForSparseInput();
+        }
         var registryEntries = entries.ToList();
         var rebuilt = new Dictionary<string, PartPackageInputStamp>(StringComparer.Ordinal);
         var missingSparseRuntimes = new List<string>();
@@ -183,21 +211,18 @@ public sealed class PartPackageExportManifest
             );
         }
 
-        var parent = Path.GetDirectoryName(manifestPath);
-        if (!string.IsNullOrWhiteSpace(parent))
-        {
-            Directory.CreateDirectory(parent);
-        }
-        var temporaryPath = manifestPath + $".{Guid.NewGuid():N}.tmp";
-        try
-        {
-            File.WriteAllText(temporaryPath, JsonSerializer.Serialize(rebuilt, JsonOptions));
-            File.Move(temporaryPath, manifestPath, overwrite: true);
-        }
-        finally
-        {
-            File.Delete(temporaryPath);
-        }
+        WriteManifestAtomic(manifestPath, rebuilt);
+    }
+
+    private static void WriteManifestAtomic(
+        string manifestPath,
+        Dictionary<string, PartPackageInputStamp> packages
+    )
+    {
+        ContentAddressedFile.Replace(
+            Path.GetFullPath(manifestPath),
+            temporaryPath => File.WriteAllText(temporaryPath, JsonSerializer.Serialize(packages, JsonOptions))
+        );
     }
 
     private static string ToLogicalBundlePath(string path)
