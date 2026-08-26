@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ASSETSTUDIO_REPOSITORY="${ASSETSTUDIO_REPOSITORY:-https://github.com/Team-Haruki/AssetStudio.git}"
+ASSETSTUDIO_REPOSITORY="${ASSETSTUDIO_REPOSITORY:-https://github.com/seiunx-dev/AssetStudio.git}"
 ASSETSTUDIO_BRANCH="${ASSETSTUDIO_BRANCH:-sekai-modified}"
 ASSETSTUDIO_REVISION="${ASSETSTUDIO_REVISION:-70e6ec3e00665ff3c36a8af08f8e2824c2eba873}"
 ASSETSTUDIO_ROOT="${ASSETSTUDIO_ROOT:-/tmp/haruki-assetstudio}"

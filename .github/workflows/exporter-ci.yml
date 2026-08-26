@@ -21,7 +21,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  ASSETSTUDIO_REPOSITORY: https://github.com/Team-Haruki/AssetStudio.git
+  ASSETSTUDIO_REPOSITORY: https://github.com/seiunx-dev/AssetStudio.git
   ASSETSTUDIO_BRANCH: sekai-modified
 
 defaults:

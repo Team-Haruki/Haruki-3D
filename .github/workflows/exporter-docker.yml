@@ -132,7 +132,7 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: |
-            ASSETSTUDIO_REPOSITORY=https://github.com/Team-Haruki/AssetStudio.git
+            ASSETSTUDIO_REPOSITORY=https://github.com/seiunx-dev/AssetStudio.git
             ASSETSTUDIO_BRANCH=sekai-modified
             ASSETSTUDIO_REVISION=70e6ec3e00665ff3c36a8af08f8e2824c2eba873
           cache-from: type=gha
