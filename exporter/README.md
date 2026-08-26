@@ -1,5 +1,9 @@
 # Haruki-3D-Exporter
 
+Haruki-3D-Exporter is the `exporter/` subproject of the Haruki-3D monorepo.
+Unless a command below spells out an `exporter/` path, run it from the
+`exporter/` directory.
+
 ## Stage a 3DMV source bundle set
 
 Use a dependency-closed MV manifest to validate and stage updater output or the
@@ -76,7 +80,14 @@ That copied directory is the same external runtime mount payload.
 
 ## Docker
 
-Build the Linux exporter image:
+Build the Linux exporter image with `exporter/` as the build context. From the
+monorepo root:
+
+```bash
+docker build -t haruki-3d-exporter exporter/
+```
+
+Or from `exporter/`:
 
 ```bash
 docker build -t haruki-3d-exporter .
@@ -110,8 +121,9 @@ docker run --rm \
   --out /data/out
 ```
 
-GitHub Actions builds and publishes a self-contained Linux image to GHCR on `main` and version
-tags. Pull requests only build the image.
+GitHub Actions (the workflows in the monorepo root `.github/workflows/`) builds and publishes a
+self-contained Linux image to GHCR as `ghcr.io/team-haruki/haruki-3d-exporter` on `main` and
+`exporter-v*` tags. Pull requests only build the image.
 
 ## Masterdata Audit
 

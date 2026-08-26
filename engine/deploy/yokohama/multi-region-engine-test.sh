@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+cd "$(dirname "${BASH_SOURCE[0]}")/../.."
+
 image="${HARUKI_ENGINE_IMAGE:-haruki-3d-engine:multi-region-test}"
 container="${HARUKI_ENGINE_CONTAINER:-haruki-3d-engine-multi-region-test}"
 port="${HARUKI_ENGINE_PORT:-38189}"

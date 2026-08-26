@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
 runtime_root="${HARUKI_RUNTIME_E2E_ROOT:-}"
 host_port="${HARUKI_RUNTIME_E2E_PORT:-60008}"
 if [[ -z "$runtime_root" || ! -f "$runtime_root/jp/parts/part-registry.msgpack.br" ]]; then

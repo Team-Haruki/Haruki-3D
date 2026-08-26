@@ -28,6 +28,9 @@ Haruki runtime package:
 
 ## Quick Start
 
+This package lives in the `engine/` directory of the Haruki-3D monorepo. Run
+all commands in this document from `engine/`:
+
 ```bash
 npm install
 npm run build
@@ -157,7 +160,7 @@ Custom wardrobe behavior:
 
 ## Docker
 
-The Docker image runs the capture HTTP service. Mount an exported runtime package at `/data/runtime` and a final PNG output directory at `/data/captures`:
+The Docker image runs the capture HTTP service. Build it from the `engine/` directory so the build context is this package. Mount an exported runtime package at `/data/runtime` and a final PNG output directory at `/data/captures`:
 
 ```bash
 docker build -t haruki-3d-engine .
