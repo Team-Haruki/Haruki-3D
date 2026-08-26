@@ -58,13 +58,12 @@ cd exporter
 
 ## Licensing
 
-Licensing is per subproject; there is no root LICENSE file.
+The repository is released under the MIT License. See [LICENSE](LICENSE).
 
-- `exporter/` is released under the MIT License. See
+- `exporter/` keeps its own MIT license text. See
   [exporter/LICENSE](exporter/LICENSE).
-- `engine/` does not currently declare a license (no LICENSE file and no
-  `license` field in its `package.json`). Third-party notices for code embedded
-  in the engine live at
+- `engine/` is MIT licensed. See [engine/LICENSE](engine/LICENSE). Third-party
+  notices for code embedded in the engine live at
   [engine/THIRD_PARTY_NOTICES.md](engine/THIRD_PARTY_NOTICES.md).
 
 ## History

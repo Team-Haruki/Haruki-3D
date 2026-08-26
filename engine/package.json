@@ -2,6 +2,7 @@
   "name": "haruki-3d-engine",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "module": "./dist/haruki-3d-engine.js",
   "types": "./dist/types/index.d.ts",
