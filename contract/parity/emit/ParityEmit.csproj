@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>LatestMajor</RollForward>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>ParityEmit</AssemblyName>
+    <RootNamespace>Haruki3D.Contract.Parity</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Compile the exporter's PRODUCTION sources in place; never copy them. -->
+    <Compile Include="../../../exporter/Services/RuntimeJsonWriter.cs" />
+    <Compile Include="../../../exporter/Services/RuntimeRoleCatalogExporter.cs" />
+    <Compile Include="../../../exporter/Services/CharacterHeightResolver.cs" />
+    <Compile Include="../../../exporter/Models/CostumeRegistryModels.cs" />
+    <Compile Include="../../../exporter/Models/MasterCostumeModels.cs" />
+  </ItemGroup>
+
+</Project>

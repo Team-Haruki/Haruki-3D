@@ -362,7 +362,8 @@ function parseRuntimeRoleIdOption(roleId: string) {
   return { characterId, unit };
 }
 
-function validateScopedRoleCatalog(
+// Exported for the contract parity harness (contract/parity); not part of the app-facing API.
+export function validateScopedRoleCatalog(
   catalog: RuntimeRoleCatalog,
   characterId: number,
   unit: string | null
@@ -419,7 +420,8 @@ function isRuntimeSkinColors(value: RuntimeRoleCatalogEntry["skinColors"]) {
   );
 }
 
-function expectedRuntimeRoleIdentity(roleId: number): { characterId: number; unit: string } | null {
+// Exported for the contract parity harness (contract/parity); not part of the app-facing API.
+export function expectedRuntimeRoleIdentity(roleId: number): { characterId: number; unit: string } | null {
   if (!Number.isInteger(roleId) || roleId < 1 || roleId > 31) return null;
   if (roleId <= 20) {
     const unit = roleId <= 4
@@ -442,7 +444,8 @@ function expectedRuntimeRoleIdentity(roleId: number): { characterId: number; uni
   return { characterId: roleId - 5, unit: "piapro" };
 }
 
-function runtimePathUnitSegment(unit: string | null | undefined) {
+// Exported for the contract parity harness (contract/parity); not part of the app-facing API.
+export function runtimePathUnitSegment(unit: string | null | undefined) {
   return unit || "default";
 }
 
@@ -513,7 +516,8 @@ async function readMessagePackBrotliRuntime(response: Response, url: string) {
   }
 }
 
-function isCacheableRuntimeMetadataUrl(url: string) {
+// Exported for the contract parity harness (contract/parity); not part of the app-facing API.
+export function isCacheableRuntimeMetadataUrl(url: string) {
   const path = url.split(/[?#]/, 1)[0] ?? url;
   return /\/parts\/by-role\/[^/]+\/[^/]+\/(?:part-registry|runtime-role-catalog)\.msgpack\.br$/.test(path) ||
     /\/parts\/compat\/by-unit\/[^/]+\/head-hair-compatibility\.msgpack\.br$/.test(path) ||

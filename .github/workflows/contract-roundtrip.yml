@@ -2,7 +2,9 @@ name: Contract Round-Trip
 
 # Guards the exporter<->engine package-format contract: the exporter's
 # production MessagePack/ext-42 encoder must round-trip through the engine's
-# production decoder. See contract/SPEC.md and contract/roundtrip/README.md.
+# production decoder, and the path/role-table formulas hardcoded on both sides
+# must agree. See contract/SPEC.md, contract/roundtrip/README.md, and
+# contract/parity/README.md.
 on:
   push:
     branches: [main]
@@ -12,8 +14,15 @@ on:
       - 'engine/runtime-binary-codec.d.mts'
       - 'engine/package.json'
       - 'engine/package-lock.json'
+      - 'engine/part-runtime-core.mjs'
+      - 'engine/src/runtime/**'
+      - 'engine/src/parts/**'
       - 'exporter/Services/RuntimeJsonWriter.cs'
       - 'exporter/Services/PjskSekaiRuntimeExtensionBuilder.cs'
+      - 'exporter/Services/RuntimeRoleCatalogExporter.cs'
+      - 'exporter/Services/CharacterHeightResolver.cs'
+      - 'exporter/Models/CostumeRegistryModels.cs'
+      - 'exporter/Models/MasterCostumeModels.cs'
       - '.github/workflows/contract-roundtrip.yml'
   pull_request:
     branches: [main]
@@ -23,8 +32,15 @@ on:
       - 'engine/runtime-binary-codec.d.mts'
       - 'engine/package.json'
       - 'engine/package-lock.json'
+      - 'engine/part-runtime-core.mjs'
+      - 'engine/src/runtime/**'
+      - 'engine/src/parts/**'
       - 'exporter/Services/RuntimeJsonWriter.cs'
       - 'exporter/Services/PjskSekaiRuntimeExtensionBuilder.cs'
+      - 'exporter/Services/RuntimeRoleCatalogExporter.cs'
+      - 'exporter/Services/CharacterHeightResolver.cs'
+      - 'exporter/Models/CostumeRegistryModels.cs'
+      - 'exporter/Models/MasterCostumeModels.cs'
       - '.github/workflows/contract-roundtrip.yml'
   workflow_dispatch:
 
@@ -61,3 +77,6 @@ jobs:
 
       - name: Run round-trip contract test
         run: ./contract/roundtrip/run.sh
+
+      - name: Run parity contract checks
+        run: ./contract/parity/run.sh

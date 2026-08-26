@@ -1,0 +1,16 @@
+{
+  "description": "Shared input vector for the runtime path <unit> segment parity check. Both the exporter harness (RuntimeJsonWriter.RuntimePathUnitSegment) and the engine (runtimePathUnitSegment) are driven with exactly these inputs.",
+  "inputs": [
+    null,
+    "",
+    "default",
+    "piapro",
+    "light_sound",
+    "idol",
+    "street",
+    "theme_park",
+    "school_refusal",
+    " ",
+    "\t"
+  ]
+}
