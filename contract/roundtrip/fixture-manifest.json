@@ -1,0 +1,61 @@
+{
+  "schema": "PartRuntime",
+  "document": {
+    "formatVersion": 1,
+    "meta": {
+      "name": "haruki-3d-roundtrip-fixture",
+      "unicode": "初音ミク 🎶 str8-length property value exceeding thirty-one bytes",
+      "nullField": null,
+      "flags": { "enabled": true, "disabled": false },
+      "counts": {
+        "zero": 0,
+        "small": 7,
+        "negative": -123456,
+        "int32Min": -2147483648,
+        "uint32Max": 4294967295,
+        "maxSafe": 9007199254740991,
+        "half": 2.5,
+        "pi64": 3.14159274
+      },
+      "tags": ["contract", "roundtrip"]
+    },
+    "nativeMeshes": {
+      "meshes": [
+        {
+          "name": "meshA",
+          "positions": [0, -0, 1, -1, 0.5, 3.14159274, 1e-7, 3.4028235e38],
+          "normals": [],
+          "skinIndices": [0, 1, 2, 3, 5, 8, 13, 21, 34, 55, 89, 144, 233, 377, 610, 65535],
+          "submeshes": [
+            {
+              "start": 0,
+              "indices": [65536, 4294967295, 70000, 0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 123456789]
+            }
+          ]
+        }
+      ]
+    },
+    "unrelated": {
+      "positions": [0, -0, 1, -1, 0.5, 3.14159274, 1e-7, 3.4028235e38, 2.5]
+    },
+    "clips": {
+      "tracks": [
+        { "name": "trackA", "times": [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7] }
+      ]
+    }
+  },
+  "expectations": {
+    "float32ExtPaths": ["nativeMeshes.meshes.positions"],
+    "uint16ExtPaths": ["nativeMeshes.meshes.skinIndices"],
+    "uint32ExtPaths": ["nativeMeshes.meshes.submeshes.indices"],
+    "plainArrayPaths": [
+      "meta.tags",
+      "nativeMeshes.meshes",
+      "nativeMeshes.meshes.normals",
+      "nativeMeshes.meshes.submeshes",
+      "unrelated.positions",
+      "clips.tracks",
+      "clips.tracks.times"
+    ]
+  }
+}

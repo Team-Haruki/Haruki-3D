@@ -1,0 +1,63 @@
+name: Contract Round-Trip
+
+# Guards the exporter<->engine package-format contract: the exporter's
+# production MessagePack/ext-42 encoder must round-trip through the engine's
+# production decoder. See contract/SPEC.md and contract/roundtrip/README.md.
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'contract/**'
+      - 'engine/runtime-binary-codec.mjs'
+      - 'engine/runtime-binary-codec.d.mts'
+      - 'engine/package.json'
+      - 'engine/package-lock.json'
+      - 'exporter/Services/RuntimeJsonWriter.cs'
+      - 'exporter/Services/PjskSekaiRuntimeExtensionBuilder.cs'
+      - '.github/workflows/contract-roundtrip.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'contract/**'
+      - 'engine/runtime-binary-codec.mjs'
+      - 'engine/runtime-binary-codec.d.mts'
+      - 'engine/package.json'
+      - 'engine/package-lock.json'
+      - 'exporter/Services/RuntimeJsonWriter.cs'
+      - 'exporter/Services/PjskSekaiRuntimeExtensionBuilder.cs'
+      - '.github/workflows/contract-roundtrip.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  roundtrip:
+    name: Cross-language round-trip
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: engine/package-lock.json
+
+      - name: Install engine dependencies
+        run: npm ci
+        working-directory: engine
+
+      - name: Run round-trip contract test
+        run: ./contract/roundtrip/run.sh
