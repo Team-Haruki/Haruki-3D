@@ -77,7 +77,9 @@ let pendingCaptureCount = 0;
 
 function enqueue(task) {
   if (pendingCaptureCount >= MAX_PENDING_CAPTURES) {
-    throw new Error("Capture queue is full.");
+    const queueFull = new Error("Capture queue is full; retry later.");
+    queueFull.statusCode = 429;
+    throw queueFull;
   }
   pendingCaptureCount += 1;
   const run = queue.then(task, task);
@@ -695,6 +697,7 @@ class CaptureRuntimeSession {
     this.idleStopped = false;
     this.startPromise = null;
     this.viewport = null;
+    this.lastStartError = null;
   }
 
   status() {
@@ -702,7 +705,12 @@ class CaptureRuntimeSession {
       ready: this.ready,
       restarting: this.restarting,
       idleStopped: this.idleStopped,
+      ...(this.lastStartError === null ? {} : { lastStartError: this.lastStartError }),
     };
+  }
+
+  healthy() {
+    return this.lastStartError === null;
   }
 
   async ensureStarted(timeoutMs = defaultTimeoutMs) {
@@ -773,6 +781,10 @@ class CaptureRuntimeSession {
     this.chromium.stderr.on("data", (chunk) => {
       this.chromiumLog += chunk.toString("utf8");
     });
+    this.chromium.once("error", (error) => {
+      this.ready = false;
+      this.chromiumLog += `${error instanceof Error ? error.message : String(error)}\n`;
+    });
     this.chromium.once("exit", () => {
       this.ready = false;
     });
@@ -797,7 +809,9 @@ class CaptureRuntimeSession {
       await this.client.send("Page.navigate", { url: pageUrl }, timeoutMs);
       await waitForRuntimeReady(this.client, timeoutMs);
       this.ready = true;
+      this.lastStartError = null;
     } catch (error) {
+      this.lastStartError = error instanceof Error ? error.message : String(error);
       if (this.chromiumLog.trim()) {
         console.error(this.chromiumLog.trim());
       }
@@ -962,7 +976,8 @@ const server = http.createServer(async (req, res) => {
     }
     const requestPath = route.pathname;
     if (req.method === "GET" && requestPath === "/healthz") {
-      sendJson(res, 200, { ok: true, ...captureSession.status() });
+      const healthy = captureSession.healthy();
+      sendJson(res, healthy ? 200 : 503, { ok: healthy, ...captureSession.status() });
       return;
     }
     if (req.method === "POST" && requestPath === "/capture") {
