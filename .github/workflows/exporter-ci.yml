@@ -1,10 +1,16 @@
-name: CI
+name: Exporter CI
 
 on:
   push:
     branches: [main]
+    paths:
+      - 'exporter/**'
+      - '.github/workflows/exporter-ci.yml'
   pull_request:
     branches: [main]
+    paths:
+      - 'exporter/**'
+      - '.github/workflows/exporter-ci.yml'
   workflow_dispatch:
 
 permissions:
@@ -17,6 +23,10 @@ concurrency:
 env:
   ASSETSTUDIO_REPOSITORY: https://github.com/Team-Haruki/AssetStudio.git
   ASSETSTUDIO_BRANCH: sekai-modified
+
+defaults:
+  run:
+    working-directory: exporter
 
 jobs:
   build:

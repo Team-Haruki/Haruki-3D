@@ -1,0 +1,139 @@
+name: Exporter Docker
+
+on:
+  push:
+    # No paths filter here: combining "tags:" with "paths:" would stop tag
+    # pushes from ever triggering, so release tags must stay unfiltered.
+    branches: [main]
+    tags:
+      - 'exporter-v*'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'exporter/Dockerfile'
+      - 'exporter/.dockerignore'
+      - '.github/workflows/exporter-docker.yml'
+      - 'exporter/Haruki-3D-Exporter.csproj'
+      - 'exporter/Models/**'
+      - 'exporter/Services/**'
+      - 'exporter/Program.cs'
+      - 'exporter/scripts/prepare-assetstudio.sh'
+      - 'exporter/scripts/test-face-motion-export.mjs'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  REGISTRY: ghcr.io
+  # Keep the image name published by the original Team-Haruki/Haruki-3D-Exporter
+  # repository; downstream deployments reference it.
+  IMAGE_NAME: team-haruki/haruki-3d-exporter
+
+jobs:
+  # The push trigger cannot carry a paths filter (see the comment on "on:
+  # push"), so branch pushes are gated here instead: build only when the
+  # pushed range actually touched the exporter. This matters here in
+  # particular because each image build clones and compiles the pinned
+  # AssetStudio revision. Tag pushes always build.
+  changes:
+    name: Detect exporter changes
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/')
+    outputs:
+      exporter: ${{ steps.diff.outputs.hit }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Diff pushed range
+        id: diff
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          if [ -z "$BEFORE" ] \
+            || [ "$BEFORE" = "0000000000000000000000000000000000000000" ] \
+            || ! git cat-file -e "$BEFORE" 2>/dev/null; then
+            # Unknown base (new branch or force push): build to be safe.
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --name-only "$BEFORE" "$GITHUB_SHA" -- \
+            exporter/ .github/workflows/exporter-docker.yml | grep -q .; then
+            echo "hit=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "hit=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    needs: [changes]
+    if: >-
+      !cancelled() && (
+        github.event_name != 'push'
+        || startsWith(github.ref, 'refs/tags/')
+        || needs.changes.outputs.exporter == 'true'
+      )
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Detect stable release tag
+        id: release
+        run: |
+          if [[ "$GITHUB_REF" =~ ^refs/tags/exporter-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "stable=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "stable=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # latest=auto would move :latest for any matching type=match tag,
+          # including prereleases; gate :latest on a stable x.y.z tag instead.
+          flavor: |
+            latest=false
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=match,pattern=exporter-v(.*),group=1
+            type=match,pattern=exporter-v(\d+\.\d+)\.\d+$,group=1
+            type=raw,value=latest,enable=${{ steps.release.outputs.stable == 'true' }}
+            type=sha,prefix=sha-
+
+      - name: Build and optionally push image
+        uses: docker/build-push-action@v6
+        with:
+          context: exporter
+          file: exporter/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            ASSETSTUDIO_REPOSITORY=https://github.com/Team-Haruki/AssetStudio.git
+            ASSETSTUDIO_BRANCH=sekai-modified
+            ASSETSTUDIO_REVISION=70e6ec3e00665ff3c36a8af08f8e2824c2eba873
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
