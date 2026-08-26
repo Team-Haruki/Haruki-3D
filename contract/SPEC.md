@@ -8,8 +8,9 @@ flags the disagreement.
 Terminology: **package root** is the exporter `--out` directory for one region; the engine mounts it
 as `assetBaseUrl` (engine `kernel.load` / capture `HARUKI_RUNTIME_ROOT`, see `engine/README.md`).
 All paths below are package-root-relative. `<unit>` path segments substitute `"default"` when the
-unit is null (`exporter/Services/CostumeRegistryExporter.cs` `RuntimePathUnitSegment`,
-`engine/src/runtime/runtimePackageLoader.ts` `runtimePathUnitSegment`).
+unit is null or empty; every producer path emitter MUST route the segment through
+`exporter/Services/RuntimeJsonWriter.cs` `RuntimePathUnitSegment`, which matches the consumer's
+`engine/src/runtime/runtimePackageLoader.ts` `runtimePathUnitSegment` (`unit || "default"`).
 
 RFC-2119 keywords (MUST, MUST NOT, MAY) are used with their usual meaning.
 
@@ -386,13 +387,18 @@ parameters change, invalidating the shared encode cache.
    planned/missing) but is emitted for head_optional empty slots
    (`CostumeRegistryExporter.cs:262-266`) and has distinct consumer semantics
    (`runtimePackageLoader.ts:656-662`). This spec (section 4.4) is normative.
-2. **Null-unit path-segment mismatch (latent).** For a registry group whose unit key is empty, the
-   producer's `RuntimePathUnitSegment` returns `""` (it maps only *null* to `"default"`,
-   `CostumeRegistryExporter.cs:506-509,812-815`), so `Path.Combine` collapses the segment and the
-   scoped registry/compat file would be written one level up (e.g.
-   `parts/by-role/<id>/part-registry.msgpack.br`), while the consumer always requests the
-   `default` segment (`runtimePackageLoader.ts:445-447`). Unreachable for the 31 public roles
-   (all have non-null units, enforced by `RuntimeRoleCatalogExporter.Build`), but producers MUST
-   NOT emit engine-consumed rows with a null unit until the two sides agree.
+2. **Null-unit path-segment mismatch (resolved).** Normative rule: a null or empty unit maps to
+   the `default` path segment, exactly as the consumer resolves it (`runtimePackageLoader.ts:445-447`,
+   `unit || "default"`). All producers route path segments through the shared
+   `RuntimeJsonWriter.RuntimePathUnitSegment` (`CostumeRegistryExporter` scoped registry/compat
+   writers and `BuildPackagePath`, `RuntimeRoleCatalogExporter.Write`,
+   `RoleRuntimeExporter.BuildRoleRuntimeDirectory`). Previously the scoped writers passed
+   empty-string unit keys to a helper that mapped only *null* to `"default"`, so `Path.Combine`
+   collapsed the segment and null-unit scoped registry/compat files landed one level up
+   (e.g. `parts/by-role/<id>/part-registry.msgpack.br`) where the engine never looks. Null units
+   are reachable with real masterdata (`costume3dModels.unit: null`, and the placeholder rows
+   emitted for costumes with no `costume3dModels` row), so the scoped files now land under
+   `default/`; the 31 engine-consumed public roles were unaffected (non-null units enforced by
+   `RuntimeRoleCatalogExporter.Build`).
 3. **`parts/part-source-map.msgpack.br` is absent from the `exporter/README.md` output list**
    though always written (`CostumeRegistryExporter.cs:37`). Documented in section 1.

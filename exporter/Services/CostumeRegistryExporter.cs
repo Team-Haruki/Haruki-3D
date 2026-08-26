@@ -118,7 +118,7 @@ public sealed class CostumeRegistryExporter
                 "parts",
                 "by-role",
                 role.CharacterId.ToString(),
-                RuntimePathUnitSegment(role.Item2)
+                RuntimeJsonWriter.RuntimePathUnitSegment(role.Item2)
             );
             partEntriesByRole.TryGetValue(role, out var partEntries);
             var partRegistry = new PartRegistry(
@@ -153,7 +153,7 @@ public sealed class CostumeRegistryExporter
                     .ToList()
             );
             WriteJson(
-                Path.Combine(outputDirectory, "parts", "compat", "by-unit", RuntimePathUnitSegment(unit), "head-hair-compatibility.json"),
+                Path.Combine(outputDirectory, "parts", "compat", "by-unit", RuntimeJsonWriter.RuntimePathUnitSegment(unit), "head-hair-compatibility.json"),
                 compatibility
             );
         });
@@ -806,12 +806,7 @@ public sealed class CostumeRegistryExporter
 
     private static string BuildPackagePath(string partType, int costume3dId, string? unit)
     {
-        return $"parts/{NormalizePackagePartType(partType)}/{costume3dId}/{unit ?? "default"}/";
-    }
-
-    private static string RuntimePathUnitSegment(string? unit)
-    {
-        return unit ?? "default";
+        return $"parts/{NormalizePackagePartType(partType)}/{costume3dId}/{RuntimeJsonWriter.RuntimePathUnitSegment(unit)}/";
     }
 
     private static string NormalizePackagePartType(string partType)

@@ -1584,7 +1584,14 @@ WriteJsonFile(Path.Combine(registryMasterDir, "costume3dModelNotAvailablePattern
     {
         headCostume3dId = 999001,
         hairCostume3dId = 999002,
-        unit = "light_sound",
+        unit = (string?)"light_sound",
+        isDefault = false
+    },
+    new
+    {
+        headCostume3dId = 999003,
+        hairCostume3dId = 999004,
+        unit = (string?)null,
         isDefault = false
     }
 });
@@ -1755,6 +1762,56 @@ using (var scopedCompatibility = RuntimeJsonWriter.ReadJsonDocument(Path.Combine
     var scopedRules = scopedCompatibility.RootElement.GetProperty("rules").EnumerateArray().ToArray();
     Expect(scopedRules.Length == 1, "scoped head-hair compatibility omits positive and default rules");
     Expect(scopedRules[0].GetProperty("state").GetString() == "not_available", "scoped head-hair compatibility keeps deny rules");
+}
+Expect(
+    RuntimeJsonWriter.OutputsExist(Path.Combine(registryOutput, "parts", "by-role", "2", "default", "part-registry.json")),
+    "null-unit registry rows write the default unit segment the engine requests"
+);
+Expect(
+    !RuntimeJsonWriter.OutputsExist(Path.Combine(registryOutput, "parts", "by-role", "2", "part-registry.json")),
+    "null-unit registry rows do not collapse the by-role unit segment"
+);
+using (var defaultScopedRegistry = RuntimeJsonWriter.ReadJsonDocument(Path.Combine(
+    registryOutput,
+    "parts",
+    "by-role",
+    "2",
+    "default",
+    "part-registry.json"
+)))
+{
+    var defaultScopedEntries = defaultScopedRegistry.RootElement.GetProperty("entries").EnumerateArray().ToArray();
+    Expect(
+        defaultScopedEntries.Any(entry =>
+            entry.GetProperty("costume3dId").GetInt32() == 202 &&
+            entry.GetProperty("unit").ValueKind == JsonValueKind.Null),
+        "default-segment scoped registry keeps its null-unit rows"
+    );
+}
+Expect(
+    RuntimeJsonWriter.OutputsExist(Path.Combine(registryOutput, "parts", "compat", "by-unit", "default", "head-hair-compatibility.json")),
+    "null-unit deny rules write the default unit segment the engine requests"
+);
+Expect(
+    !RuntimeJsonWriter.OutputsExist(Path.Combine(registryOutput, "parts", "compat", "by-unit", "head-hair-compatibility.json")),
+    "null-unit deny rules do not collapse the by-unit unit segment"
+);
+using (var defaultScopedCompatibility = RuntimeJsonWriter.ReadJsonDocument(Path.Combine(
+    registryOutput,
+    "parts",
+    "compat",
+    "by-unit",
+    "default",
+    "head-hair-compatibility.json"
+)))
+{
+    var defaultScopedRules = defaultScopedCompatibility.RootElement.GetProperty("rules").EnumerateArray().ToArray();
+    Expect(
+        defaultScopedRules.Length == 1 &&
+        defaultScopedRules[0].GetProperty("state").GetString() == "not_available" &&
+        defaultScopedRules[0].GetProperty("unit").ValueKind == JsonValueKind.Null,
+        "default-segment compatibility keeps only its null-unit deny rules"
+    );
 }
 using (var compactRegistry = RuntimeJsonWriter.ReadJsonDocument(
     Path.Combine(registryOutput, "parts", "part-registry-compact.json")

@@ -1020,4 +1020,9 @@ public static class RuntimeJsonWriter
         offset += 8;
         return value;
     }
+
+    // Canonical <unit> path segment for runtime package layouts. Must match the engine's
+    // runtimePathUnitSegment (engine/src/runtime/runtimePackageLoader.ts): null/empty => "default".
+    public static string RuntimePathUnitSegment(string? unit) =>
+        string.IsNullOrEmpty(unit) ? "default" : unit;
 }

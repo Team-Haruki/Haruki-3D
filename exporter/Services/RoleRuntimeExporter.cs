@@ -251,7 +251,7 @@ public sealed class RoleRuntimeExporter
 
     private static string BuildRoleRuntimeDirectory(string outputDirectory, int characterId, string? unit)
     {
-        return Path.Combine(outputDirectory, "roles", characterId.ToString(), unit ?? "default");
+        return Path.Combine(outputDirectory, "roles", characterId.ToString(), RuntimeJsonWriter.RuntimePathUnitSegment(unit));
     }
 
     private static string? ResolveDefaultCostumeSettingMotionPath(

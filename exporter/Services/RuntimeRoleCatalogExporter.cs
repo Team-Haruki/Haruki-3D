@@ -78,7 +78,7 @@ public static class RuntimeRoleCatalogExporter
                     "parts",
                     "by-role",
                     role.CharacterId.ToString(),
-                    role.Unit ?? "default",
+                    RuntimeJsonWriter.RuntimePathUnitSegment(role.Unit),
                     "runtime-role-catalog.json"
                 ),
                 new RuntimeRoleCatalog(CatalogVersion, catalog.MasterVersion, [role]),
@@ -100,7 +100,7 @@ public static class RuntimeRoleCatalogExporter
                 "parts",
                 "by-role",
                 role.CharacterId.ToString(),
-                role.Unit ?? "default",
+                RuntimeJsonWriter.RuntimePathUnitSegment(role.Unit),
                 "runtime-role-catalog.json"
             ),
             catalog.MasterVersion,
@@ -183,7 +183,7 @@ public static class RuntimeRoleCatalogExporter
                         Shadow1: characterUnit.SkinShadowColorCode1,
                         Shadow2: characterUnit.SkinShadowColorCode2
                     ),
-                    RoleRuntimePath: $"roles/{entry.CharacterId}/{entry.Unit ?? "default"}/role-runtime.msgpack.br"
+                    RoleRuntimePath: $"roles/{entry.CharacterId}/{RuntimeJsonWriter.RuntimePathUnitSegment(entry.Unit)}/role-runtime.msgpack.br"
                 );
             })
             .ToList();
