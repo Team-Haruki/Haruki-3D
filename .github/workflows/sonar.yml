@@ -1,0 +1,62 @@
+name: SonarQube
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ASSETSTUDIO_REPOSITORY: https://github.com/seiunx-dev/AssetStudio.git
+  ASSETSTUDIO_BRANCH: sekai-modified
+  ASSETSTUDIO_ROOT: /tmp/haruki-assetstudio
+
+jobs:
+  analyze:
+    name: Build and analyze
+    runs-on: ubuntu-latest
+    steps:
+      - name: Set up JDK 17
+        uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9 # v4.8.0
+        with:
+          java-version: 17
+          distribution: zulu
+
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          fetch-depth: 0
+
+      - name: Set up .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Prepare AssetStudio
+        working-directory: exporter
+        run: bash scripts/prepare-assetstudio.sh
+
+      - name: Install SonarQube scanner
+        run: dotnet tool update dotnet-sonarscanner --tool-path "${RUNNER_TEMP}/scanner"
+
+      - name: Build and analyze
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          "${RUNNER_TEMP}/scanner/dotnet-sonarscanner" begin /k:"Team-Haruki_Haruki-3D" /o:"team-haruki" /d:sonar.token="${SONAR_TOKEN}" /d:sonar.exclusions="**/node_modules/**,**/dist/**,**/bin/**,**/obj/**"
+          dotnet build exporter/Haruki-3D-Exporter.csproj -p:AssetStudioRoot="${ASSETSTUDIO_ROOT}"
+          "${RUNNER_TEMP}/scanner/dotnet-sonarscanner" end /d:sonar.token="${SONAR_TOKEN}"
