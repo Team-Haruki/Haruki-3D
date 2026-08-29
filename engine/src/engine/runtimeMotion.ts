@@ -181,95 +181,111 @@ function smoothLoopTrack(
     return track.clone();
   }
 
+  const prepared = prepareLoopTrackSamples(track, duration);
+  if (!prepared) return track.clone();
+  const { stride, times, values } = prepared;
+  if (isQuaternionTrack) {
+    makeQuaternionValuesContinuous(values, stride);
+  }
+  return resampleLoopTrack(track, duration, sampleRate, times, values, isQuaternionTrack);
+}
+
+function prepareLoopTrackSamples(track: THREE.KeyframeTrack, duration: number) {
   const stride = track.getValueSize();
   const sourceTimes = Array.from(track.times);
   const sourceValues = Array.from(track.values);
   let sourceCount = sourceTimes.length;
-  if (sourceCount < 3 || duration <= 0) {
-    return track.clone();
-  }
-
+  if (sourceCount < 3 || duration <= 0) return null;
   if (
     Math.abs(sourceTimes[sourceCount - 1] - duration) < 1e-3 &&
     valuesClose(sourceValues, stride, 0, sourceCount - 1)
   ) {
     sourceCount -= 1;
   }
-  if (sourceCount < 3) {
-    return track.clone();
-  }
+  return sourceCount < 3 ? null : {
+    stride,
+    times: sourceTimes.slice(0, sourceCount),
+    values: sourceValues.slice(0, sourceCount * stride),
+  };
+}
 
-  const times = sourceTimes.slice(0, sourceCount);
-  const values = sourceValues.slice(0, sourceCount * stride);
-  if (isQuaternionTrack) {
-    makeQuaternionValuesContinuous(values, stride);
-  }
-
+function resampleLoopTrack(
+  track: THREE.KeyframeTrack,
+  duration: number,
+  sampleRate: number,
+  times: number[],
+  values: number[],
+  isQuaternionTrack: boolean
+) {
+  const stride = track.getValueSize();
+  const sourceCount = times.length;
   const sampleCount = Math.max(2, Math.round(duration * sampleRate));
   const targetTimes = new Float32Array(sampleCount + 1);
   const targetValues = new Float32Array((sampleCount + 1) * stride);
   let segment = 0;
-
   for (let sample = 0; sample <= sampleCount; sample += 1) {
-    const targetOffset = sample * stride;
     const t = sample === sampleCount ? duration : (duration * sample) / sampleCount;
     targetTimes[sample] = t;
     if (sample === sampleCount) {
-      for (let i = 0; i < stride; i += 1) {
-        targetValues[targetOffset + i] = targetValues[i];
-      }
+      copyLoopFirstSample(targetValues, sample * stride, stride);
       continue;
     }
-
-    while (
-      segment < sourceCount - 1 &&
-      t > times[segment + 1]
-    ) {
+    while (segment < sourceCount - 1 && t > times[segment + 1]) {
       segment += 1;
     }
-
-    const i1 = segment;
-    const i2 = segment + 1 < sourceCount ? segment + 1 : 0;
-    const i0 = (i1 - 1 + sourceCount) % sourceCount;
-    const i3 = (i2 + 1) % sourceCount;
-    let t0 = times[i0];
-    const t1 = times[i1];
-    let t2 = times[i2];
-    let t3 = times[i3];
-    if (i0 >= i1) {
-      t0 -= duration;
-    }
-    if (i2 <= i1) {
-      t2 += duration;
-    }
-    if (i3 <= i1) {
-      t3 += duration;
-    }
-
-    for (let i = 0; i < stride; i += 1) {
-      targetValues[targetOffset + i] = smoothSampleComponent(
-        values[i0 * stride + i],
-        values[i1 * stride + i],
-        values[i2 * stride + i],
-        values[i3 * stride + i],
-        t0,
-        t1,
-        t2,
-        t3,
-        t
-      );
-    }
+    writeInterpolatedLoopSample(
+      targetValues, sample * stride, stride, values,
+      resolveLoopSpline(times, segment, duration), t
+    );
     if (isQuaternionTrack) {
-      normalizeQuaternionValue(
-        targetValues as unknown as number[],
-        targetOffset
-      );
+      normalizeQuaternionValue(targetValues as unknown as number[], sample * stride);
     }
   }
-
   return isQuaternionTrack
     ? new THREE.QuaternionKeyframeTrack(track.name, targetTimes, targetValues)
     : new THREE.VectorKeyframeTrack(track.name, targetTimes, targetValues);
+}
+
+function copyLoopFirstSample(values: Float32Array, targetOffset: number, stride: number) {
+  for (let index = 0; index < stride; index += 1) {
+    values[targetOffset + index] = values[index];
+  }
+}
+
+function resolveLoopSpline(times: number[], segment: number, duration: number) {
+  const count = times.length;
+  const i1 = segment;
+  const i2 = segment + 1 < count ? segment + 1 : 0;
+  const i0 = (i1 - 1 + count) % count;
+  const i3 = (i2 + 1) % count;
+  return {
+    indexes: [i0, i1, i2, i3],
+    times: [
+      times[i0] - (i0 >= i1 ? duration : 0),
+      times[i1],
+      times[i2] + (i2 <= i1 ? duration : 0),
+      times[i3] + (i3 <= i1 ? duration : 0),
+    ],
+  };
+}
+
+function writeInterpolatedLoopSample(
+  target: Float32Array,
+  targetOffset: number,
+  stride: number,
+  source: number[],
+  spline: { indexes: number[]; times: number[] },
+  time: number
+) {
+  const [i0, i1, i2, i3] = spline.indexes;
+  const [t0, t1, t2, t3] = spline.times;
+  for (let index = 0; index < stride; index += 1) {
+    target[targetOffset + index] = smoothSampleComponent(
+      source[i0 * stride + index], source[i1 * stride + index],
+      source[i2 * stride + index], source[i3 * stride + index],
+      t0, t1, t2, t3, time
+    );
+  }
 }
 
 function shouldSmoothLoopClip(clip: THREE.AnimationClip) {
@@ -721,66 +737,13 @@ export function retargetUnityPrefabAnimationClip(
   const sampleResolvedHeadTargets = new Set<string>();
 
   for (const track of clip.tracks) {
-    const separator = track.name.lastIndexOf(".");
-    const nodeKey = separator > 0 ? track.name.slice(0, separator) : "";
-    const propertyPath = separator > 0 ? track.name.slice(separator + 1) : "";
-    const binding = bindingByNodeKey.get(nodeKey);
-    if (!binding || !propertyPath) {
-      baseDebug.unresolvedTrackCount += 1;
-      if (baseDebug.sampleUnresolvedTracks.length < 16) {
-        baseDebug.sampleUnresolvedTracks.push(track.name);
-      }
-      continue;
-    }
-
-    let resolvedForTrack = 0;
-    for (const target of binding.targets) {
-      if (
-        suppressFaceAssemblyBridgeTargets &&
-        isFaceAssemblyBridgeMotionTarget(target)
-      ) {
-        continue;
-      }
-      const node = nodeByPath.get(target.transformPath);
-      if (!node) {
-        continue;
-      }
-      const nextTrackName = `${node.uuid}.${propertyPath}`;
-      if (emittedTargets.has(nextTrackName)) {
-        baseDebug.duplicateTargetTrackCount += 1;
-        continue;
-      }
-      const retargetedTrack = retargetTrackWithBindSpace(
-        track,
-        nextTrackName,
-        propertyPath,
-        binding,
-        target
-      );
-      if (!retargetedTrack) {
-        continue;
-      }
-      emittedTargets.add(nextTrackName);
-      tracks.push(retargetedTrack);
-      if (target.poseRoot === "body") {
-        resolvedBodyTargetPaths.add(target.transformPath);
-      } else if (target.poseRoot === "face") {
-        resolvedFaceTargetPaths.add(target.transformPath);
-      }
-      if (
-        sampleResolvedHeadTargets.size < 16 &&
-        /(?:^|\/)(Position|Hip|Waist|Spine|Chest|Neck|Head)$/.test(target.transformPath)
-      ) {
-        sampleResolvedHeadTargets.add(target.transformPath);
-      }
-      resolvedForTrack += 1;
-    }
-
+    const resolvedForTrack = retargetPrefabTrack(track, {
+      bindingByNodeKey, nodeByPath, suppressFaceAssemblyBridgeTargets,
+      tracks, emittedTargets, resolvedBodyTargetPaths, resolvedFaceTargetPaths,
+      sampleResolvedHeadTargets, debug: baseDebug,
+    });
     if (resolvedForTrack === 0) {
-      baseDebug.unresolvedTrackCount += 1;
-      if (baseDebug.sampleUnresolvedTracks.length < 16) {
-        baseDebug.sampleUnresolvedTracks.push(track.name);
-      }
+      recordUnresolvedTrack(baseDebug, track.name);
     } else {
       baseDebug.resolvedTargetCount += resolvedForTrack;
     }
@@ -803,4 +766,69 @@ export function retargetUnityPrefabAnimationClip(
     debug: baseDebug,
     error: null,
   };
+}
+
+type PrefabRetargetState = {
+  bindingByNodeKey: Map<string, BodyMotionBinding>;
+  nodeByPath: Map<string, THREE.Object3D>;
+  suppressFaceAssemblyBridgeTargets: boolean;
+  tracks: THREE.KeyframeTrack[];
+  emittedTargets: Set<string>;
+  resolvedBodyTargetPaths: Set<string>;
+  resolvedFaceTargetPaths: Set<string>;
+  sampleResolvedHeadTargets: Set<string>;
+  debug: RuntimeMotionRetargetDebug;
+};
+
+function retargetPrefabTrack(track: THREE.KeyframeTrack, state: PrefabRetargetState) {
+  const separator = track.name.lastIndexOf(".");
+  const nodeKey = separator > 0 ? track.name.slice(0, separator) : "";
+  const propertyPath = separator > 0 ? track.name.slice(separator + 1) : "";
+  const binding = state.bindingByNodeKey.get(nodeKey);
+  if (!binding || !propertyPath) return 0;
+
+  let resolved = 0;
+  for (const target of binding.targets) {
+    if (tryRetargetPrefabTarget(track, propertyPath, binding, target, state)) resolved += 1;
+  }
+  return resolved;
+}
+
+function tryRetargetPrefabTarget(
+  track: THREE.KeyframeTrack,
+  propertyPath: string,
+  binding: BodyMotionBinding,
+  target: BodyMotionTarget,
+  state: PrefabRetargetState
+) {
+  if (state.suppressFaceAssemblyBridgeTargets && isFaceAssemblyBridgeMotionTarget(target)) return false;
+  const node = state.nodeByPath.get(target.transformPath);
+  if (!node) return false;
+  const nextTrackName = `${node.uuid}.${propertyPath}`;
+  if (state.emittedTargets.has(nextTrackName)) {
+    state.debug.duplicateTargetTrackCount += 1;
+    return false;
+  }
+  const retargetedTrack = retargetTrackWithBindSpace(track, nextTrackName, propertyPath, binding, target);
+  if (!retargetedTrack) return false;
+  state.emittedTargets.add(nextTrackName);
+  state.tracks.push(retargetedTrack);
+  recordResolvedPrefabTarget(target, state);
+  return true;
+}
+
+function recordResolvedPrefabTarget(target: BodyMotionTarget, state: PrefabRetargetState) {
+  if (target.poseRoot === "body") state.resolvedBodyTargetPaths.add(target.transformPath);
+  if (target.poseRoot === "face") state.resolvedFaceTargetPaths.add(target.transformPath);
+  if (
+    state.sampleResolvedHeadTargets.size < 16 &&
+    /(?:^|\/)(Position|Hip|Waist|Spine|Chest|Neck|Head)$/.test(target.transformPath)
+  ) {
+    state.sampleResolvedHeadTargets.add(target.transformPath);
+  }
+}
+
+function recordUnresolvedTrack(debug: RuntimeMotionRetargetDebug, trackName: string) {
+  debug.unresolvedTrackCount += 1;
+  if (debug.sampleUnresolvedTracks.length < 16) debug.sampleUnresolvedTracks.push(trackName);
 }

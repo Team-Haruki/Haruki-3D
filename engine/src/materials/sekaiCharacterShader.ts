@@ -1279,56 +1279,10 @@ export function createSekaiFaceMaterial(initial: FaceMaterialUniforms) {
   });
 }
 
-export function updateSekaiFaceMaterial(
+function updateSekaiFaceControllerUniforms(
   material: THREE.ShaderMaterial,
   next: FaceMaterialUniforms
 ) {
-  setSekaiGammaColor(material.uniforms.uBaseColor.value, next.baseColor);
-  setSekaiGammaColor(material.uniforms.uWarmColor.value, next.warmColor);
-  setSekaiGammaColor(material.uniforms.uSkinColorDefault.value, next.skinColorDefault ?? next.baseColor);
-  setSekaiGammaColor(material.uniforms.uSkinColor1.value, next.skinColor1 ?? next.warmColor);
-  setSekaiGammaColor(material.uniforms.uSkinColor2.value, next.skinColor2 ?? next.warmColor);
-  material.uniforms.uMainTex.value = next.mainTex ?? null;
-  material.uniforms.uShadowTex.value = next.shadowTex ?? null;
-  material.uniforms.uValueTex.value = next.valueTex ?? null;
-  material.uniforms.uFaceShadowTex.value = next.faceShadowTex ?? null;
-  material.uniforms.uMainTexTransform.value = textureUvMatrix(next.mainTex);
-  material.uniforms.uUseMainTex.value = next.mainTex ? 1.0 : 0.0;
-  material.uniforms.uUseShadowTex.value = next.shadowTex ? 1.0 : 0.0;
-  material.uniforms.uHasValueTex.value = next.valueTex ? 1.0 : 0.0;
-  material.uniforms.uUseValueTex.value = (next.useValueTex ?? Boolean(next.valueTex)) ? 1.0 : 0.0;
-  material.uniforms.uUseFaceShadowTex.value = next.faceShadowTex ? 1.0 : 0.0;
-  material.uniforms.uLightDirection.value.copy(
-    next.lightDirection.clone().normalize()
-  );
-  updateSekaiFaceShadowParameters(
-    material,
-    next.lightDirection,
-    next.headDotDirectionalLight ?? material.uniforms.uHeadDotDirectionalLight?.value,
-    next.useFaceShadowLimiter,
-    next.faceShadowLimitRange
-  );
-  material.uniforms.uLightIntensity.value = next.lightIntensity;
-  material.uniforms.uAmbientIntensity.value = next.ambientIntensity;
-  material.uniforms.uShadowThreshold.value = next.shadowThreshold ?? material.uniforms.uShadowThreshold.value;
-  material.uniforms.uShadowWeight.value = next.shadowWeight ?? material.uniforms.uShadowWeight.value;
-  material.uniforms.uShadowWidth.value = next.shadowWidth ?? material.uniforms.uShadowWidth.value;
-  material.uniforms.uFadeMode.value = next.fadeMode ?? material.uniforms.uFadeMode.value;
-  material.uniforms.uUseLambert.value = next.useLambert === false ? 0.0 : 1.0;
-  material.uniforms.uShadowTexWeight.value = next.shadowTexWeight ?? material.uniforms.uShadowTexWeight.value;
-  material.uniforms.uHueSinAngle.value =
-    next.hueSinAngle ?? material.uniforms.uHueSinAngle.value;
-  material.uniforms.uHueCosAngle.value =
-    next.hueCosAngle ?? material.uniforms.uHueCosAngle.value;
-  material.uniforms.uSaturation.value =
-    next.saturation ?? material.uniforms.uSaturation.value;
-  material.uniforms.uValue.value =
-    next.value ?? material.uniforms.uValue.value;
-  material.uniforms.uContrast.value =
-    next.contrast ?? material.uniforms.uContrast.value;
-  setSekaiGammaColor(material.uniforms.uPartsAmbientColor.value, next.partsAmbientColor ?? "#ffffff");
-  material.uniforms.uPartsAmbientAlpha.value =
-    next.partsAmbientAlpha ?? material.uniforms.uPartsAmbientAlpha.value;
   if (next.controllerAmbientColor !== undefined) {
     setSekaiGammaColor(material.uniforms.uControllerAmbientColor.value, next.controllerAmbientColor);
   }
@@ -1394,12 +1348,64 @@ export function updateSekaiFaceMaterial(
     next.globalShadowAlpha ?? material.uniforms.uGlobalShadowAlpha.value;
   material.uniforms.uAlphaCutoff.value =
     next.alphaCutoff ?? material.uniforms.uAlphaCutoff.value;
+}
+
+function updateSekaiFaceDebugUniforms(
+  material: THREE.ShaderMaterial,
+  next: FaceMaterialUniforms
+) {
   if (next.faceDebugMode !== undefined) {
     material.uniforms.uFaceDebugMode.value = next.faceDebugMode;
   }
   if (material.uniforms.uFaceSdfEnabled) {
     material.uniforms.uFaceSdfEnabled.value = next.faceSdfEnabled && next.faceShadowTex ? 1.0 : 0.0;
   }
+}
+
+export function updateSekaiFaceMaterial(
+  material: THREE.ShaderMaterial,
+  next: FaceMaterialUniforms
+) {
+  setSekaiGammaColor(material.uniforms.uBaseColor.value, next.baseColor);
+  setSekaiGammaColor(material.uniforms.uWarmColor.value, next.warmColor);
+  setSekaiGammaColor(material.uniforms.uSkinColorDefault.value, next.skinColorDefault ?? next.baseColor);
+  setSekaiGammaColor(material.uniforms.uSkinColor1.value, next.skinColor1 ?? next.warmColor);
+  setSekaiGammaColor(material.uniforms.uSkinColor2.value, next.skinColor2 ?? next.warmColor);
+  material.uniforms.uMainTex.value = next.mainTex ?? null;
+  material.uniforms.uShadowTex.value = next.shadowTex ?? null;
+  material.uniforms.uValueTex.value = next.valueTex ?? null;
+  material.uniforms.uFaceShadowTex.value = next.faceShadowTex ?? null;
+  material.uniforms.uMainTexTransform.value = textureUvMatrix(next.mainTex);
+  material.uniforms.uUseMainTex.value = next.mainTex ? 1.0 : 0.0;
+  material.uniforms.uUseShadowTex.value = next.shadowTex ? 1.0 : 0.0;
+  material.uniforms.uHasValueTex.value = next.valueTex ? 1.0 : 0.0;
+  material.uniforms.uUseValueTex.value = (next.useValueTex ?? Boolean(next.valueTex)) ? 1.0 : 0.0;
+  material.uniforms.uUseFaceShadowTex.value = next.faceShadowTex ? 1.0 : 0.0;
+  material.uniforms.uLightDirection.value.copy(next.lightDirection.clone().normalize());
+  updateSekaiFaceShadowParameters(
+    material,
+    next.lightDirection,
+    next.headDotDirectionalLight ?? material.uniforms.uHeadDotDirectionalLight?.value,
+    next.useFaceShadowLimiter,
+    next.faceShadowLimitRange
+  );
+  material.uniforms.uLightIntensity.value = next.lightIntensity;
+  material.uniforms.uAmbientIntensity.value = next.ambientIntensity;
+  material.uniforms.uShadowThreshold.value = next.shadowThreshold ?? material.uniforms.uShadowThreshold.value;
+  material.uniforms.uShadowWeight.value = next.shadowWeight ?? material.uniforms.uShadowWeight.value;
+  material.uniforms.uShadowWidth.value = next.shadowWidth ?? material.uniforms.uShadowWidth.value;
+  material.uniforms.uFadeMode.value = next.fadeMode ?? material.uniforms.uFadeMode.value;
+  material.uniforms.uUseLambert.value = next.useLambert === false ? 0.0 : 1.0;
+  material.uniforms.uShadowTexWeight.value = next.shadowTexWeight ?? material.uniforms.uShadowTexWeight.value;
+  material.uniforms.uHueSinAngle.value = next.hueSinAngle ?? material.uniforms.uHueSinAngle.value;
+  material.uniforms.uHueCosAngle.value = next.hueCosAngle ?? material.uniforms.uHueCosAngle.value;
+  material.uniforms.uSaturation.value = next.saturation ?? material.uniforms.uSaturation.value;
+  material.uniforms.uValue.value = next.value ?? material.uniforms.uValue.value;
+  material.uniforms.uContrast.value = next.contrast ?? material.uniforms.uContrast.value;
+  setSekaiGammaColor(material.uniforms.uPartsAmbientColor.value, next.partsAmbientColor ?? "#ffffff");
+  material.uniforms.uPartsAmbientAlpha.value = next.partsAmbientAlpha ?? material.uniforms.uPartsAmbientAlpha.value;
+  updateSekaiFaceControllerUniforms(material, next);
+  updateSekaiFaceDebugUniforms(material, next);
 }
 
 export function updateSekaiFaceShadowParameters(
@@ -1452,17 +1458,46 @@ export type SekaiLayerOptions = {
   strictAlpha?: boolean | null;
 };
 
+function uniformFlag(value: unknown) {
+  return value ? 1.0 : 0.0;
+}
+
+function resolveSekaiLayerMode(mode: SekaiLayerMode) {
+  const isAdditive = mode === "add" || mode === "eyelight";
+  const isEyelight = mode === "eyelight";
+  return {
+    defaultDistortion: isEyelight ? 1.0 : 0.0,
+    uniformMode: mode === "eye" ? 1.0 : isEyelight ? 2.0 : 0.0,
+    materialSettings: {
+      blending: isAdditive ? THREE.CustomBlending : THREE.NormalBlending,
+      ...(isAdditive ? {
+        blendSrc: THREE.SrcAlphaFactor,
+        blendDst: THREE.OneFactor,
+        blendEquation: THREE.AddEquation,
+      } : {}),
+      polygonOffsetFactor: isEyelight ? -0.5 : -1,
+      polygonOffsetUnits: isEyelight ? -0.5 : -1,
+    },
+  };
+}
+
+function resolveSekaiLayerAtlas(atlas?: SekaiLayerAtlas | null) {
+  return {
+    tileX: atlas && atlas.tileX > 0 ? atlas.tileX : 1,
+    tileY: atlas && atlas.tileY > 0 ? atlas.tileY : 1,
+    sample: Math.max(0, atlas?.sample ?? 0),
+  };
+}
+
 export function createSekaiLayerMaterial(
   texture: THREE.Texture | null,
   mode: SekaiLayerMode = "alpha",
   atlas?: SekaiLayerAtlas | null,
   options?: SekaiLayerOptions
 ) {
-  const isAdditive = mode === "add" || mode === "eyelight";
-  const isEyelight = mode === "eyelight";
-  const atlasTileX = atlas && atlas.tileX > 0 ? atlas.tileX : 1;
-  const atlasTileY = atlas && atlas.tileY > 0 ? atlas.tileY : 1;
-  const atlasSample = Math.max(0, atlas?.sample ?? 0);
+  const { defaultDistortion, uniformMode, materialSettings } =
+    resolveSekaiLayerMode(mode);
+  const resolvedAtlas = resolveSekaiLayerAtlas(atlas);
   const useVertexBViewOffset = (options?.vertexBViewOffset ?? 0.0) > 0.0;
   const material = new THREE.ShaderMaterial({
     transparent: true,
@@ -1471,35 +1506,28 @@ export function createSekaiLayerMaterial(
     depthFunc: THREE.LessEqualDepth,
     side: THREE.DoubleSide,
     vertexColors: useVertexBViewOffset,
-    blending: isAdditive ? THREE.CustomBlending : THREE.NormalBlending,
-    ...(isAdditive ? {
-      blendSrc: THREE.SrcAlphaFactor,
-      blendDst: THREE.OneFactor,
-      blendEquation: THREE.AddEquation,
-    } : {}),
+    ...materialSettings,
     polygonOffset: true,
-    polygonOffsetFactor: isEyelight ? -0.5 : -1,
-    polygonOffsetUnits: isEyelight ? -0.5 : -1,
     uniforms: {
       uMainTex: { value: texture },
       uMainTexTransform: { value: textureUvMatrix(texture) },
-      uUseMainTex: { value: texture ? 1.0 : 0.0 },
-      uMode: { value: mode === "eye" ? 1.0 : isEyelight ? 2.0 : 0.0 },
+      uUseMainTex: { value: uniformFlag(texture) },
+      uMode: { value: uniformMode },
       uTintColor: { value: sekaiGammaColor(options?.tintColor ?? "#ffffff") },
       uEmissionColor: { value: sekaiGammaColor(options?.emissionColor ?? "#000000") },
-      uAtlasTile: { value: new THREE.Vector2(atlasTileX, atlasTileY) },
-      uAtlasSample: { value: atlasSample },
+      uAtlasTile: { value: new THREE.Vector2(resolvedAtlas.tileX, resolvedAtlas.tileY) },
+      uAtlasSample: { value: resolvedAtlas.sample },
       uUseAtlas: { value: 0.0 },
       uTime: { value: 0.0 },
       uLightInfluence: { value: THREE.MathUtils.clamp(options?.lightInfluence ?? 1.0, 0.0, 1.0) },
       uHighlightInfluence: { value: THREE.MathUtils.clamp(options?.highlightInfluence ?? 1.0, 0.0, 1.0) },
       uVertexBViewOffset: { value: Math.max(0.0, options?.vertexBViewOffset ?? 0.0) },
       uDistortionFps: { value: Math.max(1.0, options?.distortionFps ?? 12.0) },
-      uDistortionIntensity: { value: Math.max(0.0, options?.distortionIntensity ?? (isEyelight ? 1.0 : 0.0)) },
+      uDistortionIntensity: { value: Math.max(0.0, options?.distortionIntensity ?? defaultDistortion) },
       uDistortionIntensityXY: {
         value: new THREE.Vector2(
-          Math.max(0.0, options?.distortionIntensityX ?? (isEyelight ? 1.0 : 0.0)),
-          Math.max(0.0, options?.distortionIntensityY ?? (isEyelight ? 1.0 : 0.0))
+          Math.max(0.0, options?.distortionIntensityX ?? defaultDistortion),
+          Math.max(0.0, options?.distortionIntensityY ?? defaultDistortion)
         ),
       },
       uDistortionOffset: {
@@ -1518,7 +1546,7 @@ export function createSekaiLayerMaterial(
       uThreshold: { value: THREE.MathUtils.clamp(options?.threshold ?? 0.5, 0.0, 1.0) },
       uAlphaScale: { value: THREE.MathUtils.clamp(options?.alphaScale ?? 1.0, 0.0, 1.0) },
       uAlphaCutoff: { value: THREE.MathUtils.clamp(options?.alphaCutoff ?? 0.001, 0.0, 1.0) },
-      uStrictAlpha: { value: options?.strictAlpha ? 1.0 : 0.0 },
+      uStrictAlpha: { value: uniformFlag(options?.strictAlpha) },
       // 0: texture alpha, 1: SekaiEyelash opaque source, 2: SekaiEyelash highlight red.
       uAlphaSource: { value: 0.0 },
     },

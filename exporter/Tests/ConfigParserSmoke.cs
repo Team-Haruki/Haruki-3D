@@ -1946,7 +1946,7 @@ Expect(
     "default-hair master remains a fallback hint"
 );
 var registryOutput = Path.Combine(tempDir, "registry-output");
-new CostumeRegistryExporter().Export(
+CostumeRegistryExporter.Export(
     registryMasterDir,
     registryAssetRoot,
     registryOutput

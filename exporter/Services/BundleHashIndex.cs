@@ -4,7 +4,7 @@ namespace PjskBundle2Parts.Services;
 
 public sealed class BundleHashIndex
 {
-    private readonly IReadOnlyDictionary<string, byte[]> hashes;
+    private readonly Dictionary<string, byte[]> hashes;
 
     public BundleHashIndex(string? path)
     {

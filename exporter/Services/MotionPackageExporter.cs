@@ -297,11 +297,7 @@ public sealed class MotionPackageExporter
             .SelectMany(file => file.Objects)
             .OfType<AnimationClip>()
             .Where(IsSupportedMotionClip)
-            .OrderBy(clip => clip.m_Name is "motion" ? 0
-                : clip.m_Name is "motion_loop" ? 1
-                : clip.m_Name is "face" ? 2
-                : clip.m_Name is "face_loop" ? 3
-                : 4)
+            .OrderBy(MotionClipSortOrder)
             .ToList();
 
         if (clips.Count == 0)
@@ -312,16 +308,43 @@ public sealed class MotionPackageExporter
         var decodedClips = new List<DecodedUnityClip>();
         foreach (var clip in clips)
         {
-            try
+            var decoded = TryDecodeUnityClip(clip);
+            if (decoded is not null)
             {
-                decodedClips.Add(DecodeUnityClip(clip));
-            }
-            catch (InvalidDataException ex)
-            {
-                Console.Error.WriteLine($"[Motion] Skipping AnimationClip {clip.m_Name}: {ex.Message}");
+                decodedClips.Add(decoded);
             }
         }
         return decodedClips;
+    }
+
+    private static int MotionClipSortOrder(AnimationClip clip)
+    {
+        return MotionClipSortOrder(clip.m_Name);
+    }
+
+    private static int MotionClipSortOrder(string clipName)
+    {
+        return clipName switch
+        {
+            "motion" => 0,
+            "motion_loop" => 1,
+            "face" => 2,
+            "face_loop" => 3,
+            _ => 4,
+        };
+    }
+
+    private static DecodedUnityClip? TryDecodeUnityClip(AnimationClip clip)
+    {
+        try
+        {
+            return DecodeUnityClip(clip);
+        }
+        catch (InvalidDataException ex)
+        {
+            Console.Error.WriteLine($"[Motion] Skipping AnimationClip {clip.m_Name}: {ex.Message}");
+            return null;
+        }
     }
 
     private static List<DecodedUnityClip> ReadDecodedClipsFromFolder(string motionFolder)
@@ -338,31 +361,34 @@ public sealed class MotionPackageExporter
                 continue;
             }
 
-            try
+            var clip = TryReadDecodedClip(file);
+            if (clip is not null)
             {
-                var clip = JsonSerializer.Deserialize<DecodedUnityClip>(
-                    File.ReadAllText(file),
-                    JsonOptions
-                );
-                if (clip?.Curves is { Count: > 0 })
-                {
-                    result.Add(clip);
-                }
-            }
-            catch (JsonException)
-            {
-                // Ignore unrelated JSON files in updater output folders.
+                result.Add(clip);
             }
         }
 
         return result
-            .OrderBy(clip => clip.Name is "motion" ? 0
-                : clip.Name is "motion_loop" ? 1
-                : clip.Name is "face" ? 2
-                : clip.Name is "face_loop" ? 3
-                : 4)
+            .OrderBy(clip => MotionClipSortOrder(clip.Name))
             .ThenBy(clip => clip.Name, StringComparer.Ordinal)
             .ToList();
+    }
+
+    private static DecodedUnityClip? TryReadDecodedClip(string file)
+    {
+        try
+        {
+            var clip = JsonSerializer.Deserialize<DecodedUnityClip>(
+                File.ReadAllText(file),
+                JsonOptions
+            );
+            return clip?.Curves is { Count: > 0 } ? clip : null;
+        }
+        catch (JsonException)
+        {
+            // Ignore unrelated JSON files in updater output folders.
+            return null;
+        }
     }
 
     private static DecodedUnityClip[] ReadDecodedClipsFromJsonFile(string file)
@@ -744,60 +770,75 @@ public sealed class MotionPackageExporter
 
         foreach (var curve in source.Curves)
         {
-            if (curve.Binding.TypeId != ClassIDType.Transform)
+            var track = TryBakeBodyTrack(source, curve, crcToBinding, usedTargets, fullTimes);
+            if (track is not null)
             {
-                continue;
+                tracks.Add(track);
             }
-            if (!crcToBinding.TryGetValue(curve.Binding.Path, out var binding))
-            {
-                Console.Error.WriteLine($"[Motion] {source.Name}: unbound transform CRC {curve.Binding.Path}");
-                continue;
-            }
-
-            var targetPath = curve.Binding.Attribute switch
-            {
-                1 => "translation",
-                2 or 4 => "rotation",
-                3 => "scale",
-                _ => null,
-            };
-            if (targetPath is null)
-            {
-                continue;
-            }
-
-            var targetKey = $"{binding.NodeKey}.{targetPath}";
-            if (!usedTargets.Add(targetKey))
-            {
-                Console.Error.WriteLine($"[Motion] {source.Name}: duplicate track target {targetKey}, keeping first track.");
-                continue;
-            }
-
-            var componentCount = targetPath == "rotation" ? 4 : 3;
-            var values = new List<float>(fullTimes.Count * componentCount);
-            foreach (var time in fullTimes)
-            {
-                values.AddRange(ConvertUnityPrefabCurveValue(curve.Binding.Attribute, SampleCurve(curve, time)));
-            }
-
-            var trackTimes = fullTimes;
-            if (CanCollapseTrack(values, componentCount))
-            {
-                trackTimes = new List<float> { 0f, source.Duration };
-                values = values.Take(componentCount).Concat(values.Take(componentCount)).ToList();
-            }
-
-            tracks.Add(new BakedAnimationTrack(
-                NodeName: binding.NodeKey,
-                PathCrc: binding.PathCrc,
-                TargetPath: targetPath,
-                ComponentCount: componentCount,
-                Times: trackTimes,
-                Values: values
-            ));
         }
 
         return new BakedAnimationClip(source.Name, tracks);
+    }
+
+    private static BakedAnimationTrack? TryBakeBodyTrack(
+        DecodedUnityClip source,
+        UnityCurve curve,
+        IReadOnlyDictionary<uint, BodyMotionBindingDraft> crcToBinding,
+        HashSet<string> usedTargets,
+        List<float> fullTimes
+    )
+    {
+        if (curve.Binding.TypeId != ClassIDType.Transform)
+        {
+            return null;
+        }
+        if (!crcToBinding.TryGetValue(curve.Binding.Path, out var binding))
+        {
+            Console.Error.WriteLine($"[Motion] {source.Name}: unbound transform CRC {curve.Binding.Path}");
+            return null;
+        }
+
+        var targetPath = curve.Binding.Attribute switch
+        {
+            1 => "translation",
+            2 or 4 => "rotation",
+            3 => "scale",
+            _ => null,
+        };
+        if (targetPath is null)
+        {
+            return null;
+        }
+
+        var targetKey = $"{binding.NodeKey}.{targetPath}";
+        if (!usedTargets.Add(targetKey))
+        {
+            Console.Error.WriteLine($"[Motion] {source.Name}: duplicate track target {targetKey}, keeping first track.");
+            return null;
+        }
+
+        var componentCount = targetPath == "rotation" ? 4 : 3;
+        var values = new List<float>(fullTimes.Count * componentCount);
+        foreach (var time in fullTimes)
+        {
+            values.AddRange(ConvertUnityPrefabCurveValue(curve.Binding.Attribute, SampleCurve(curve, time)));
+        }
+
+        var trackTimes = fullTimes;
+        if (CanCollapseTrack(values, componentCount))
+        {
+            trackTimes = new List<float> { 0f, source.Duration };
+            values = values.Take(componentCount).Concat(values.Take(componentCount)).ToList();
+        }
+
+        return new BakedAnimationTrack(
+            NodeName: binding.NodeKey,
+            PathCrc: binding.PathCrc,
+            TargetPath: targetPath,
+            ComponentCount: componentCount,
+            Times: trackTimes,
+            Values: values
+        );
     }
 
     private static string BuildBodyMotionNodeKey(uint pathCrc)

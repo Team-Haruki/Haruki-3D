@@ -55,27 +55,7 @@ public sealed class CompiledPartCache
     )
     {
         result = null;
-        var cachePath = EntryPath(Fingerprint(entry, input, BundleLoadDependencyMode.Default));
-        if (!File.Exists(cachePath))
-        {
-            return false;
-        }
-        var cached = JsonSerializer.Deserialize<CompiledPartCacheEntry>(File.ReadAllText(cachePath));
-        if (cached is null || cached.Schema != Schema)
-        {
-            return false;
-        }
-        if (!string.Equals(
-                cached.InputFingerprint,
-                Fingerprint(entry, input, cached.DependencyMode),
-                StringComparison.Ordinal
-            ))
-        {
-            return false;
-        }
-        var coreObject = ObjectPath(cached.CoreHash);
-        var deltaObject = ObjectPath(cached.DeltaHash);
-        if (!File.Exists(coreObject) || !File.Exists(deltaObject))
+        if (!TryReadEntry(entry, input, out var cached, out var coreObject, out var deltaObject))
         {
             return false;
         }
@@ -111,24 +91,10 @@ public sealed class CompiledPartCache
             RuntimeJsonWriter.MessagePackBrotliPath(corePath),
             temporaryPath => File.Copy(coreObject, temporaryPath)
         );
-        foreach (var hash in restoredKtx2 ? Array.Empty<string>() : cached.TextureHashes)
-        {
-            var target = Path.Combine(
-                outputDirectory,
-                "_texture_store",
-                "sha256",
-                hash[..2],
-                hash + ".png"
-            );
-            if (!File.Exists(target))
-            {
-                ContentAddressedFile.Ensure(
-                    target,
-                    hash,
-                    temporaryPath => File.Copy(SharedTexturePath(hash), temporaryPath)
-                );
-            }
-        }
+        RestoreTextures(
+            outputDirectory,
+            restoredKtx2 ? Array.Empty<string>() : cached.TextureHashes
+        );
 
         delta["version"] = "0415-part-delta-3";
         delta["corePath"] = coreRelativePath;
@@ -174,6 +140,65 @@ public sealed class CompiledPartCache
             TextureHashes: cached.TextureHashes
         );
         return true;
+    }
+
+    private bool TryReadEntry(
+        PartRegistryEntry entry,
+        ResolvedBundleInput input,
+        out CompiledPartCacheEntry cached,
+        out string coreObject,
+        out string deltaObject
+    )
+    {
+        var cachePath = EntryPath(Fingerprint(entry, input, BundleLoadDependencyMode.Default));
+        cached = null!;
+        coreObject = string.Empty;
+        deltaObject = string.Empty;
+        if (!File.Exists(cachePath))
+        {
+            return false;
+        }
+        cached = JsonSerializer.Deserialize<CompiledPartCacheEntry>(File.ReadAllText(cachePath))!;
+        if (cached is null || cached.Schema != Schema)
+        {
+            return false;
+        }
+        if (!string.Equals(
+                cached.InputFingerprint,
+                Fingerprint(entry, input, cached.DependencyMode),
+                StringComparison.Ordinal
+            ))
+        {
+            return false;
+        }
+        coreObject = ObjectPath(cached.CoreHash);
+        deltaObject = ObjectPath(cached.DeltaHash);
+        return File.Exists(coreObject) && File.Exists(deltaObject);
+    }
+
+    private void RestoreTextures(
+        string outputDirectory,
+        IReadOnlyList<string> textureHashes
+    )
+    {
+        foreach (var hash in textureHashes)
+        {
+            var target = Path.Combine(
+                outputDirectory,
+                "_texture_store",
+                "sha256",
+                hash[..2],
+                hash + ".png"
+            );
+            if (!File.Exists(target))
+            {
+                ContentAddressedFile.Ensure(
+                    target,
+                    hash,
+                    temporaryPath => File.Copy(SharedTexturePath(hash), temporaryPath)
+                );
+            }
+        }
     }
 
     public void Store(

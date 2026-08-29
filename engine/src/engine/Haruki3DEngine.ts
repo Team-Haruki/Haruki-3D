@@ -2420,110 +2420,112 @@ export class Haruki3DEngine {
     });
 
     for (const mesh of targets) {
-      const sourceMaterialKinds = getOutlineSourceMaterialKinds(mesh);
-      if (shouldSkipOutlineMaterialKinds(sourceMaterialKinds)) {
-        continue;
-      }
-      const sourceMaterialKind = chooseOutlineSourceMaterialKind(sourceMaterialKinds);
-
-      const vertexColorRedMax = getVertexColorRedMax(mesh.geometry);
-      if (vertexColorRedMax === null || vertexColorRedMax <= 0.01) {
-        continue;
-      }
-
-      const meshMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      const sourceMaterialNames = meshMaterials.map((material) => material.name);
-      const outlineMaterials = meshMaterials.map((sourceMaterial) => {
-        const dedicatedOutlineSource =
-          sourceMaterial.userData.pjskOutlineSourceMaterial instanceof THREE.ShaderMaterial
-            ? sourceMaterial.userData.pjskOutlineSourceMaterial
-            : null;
-        delete sourceMaterial.userData.pjskOutlineSourceMaterial;
-        if (isOutlineExcludedMaterialKind(sourceMaterial.userData.pjskMaterialKind)) {
-          dedicatedOutlineSource?.dispose();
-          const skipped = new THREE.MeshBasicMaterial();
-          skipped.name = "pjsk_shell_outline_skipped";
-          skipped.visible = false;
-          return skipped;
-        }
-        const rawMaterial = sourceMaterial.userData.pjskRawMaterial as
-          | RawMaterialProperties
-          | undefined;
-        if (!isSekaiOutlinePassEnabled(rawMaterial)) {
-          dedicatedOutlineSource?.dispose();
-          const skipped = new THREE.MeshBasicMaterial();
-          skipped.name = "pjsk_shell_outline_disabled";
-          skipped.visible = false;
-          return skipped;
-        }
-        const lighting = sourceMaterial.userData.pjskLighting as
-          | MaterialLightingSettings
-          | undefined;
-        const useSecondNormal =
-          (lighting?.useOutlineSecondNormal ?? 0) > 0.5 &&
-          Boolean(mesh.geometry.getAttribute("tangent")) &&
-          Boolean(mesh.geometry.getAttribute("uv1")) &&
-          Boolean(mesh.geometry.getAttribute("uv2"));
-        const outlineMaterial = createSekaiOutlineMaterial(
-          Boolean(mesh.geometry.getAttribute("color")),
-          rawMaterial,
-          useSecondNormal,
-          extractSekaiOutlineMainTexture(sourceMaterial),
-          dedicatedOutlineSource ?? sourceMaterial
-        );
-        outlineMaterial.userData.pjskOutlineUseSecondNormal = useSecondNormal;
-        outlineMaterial.userData.pjskOutlineWantsSecondNormal =
-          (lighting?.useOutlineSecondNormal ?? 0) > 0.5;
-        dedicatedOutlineSource?.dispose();
-        this.characterLighting.applyOutlineMaterial(outlineMaterial);
-        return outlineMaterial;
-      });
-      if (!outlineMaterials.some((material) => material.visible)) {
-        for (const material of outlineMaterials) {
-          material.dispose();
-        }
-        continue;
-      }
-      const outlineMaterial = Array.isArray(mesh.material)
-        ? outlineMaterials
-        : outlineMaterials[0];
-      const outline = mesh instanceof THREE.SkinnedMesh
-        ? new THREE.SkinnedMesh(mesh.geometry, outlineMaterial)
-        : new THREE.Mesh(mesh.geometry, outlineMaterial);
-      outline.name = `${mesh.name}_outline`;
-      outline.renderOrder = Math.max(mesh.renderOrder - 2, 0);
-      outline.frustumCulled = mesh.frustumCulled;
-      outline.userData.pjskOutlineShell = true;
-      outline.userData.pjskSourceMaterialKind = sourceMaterialKind;
-      outline.matrixAutoUpdate = mesh.matrixAutoUpdate;
-      outline.position.copy(mesh.position);
-      outline.quaternion.copy(mesh.quaternion);
-      outline.scale.copy(mesh.scale);
-      if (outline instanceof THREE.SkinnedMesh && mesh instanceof THREE.SkinnedMesh) {
-        outline.bind(mesh.skeleton, mesh.bindMatrix);
-      }
-      this.runtimeDebug.outlineShells.push({
-        meshName: mesh.name,
-        outlineName: outline.name,
-        sourceMaterialKind,
-        sourceMaterialKinds,
-        sourceMaterialNames,
-        hasVertexColor: Boolean(mesh.geometry.getAttribute("color")),
-        vertexColorRedMax,
-        renderOrder: outline.renderOrder,
-        sourceRenderOrder: mesh.renderOrder,
-        hasTangent: Boolean(mesh.geometry.getAttribute("tangent")),
-        hasUv1: Boolean(mesh.geometry.getAttribute("uv1")),
-        hasUv2: Boolean(mesh.geometry.getAttribute("uv2")),
-        useSecondNormal: outlineMaterials.map(
-          (material) => material.userData.pjskOutlineUseSecondNormal === true
-        ),
-        wantsSecondNormal: outlineMaterials.map(
-          (material) => material.userData.pjskOutlineWantsSecondNormal === true
-        ),
-      });
-      mesh.parent?.add(outline);
+      this.installSekaiOutlineShell(mesh);
     }
+  }
+
+  private installSekaiOutlineShell(mesh: THREE.Mesh) {
+    const sourceMaterialKinds = getOutlineSourceMaterialKinds(mesh);
+    if (shouldSkipOutlineMaterialKinds(sourceMaterialKinds)) return;
+
+    const vertexColorRedMax = getVertexColorRedMax(mesh.geometry);
+    if (vertexColorRedMax === null || vertexColorRedMax <= 0.01) return;
+
+    const meshMaterials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    const outlineMaterials = this.createSekaiOutlineMaterials(mesh, meshMaterials);
+    if (!outlineMaterials.some((material) => material.visible)) {
+      for (const material of outlineMaterials) material.dispose();
+      return;
+    }
+
+    const sourceMaterialKind = chooseOutlineSourceMaterialKind(sourceMaterialKinds);
+    const outlineMaterial = Array.isArray(mesh.material) ? outlineMaterials : outlineMaterials[0];
+    const outline = mesh instanceof THREE.SkinnedMesh
+      ? new THREE.SkinnedMesh(mesh.geometry, outlineMaterial)
+      : new THREE.Mesh(mesh.geometry, outlineMaterial);
+    outline.name = `${mesh.name}_outline`;
+    outline.renderOrder = Math.max(mesh.renderOrder - 2, 0);
+    outline.frustumCulled = mesh.frustumCulled;
+    outline.userData.pjskOutlineShell = true;
+    outline.userData.pjskSourceMaterialKind = sourceMaterialKind;
+    outline.matrixAutoUpdate = mesh.matrixAutoUpdate;
+    outline.position.copy(mesh.position);
+    outline.quaternion.copy(mesh.quaternion);
+    outline.scale.copy(mesh.scale);
+    if (outline instanceof THREE.SkinnedMesh && mesh instanceof THREE.SkinnedMesh) {
+      outline.bind(mesh.skeleton, mesh.bindMatrix);
+    }
+    this.runtimeDebug.outlineShells.push({
+      meshName: mesh.name,
+      outlineName: outline.name,
+      sourceMaterialKind,
+      sourceMaterialKinds,
+      sourceMaterialNames: meshMaterials.map((material) => material.name),
+      hasVertexColor: Boolean(mesh.geometry.getAttribute("color")),
+      vertexColorRedMax,
+      renderOrder: outline.renderOrder,
+      sourceRenderOrder: mesh.renderOrder,
+      hasTangent: Boolean(mesh.geometry.getAttribute("tangent")),
+      hasUv1: Boolean(mesh.geometry.getAttribute("uv1")),
+      hasUv2: Boolean(mesh.geometry.getAttribute("uv2")),
+      useSecondNormal: outlineMaterials.map(
+        (material) => material.userData.pjskOutlineUseSecondNormal === true
+      ),
+      wantsSecondNormal: outlineMaterials.map(
+        (material) => material.userData.pjskOutlineWantsSecondNormal === true
+      ),
+    });
+    mesh.parent?.add(outline);
+  }
+
+  private createSekaiOutlineMaterials(
+    mesh: THREE.Mesh,
+    meshMaterials: THREE.Material[]
+  ) {
+    return meshMaterials.map((sourceMaterial) => {
+      const dedicatedOutlineSource =
+        sourceMaterial.userData.pjskOutlineSourceMaterial instanceof THREE.ShaderMaterial
+          ? sourceMaterial.userData.pjskOutlineSourceMaterial
+          : null;
+      delete sourceMaterial.userData.pjskOutlineSourceMaterial;
+      if (isOutlineExcludedMaterialKind(sourceMaterial.userData.pjskMaterialKind)) {
+        dedicatedOutlineSource?.dispose();
+        const skipped = new THREE.MeshBasicMaterial();
+        skipped.name = "pjsk_shell_outline_skipped";
+        skipped.visible = false;
+        return skipped;
+      }
+      const rawMaterial = sourceMaterial.userData.pjskRawMaterial as
+        | RawMaterialProperties
+        | undefined;
+      if (!isSekaiOutlinePassEnabled(rawMaterial)) {
+        dedicatedOutlineSource?.dispose();
+        const skipped = new THREE.MeshBasicMaterial();
+        skipped.name = "pjsk_shell_outline_disabled";
+        skipped.visible = false;
+        return skipped;
+      }
+      const lighting = sourceMaterial.userData.pjskLighting as
+        | MaterialLightingSettings
+        | undefined;
+      const wantsSecondNormal = (lighting?.useOutlineSecondNormal ?? 0) > 0.5;
+      const useSecondNormal = wantsSecondNormal &&
+        Boolean(mesh.geometry.getAttribute("tangent")) &&
+        Boolean(mesh.geometry.getAttribute("uv1")) &&
+        Boolean(mesh.geometry.getAttribute("uv2"));
+      const outlineMaterial = createSekaiOutlineMaterial(
+        Boolean(mesh.geometry.getAttribute("color")),
+        rawMaterial,
+        useSecondNormal,
+        extractSekaiOutlineMainTexture(sourceMaterial),
+        dedicatedOutlineSource ?? sourceMaterial
+      );
+      outlineMaterial.userData.pjskOutlineUseSecondNormal = useSecondNormal;
+      outlineMaterial.userData.pjskOutlineWantsSecondNormal = wantsSecondNormal;
+      dedicatedOutlineSource?.dispose();
+      this.characterLighting.applyOutlineMaterial(outlineMaterial);
+      return outlineMaterial;
+    });
   }
 
   private async overrideBodyMaterials(

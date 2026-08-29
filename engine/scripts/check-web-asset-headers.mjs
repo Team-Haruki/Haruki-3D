@@ -19,20 +19,14 @@ function hasRevalidation(headers) {
   return /(?:^|,)\s*(?:no-cache|no-store|must-revalidate|max-age=0)(?:\s*,|$)/i.test(value);
 }
 
-export function validateAssetHeaders(rawUrl, headers, webOrigin = null) {
-  const url = new URL(rawUrl);
-  const pathname = url.pathname.toLowerCase();
-  const type = contentType(headers);
-  const errors = [];
+function classifyAsset(pathname, type, errors) {
   let expectedType = null;
   let asset = true;
-  const roleCatalog = pathname.endsWith("/runtime-role-catalog.msgpack.br");
-
   if (pathname.endsWith(".msgpack.br")) expectedType = "application/msgpack";
   else if (pathname.endsWith(".ktx2")) expectedType = "image/ktx2";
   else if (pathname.endsWith(".wasm")) expectedType = "application/wasm";
   else if (pathname.endsWith(".js") || pathname.endsWith(".mjs")) {
-    if (!new Set(["text/javascript", "application/javascript"]).has(type)) {
+    if (!["text/javascript", "application/javascript"].includes(type)) {
       errors.push(`expected JavaScript Content-Type, received ${type || "<missing>"}`);
     }
   } else if (pathname.endsWith(".html")) {
@@ -41,16 +35,10 @@ export function validateAssetHeaders(rawUrl, headers, webOrigin = null) {
   } else {
     errors.push("unsupported asset extension");
   }
-  if (roleCatalog) {
-    asset = false;
-  }
+  return { expectedType, asset };
+}
 
-  if (expectedType && type !== expectedType) {
-    errors.push(`expected Content-Type ${expectedType}, received ${type || "<missing>"}`);
-  }
-  if (pathname.endsWith(".msgpack.br") && headers.has("content-encoding")) {
-    errors.push("Content-Encoding must be absent for .msgpack.br");
-  }
+function validateCachePolicy(headers, asset, roleCatalog, errors) {
   if (asset && !hasAssetCache(headers)) {
     errors.push(`assets require public max-age=${assetMaxAge} without immutable`);
   }
@@ -59,22 +47,46 @@ export function validateAssetHeaders(rawUrl, headers, webOrigin = null) {
   } else if (!asset && (hasAssetCache(headers) || !hasRevalidation(headers))) {
     errors.push("HTML must be revalidated instead of using the asset cache policy");
   }
+}
 
-  if (webOrigin && new URL(webOrigin).origin !== url.origin) {
-    const expectedOrigin = new URL(webOrigin).origin;
-    const allowOrigin = headers.get("access-control-allow-origin");
-    if (allowOrigin !== "*" && allowOrigin !== expectedOrigin) {
-      errors.push(`cross-origin assets must allow ${expectedOrigin}`);
-    }
-    if (headers.has("x-haruki-file-version")) {
-      const exposed = (headers.get("access-control-expose-headers") ?? "")
-        .split(",")
-        .map(value => value.trim().toLowerCase());
-      if (!exposed.includes("x-haruki-file-version") && !exposed.includes("*")) {
-        errors.push("X-Haruki-File-Version must be exposed to the web origin");
-      }
-    }
+function validateCrossOriginHeaders(url, headers, webOrigin, errors) {
+  if (!webOrigin || new URL(webOrigin).origin === url.origin) return;
+
+  const expectedOrigin = new URL(webOrigin).origin;
+  const allowOrigin = headers.get("access-control-allow-origin");
+  if (allowOrigin !== "*" && allowOrigin !== expectedOrigin) {
+    errors.push(`cross-origin assets must allow ${expectedOrigin}`);
   }
+  if (!headers.has("x-haruki-file-version")) return;
+
+  const exposed = (headers.get("access-control-expose-headers") ?? "")
+    .split(",")
+    .map(value => value.trim().toLowerCase());
+  if (!exposed.includes("x-haruki-file-version") && !exposed.includes("*")) {
+    errors.push("X-Haruki-File-Version must be exposed to the web origin");
+  }
+}
+
+export function validateAssetHeaders(rawUrl, headers, webOrigin = null) {
+  const url = new URL(rawUrl);
+  const pathname = url.pathname.toLowerCase();
+  const type = contentType(headers);
+  const errors = [];
+  const roleCatalog = pathname.endsWith("/runtime-role-catalog.msgpack.br");
+  const classification = classifyAsset(pathname, type, errors);
+  let { asset } = classification;
+  if (roleCatalog) {
+    asset = false;
+  }
+
+  if (classification.expectedType && type !== classification.expectedType) {
+    errors.push(`expected Content-Type ${classification.expectedType}, received ${type || "<missing>"}`);
+  }
+  if (pathname.endsWith(".msgpack.br") && headers.has("content-encoding")) {
+    errors.push("Content-Encoding must be absent for .msgpack.br");
+  }
+  validateCachePolicy(headers, asset, roleCatalog, errors);
+  validateCrossOriginHeaders(url, headers, webOrigin, errors);
   return errors;
 }
 

@@ -134,8 +134,7 @@ if (options.EmitCostumeRegistries)
 {
     try
     {
-        var costumeRegistryExporter = new CostumeRegistryExporter();
-        costumeRegistryExporter.Export(
+        CostumeRegistryExporter.Export(
             options.MasterDirectory!,
             options.AssetRoot!,
             options.OutputDirectory
@@ -409,33 +408,43 @@ static int RunRoleRuntimeWorkers(ConversionOptions options)
     var processes = new List<Process>();
     for (var index = 0; index < workers; index++)
     {
-        var arguments = new List<string>
-        {
-            "--emit-role-runtimes",
-            "--master", options.MasterDirectory!,
-            "--asset-root", options.AssetRoot!,
-            "--out", options.OutputDirectory,
-            "--part-package-process-concurrency", "1",
-            "--assetstudio-log-level", options.AssetStudioLogLevel,
-            "--convert-model-textures", options.ConvertModelTextures.ToString(),
-        };
-        if (!string.IsNullOrWhiteSpace(options.MotionPath))
-        {
-            arguments.Add("--motion");
-            arguments.Add(options.MotionPath!);
-        }
-        foreach (var id in shards[index])
-        {
-            arguments.Add("--role-character3d-id");
-            arguments.Add(id.ToString(CultureInfo.InvariantCulture));
-        }
-
+        var arguments = BuildRoleRuntimeWorkerArguments(options, shards[index]);
         var process = Process.Start(CreateCurrentProcessStartInfo(arguments))
             ?? throw new InvalidOperationException($"Failed to start role runtime worker {index}.");
         processes.Add(process);
         Console.WriteLine($"Started role runtime worker {index + 1}/{workers}: pid {process.Id}, {shards[index].Count} role(s)");
     }
 
+    return WaitForRoleRuntimeWorkers(processes) ? 2 : 0;
+}
+
+static List<string> BuildRoleRuntimeWorkerArguments(ConversionOptions options, IReadOnlyList<int> ids)
+{
+    var arguments = new List<string>
+    {
+        "--emit-role-runtimes",
+        "--master", options.MasterDirectory!,
+        "--asset-root", options.AssetRoot!,
+        "--out", options.OutputDirectory,
+        "--part-package-process-concurrency", "1",
+        "--assetstudio-log-level", options.AssetStudioLogLevel,
+        "--convert-model-textures", options.ConvertModelTextures.ToString(),
+    };
+    if (!string.IsNullOrWhiteSpace(options.MotionPath))
+    {
+        arguments.Add("--motion");
+        arguments.Add(options.MotionPath!);
+    }
+    foreach (var id in ids)
+    {
+        arguments.Add("--role-character3d-id");
+        arguments.Add(id.ToString(CultureInfo.InvariantCulture));
+    }
+    return arguments;
+}
+
+static bool WaitForRoleRuntimeWorkers(IEnumerable<Process> processes)
+{
     var failed = false;
     foreach (var process in processes)
     {
@@ -447,7 +456,7 @@ static int RunRoleRuntimeWorkers(ConversionOptions options)
         }
     }
 
-    return failed ? 2 : 0;
+    return failed;
 }
 
 static void RunTextureCompactionIfEnabled(ConversionOptions options)

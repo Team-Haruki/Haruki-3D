@@ -93,7 +93,7 @@ function loadCaptureRequestValidator() {
   const source = readSource("capture-server.mjs");
   const snippet = sourceSlice(
     source,
-    "function validateCaptureRequest",
+    "function readNumber",
     "function makeTempDir"
   );
   const context = vm.createContext({

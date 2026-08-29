@@ -35,7 +35,7 @@ public sealed class AssetStudioBundleParser
         return Parse(input, primaryObjects, objects, manager.AssetsFileList.Count);
     }
 
-    public BundleInventory Parse(ResolvedBundleInput input, IReadOnlyList<Object> objects, int assetsFileCount)
+    public static BundleInventory Parse(ResolvedBundleInput input, IReadOnlyList<Object> objects, int assetsFileCount)
     {
         return Parse(input, objects, objects, assetsFileCount);
     }

@@ -359,22 +359,7 @@ public static class RuntimeJsonWriter
         };
         if (isFloat32Array)
         {
-            var numbers = values.Cast<object?>().Select(Convert.ToSingle).ToArray();
-            if (numbers.Length < 8 || numbers.Any(number => !float.IsFinite(number)))
-            {
-                return false;
-            }
-            var payload = new byte[1 + numbers.Length * sizeof(float)];
-            payload[0] = 1;
-            for (var index = 0; index < numbers.Length; index += 1)
-            {
-                BinaryPrimitives.WriteSingleLittleEndian(
-                    payload.AsSpan(1 + index * sizeof(float), sizeof(float)),
-                    numbers[index]
-                );
-            }
-            WriteExtension(stream, payload);
-            return true;
+            return TryWriteFloat32Array(stream, values);
         }
 
         if (binaryArraySchema != RuntimeBinaryArraySchema.PartRuntime ||
@@ -382,28 +367,34 @@ public static class RuntimeJsonWriter
         {
             return false;
         }
-        var indexes = values.Cast<object?>().Select(Convert.ToUInt32).ToArray();
-        if (indexes.Length < 16)
+        return TryWriteUnsignedIndexArray(stream, values);
+    }
+
+    private static bool TryWriteFloat32Array(Stream stream, IEnumerable values)
+    {
+        var numbers = values.Cast<object?>().Select(Convert.ToSingle).ToArray();
+        if (numbers.Length < 8 || numbers.Any(number => !float.IsFinite(number)))
         {
             return false;
         }
-        var useUInt16 = indexes.All(number => number <= ushort.MaxValue);
-        var width = useUInt16 ? sizeof(ushort) : sizeof(uint);
-        var integerPayload = new byte[1 + indexes.Length * width];
-        integerPayload[0] = useUInt16 ? (byte)2 : (byte)3;
-        for (var index = 0; index < indexes.Length; index += 1)
+        var payload = new byte[1 + numbers.Length * sizeof(float)];
+        payload[0] = 1;
+        for (var index = 0; index < numbers.Length; index += 1)
         {
-            var target = integerPayload.AsSpan(1 + index * width, width);
-            if (useUInt16)
-            {
-                BinaryPrimitives.WriteUInt16LittleEndian(target, (ushort)indexes[index]);
-            }
-            else
-            {
-                BinaryPrimitives.WriteUInt32LittleEndian(target, indexes[index]);
-            }
+            BinaryPrimitives.WriteSingleLittleEndian(
+                payload.AsSpan(1 + index * sizeof(float), sizeof(float)),
+                numbers[index]
+            );
         }
-        WriteExtension(stream, integerPayload);
+        WriteExtension(stream, payload);
+        return true;
+    }
+
+    private static bool TryWriteUnsignedIndexArray(Stream stream, IEnumerable values)
+    {
+        var indexes = values.Cast<object?>().Select(Convert.ToUInt32).ToArray();
+        if (indexes.Length < 16) return false;
+        WriteUnsignedIndexArray(stream, indexes);
         return true;
     }
 
@@ -517,26 +508,7 @@ public static class RuntimeJsonWriter
         };
         if (isFloat32Array && items.Length >= 8)
         {
-            var payload = new byte[1 + items.Length * sizeof(float)];
-            payload[0] = 1;
-            for (var index = 0; index < items.Length; index += 1)
-            {
-                if (items[index].ValueKind != JsonValueKind.Number)
-                {
-                    return false;
-                }
-                var number = items[index].GetSingle();
-                if (!float.IsFinite(number))
-                {
-                    return false;
-                }
-                BinaryPrimitives.WriteSingleLittleEndian(
-                    payload.AsSpan(1 + index * sizeof(float), sizeof(float)),
-                    number
-                );
-            }
-            WriteExtension(stream, payload);
-            return true;
+            return TryWriteJsonFloat32Array(stream, items);
         }
 
         if (binaryArraySchema != RuntimeBinaryArraySchema.PartRuntime ||
@@ -545,21 +517,49 @@ public static class RuntimeJsonWriter
         {
             return false;
         }
-        var indexes = new uint[items.Length];
-        var useUInt16 = true;
-        for (var index = 0; index < items.Length; index += 1)
+        if (!TryReadUnsignedIndexes(items, out var indexes))
         {
-            if (!items[index].TryGetUInt32(out var number))
-            {
-                return false;
-            }
-            indexes[index] = number;
-            useUInt16 &= number <= ushort.MaxValue;
+            return false;
         }
+        WriteUnsignedIndexArray(stream, indexes);
+        return true;
+    }
+
+    private static bool TryWriteJsonFloat32Array(Stream stream, IReadOnlyList<JsonElement> items)
+    {
+        var payload = new byte[1 + items.Count * sizeof(float)];
+        payload[0] = 1;
+        for (var index = 0; index < items.Count; index += 1)
+        {
+            if (items[index].ValueKind != JsonValueKind.Number) return false;
+            var number = items[index].GetSingle();
+            if (!float.IsFinite(number)) return false;
+            BinaryPrimitives.WriteSingleLittleEndian(
+                payload.AsSpan(1 + index * sizeof(float), sizeof(float)),
+                number
+            );
+        }
+        WriteExtension(stream, payload);
+        return true;
+    }
+
+    private static bool TryReadUnsignedIndexes(IReadOnlyList<JsonElement> items, out uint[] indexes)
+    {
+        indexes = new uint[items.Count];
+        for (var index = 0; index < items.Count; index += 1)
+        {
+            if (!items[index].TryGetUInt32(out indexes[index])) return false;
+        }
+        return true;
+    }
+
+    private static void WriteUnsignedIndexArray(Stream stream, IReadOnlyList<uint> indexes)
+    {
+        var useUInt16 = indexes.All(number => number <= ushort.MaxValue);
         var width = useUInt16 ? sizeof(ushort) : sizeof(uint);
-        var integerPayload = new byte[1 + indexes.Length * width];
+        var integerPayload = new byte[1 + indexes.Count * width];
         integerPayload[0] = useUInt16 ? (byte)2 : (byte)3;
-        for (var index = 0; index < indexes.Length; index += 1)
+        for (var index = 0; index < indexes.Count; index += 1)
         {
             var target = integerPayload.AsSpan(1 + index * width, width);
             if (useUInt16)
@@ -572,7 +572,6 @@ public static class RuntimeJsonWriter
             }
         }
         WriteExtension(stream, integerPayload);
-        return true;
     }
 
     private static void WriteExtension(Stream stream, byte[] payload)

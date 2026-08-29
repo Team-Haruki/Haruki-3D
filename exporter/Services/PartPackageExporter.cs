@@ -859,30 +859,35 @@ public sealed class PartPackageExporter
 
         foreach (var mesh in nativeMeshes.Meshes)
         {
-            if (mesh.RendererTransformPathId is null)
-            {
-                throw new InvalidOperationException(
-                    $"Runtime mesh '{mesh.MeshPath}' has no exact renderer Transform PathID. Refusing to publish an ambiguous part package."
-                );
-            }
-            if (mesh.BonePathIds.Count != mesh.BonePaths.Count)
-            {
-                throw new InvalidOperationException(
-                    $"Runtime mesh '{mesh.MeshPath}' has {mesh.BonePaths.Count} bone paths but {mesh.BonePathIds.Count} bone PathIDs. Refusing to publish an incomplete part package."
-                );
-            }
-            if (!string.IsNullOrWhiteSpace(mesh.RootBonePath) && mesh.RootBonePathId is null)
-            {
-                throw new InvalidOperationException(
-                    $"Runtime mesh '{mesh.MeshPath}' has root bone '{mesh.RootBonePath}' without an exact PathID. Refusing to publish an ambiguous part package."
-                );
-            }
-            if (mesh.RootBonePathId is not null && string.IsNullOrWhiteSpace(mesh.RootBonePath))
-            {
-                throw new InvalidOperationException(
-                    $"Runtime mesh '{mesh.MeshPath}' has root bone PathID {mesh.RootBonePathId} without a resolved transform path. Refusing to publish an incomplete part package."
-                );
-            }
+            ValidateExactMeshSkinBinding(mesh);
+        }
+    }
+
+    private static void ValidateExactMeshSkinBinding(PjskUnityRuntimeNativeMesh mesh)
+    {
+        if (mesh.RendererTransformPathId is null)
+        {
+            throw new InvalidOperationException(
+                $"Runtime mesh '{mesh.MeshPath}' has no exact renderer Transform PathID. Refusing to publish an ambiguous part package."
+            );
+        }
+        if (mesh.BonePathIds.Count != mesh.BonePaths.Count)
+        {
+            throw new InvalidOperationException(
+                $"Runtime mesh '{mesh.MeshPath}' has {mesh.BonePaths.Count} bone paths but {mesh.BonePathIds.Count} bone PathIDs. Refusing to publish an incomplete part package."
+            );
+        }
+        if (!string.IsNullOrWhiteSpace(mesh.RootBonePath) && mesh.RootBonePathId is null)
+        {
+            throw new InvalidOperationException(
+                $"Runtime mesh '{mesh.MeshPath}' has root bone '{mesh.RootBonePath}' without an exact PathID. Refusing to publish an ambiguous part package."
+            );
+        }
+        if (mesh.RootBonePathId is not null && string.IsNullOrWhiteSpace(mesh.RootBonePath))
+        {
+            throw new InvalidOperationException(
+                $"Runtime mesh '{mesh.MeshPath}' has root bone PathID {mesh.RootBonePathId} without a resolved transform path. Refusing to publish an incomplete part package."
+            );
         }
     }
 
@@ -2010,7 +2015,7 @@ public sealed class PartPackageExporter
             ["26"] = 1.75f,
         };
 
-    private static List<HeadMorphChannel> ReadHeadMorphBindings(IImported importedHead)
+    private static List<HeadMorphChannel> ReadHeadMorphBindings(ModelConverter importedHead)
     {
         return importedHead.MorphList
             .Where(morph => morph.Path.EndsWith("/Face", StringComparison.OrdinalIgnoreCase) || string.Equals(morph.Path, "face/Face", StringComparison.OrdinalIgnoreCase))

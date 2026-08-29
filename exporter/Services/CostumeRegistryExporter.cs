@@ -22,7 +22,7 @@ public sealed class CostumeRegistryExporter
         WriteIndented = true,
     };
 
-    public CostumeRegistryExport Export(
+    public static CostumeRegistryExport Export(
         string masterDirectory,
         string assetRoot,
         string outputDirectory
@@ -243,35 +243,74 @@ public sealed class CostumeRegistryExporter
         var entries = new List<PartRegistryEntry>();
         foreach (var costume in costume3ds.OrderBy(entry => entry.Id))
         {
-            if (!modelsByCostumeId.TryGetValue(costume.Id, out var models) || models.Count == 0)
-            {
-                entries.Add(BuildPartEntry(costume, null, null, null, null, null, null, "missing", MissingCostumeModelWarnings));
-                continue;
-            }
-
-            foreach (var model in models.OrderBy(entry => entry.Unit ?? string.Empty, StringComparer.OrdinalIgnoreCase))
-            {
-                var warnings = new List<string>();
-                var registryPartType = ResolveRegistryPartType(costume.PartType, model);
-                var headOptional = registryPartType == "head_optional"
-                    ? ResolveHeadOptionalDescriptor(costume, model)
-                    : null;
-                var bundlePath = ResolveBundlePath(costume, model, headOptional, characterById, assetRoot, warnings);
-                var colorPath = ResolveColorVariationBundlePath(costume, model, headOptional, characterById, assetRoot, warnings);
-                var sourceIdentity = BuildSourceIdentity(registryPartType, bundlePath, colorPath, assetRoot);
-                var packagePath = sourceIdentity?.PackagePath ?? BuildPackagePath(registryPartType, costume.Id, model.Unit);
-                var status = headOptional?.IsEmptySlot == true
-                    ? "empty"
-                    : bundlePath is null
-                    ? "missing"
-                    : "planned";
-                entries.Add(BuildPartEntry(costume, model, bundlePath, colorPath, sourceIdentity, headOptional?.AttachNode ?? ResolveAttachNode(model), packagePath, status, warnings));
-            }
+            entries.AddRange(BuildPartEntriesForCostume(
+                costume,
+                modelsByCostumeId,
+                characterById,
+                assetRoot
+            ));
         }
 
         AddOfficialPresetRoleAliases(entries, character3ds, characterById, assetRoot);
         AssignAccessoryIds(entries);
         return new PartRegistry(Version: 2, Source: source, Entries: entries);
+    }
+
+    private static List<PartRegistryEntry> BuildPartEntriesForCostume(
+        Costume3dMaster costume,
+        Dictionary<int, IReadOnlyList<Costume3dModelMaster>> modelsByCostumeId,
+        IReadOnlyDictionary<int, GameCharacterMaster> characterById,
+        string assetRoot
+    )
+    {
+        if (!modelsByCostumeId.TryGetValue(costume.Id, out var models) || models.Count == 0)
+        {
+            return
+            [
+                BuildPartEntry(
+                    costume,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    null,
+                    "missing",
+                    MissingCostumeModelWarnings
+                ),
+            ];
+        }
+
+        var entries = new List<PartRegistryEntry>();
+        foreach (var model in models.OrderBy(entry => entry.Unit ?? string.Empty, StringComparer.OrdinalIgnoreCase))
+        {
+            var warnings = new List<string>();
+            var registryPartType = ResolveRegistryPartType(costume.PartType, model);
+            var headOptional = registryPartType == "head_optional"
+                ? ResolveHeadOptionalDescriptor(costume, model)
+                : null;
+            var bundlePath = ResolveBundlePath(costume, model, headOptional, characterById, assetRoot, warnings);
+            var colorPath = ResolveColorVariationBundlePath(costume, model, headOptional, characterById, assetRoot, warnings);
+            var sourceIdentity = BuildSourceIdentity(registryPartType, bundlePath, colorPath, assetRoot);
+            var packagePath = sourceIdentity?.PackagePath ?? BuildPackagePath(registryPartType, costume.Id, model.Unit);
+            var status = headOptional?.IsEmptySlot == true
+                ? "empty"
+                : bundlePath is null
+                    ? "missing"
+                    : "planned";
+            entries.Add(BuildPartEntry(
+                costume,
+                model,
+                bundlePath,
+                colorPath,
+                sourceIdentity,
+                headOptional?.AttachNode ?? ResolveAttachNode(model),
+                packagePath,
+                status,
+                warnings
+            ));
+        }
+        return entries;
     }
 
     private static void AssignAccessoryIds(List<PartRegistryEntry> entries)
@@ -296,26 +335,7 @@ public sealed class CostumeRegistryExporter
                 StringComparer.Ordinal
             );
 
-        var duplicateId = accessoryIdBySource
-            .GroupBy(pair => pair.Value)
-            .FirstOrDefault(group => group.Select(pair => pair.Key).Distinct(StringComparer.Ordinal).Skip(1).Any());
-        if (duplicateId is not null)
-        {
-            throw new InvalidDataException(
-                $"Accessory ID {duplicateId.Key} resolves to multiple base sources: " +
-                string.Join(", ", duplicateId.Select(pair => pair.Key).OrderBy(key => key, StringComparer.Ordinal))
-            );
-        }
-
-        var ambiguousFamily = baseEntries
-            .GroupBy(Family)
-            .FirstOrDefault(group => group.Select(entry => entry.BaseSourceKey!).Distinct(StringComparer.Ordinal).Skip(1).Any());
-        if (ambiguousFamily is not null)
-        {
-            throw new InvalidDataException(
-                $"Accessory family {ambiguousFamily.Key} resolves to multiple base sources; refusing to choose one"
-            );
-        }
+        ValidateAccessorySources(baseEntries, accessoryIdBySource, Family);
         var baseSourceByFamily = baseEntries
             .GroupBy(Family)
             .ToDictionary(
@@ -335,38 +355,71 @@ public sealed class CostumeRegistryExporter
         for (var index = 0; index < entries.Count; index++)
         {
             var entry = entries[index];
-            var accessoryId = 0;
-            if (IsAccessory(entry))
-            {
-                var candidateSources = new HashSet<string>(StringComparer.Ordinal);
-                if (accessoryIdBySource.ContainsKey(entry.BaseSourceKey!))
-                {
-                    candidateSources.Add(entry.BaseSourceKey!);
-                }
-                if (baseSourceByFamily.TryGetValue(Family(entry), out var familySourceKey))
-                {
-                    candidateSources.Add(familySourceKey);
-                }
-                if (baseSourceByGroupSlot.TryGetValue(GroupSlot(entry), out var groupSourceKey))
-                {
-                    candidateSources.Add(groupSourceKey);
-                }
-                if (candidateSources.Count == 0)
-                {
-                    throw new InvalidDataException(
-                        $"Accessory {entry.Costume3dId}/{UnitKey(entry.Unit)}/color{entry.ColorId} has no original-color source"
-                    );
-                }
-                if (candidateSources.Count > 1)
-                {
-                    throw new InvalidDataException(
-                        $"Accessory {entry.Costume3dId}/{UnitKey(entry.Unit)}/color{entry.ColorId} resolves to multiple original-color sources; refusing to choose one"
-                    );
-                }
-                accessoryId = accessoryIdBySource[candidateSources.Single()];
-            }
+            var accessoryId = ResolveAccessoryId(
+                entry,
+                IsAccessory,
+                Family,
+                GroupSlot,
+                accessoryIdBySource,
+                baseSourceByFamily,
+                baseSourceByGroupSlot
+            );
             entries[index] = entry with { AccessoryId = accessoryId };
         }
+    }
+
+    private static void ValidateAccessorySources(
+        IReadOnlyList<PartRegistryEntry> baseEntries,
+        IReadOnlyDictionary<string, int> accessoryIdBySource,
+        Func<PartRegistryEntry, (int GroupId, string Unit, string PartType)> family
+    )
+    {
+        var duplicateId = accessoryIdBySource
+            .GroupBy(pair => pair.Value)
+            .FirstOrDefault(group => group.Select(pair => pair.Key).Distinct(StringComparer.Ordinal).Skip(1).Any());
+        if (duplicateId is not null)
+        {
+            throw new InvalidDataException(
+                $"Accessory ID {duplicateId.Key} resolves to multiple base sources: " +
+                string.Join(", ", duplicateId.Select(pair => pair.Key).OrderBy(key => key, StringComparer.Ordinal))
+            );
+        }
+
+        var ambiguousFamily = baseEntries
+            .GroupBy(family)
+            .FirstOrDefault(group => group.Select(entry => entry.BaseSourceKey!).Distinct(StringComparer.Ordinal).Skip(1).Any());
+        if (ambiguousFamily is not null)
+        {
+            throw new InvalidDataException(
+                $"Accessory family {ambiguousFamily.Key} resolves to multiple base sources; refusing to choose one"
+            );
+        }
+    }
+
+    private static int ResolveAccessoryId(
+        PartRegistryEntry entry,
+        Func<PartRegistryEntry, bool> isAccessory,
+        Func<PartRegistryEntry, (int GroupId, string Unit, string PartType)> family,
+        Func<PartRegistryEntry, (int GroupId, string PartType)> groupSlot,
+        IReadOnlyDictionary<string, int> accessoryIdBySource,
+        IReadOnlyDictionary<(int GroupId, string Unit, string PartType), string> baseSourceByFamily,
+        IReadOnlyDictionary<(int GroupId, string PartType), string> baseSourceByGroupSlot
+    )
+    {
+        if (!isAccessory(entry)) return 0;
+
+        var candidateSources = new HashSet<string>(StringComparer.Ordinal);
+        if (accessoryIdBySource.ContainsKey(entry.BaseSourceKey!)) candidateSources.Add(entry.BaseSourceKey!);
+        if (baseSourceByFamily.TryGetValue(family(entry), out var familySourceKey)) candidateSources.Add(familySourceKey);
+        if (baseSourceByGroupSlot.TryGetValue(groupSlot(entry), out var groupSourceKey)) candidateSources.Add(groupSourceKey);
+
+        var identity = $"{entry.Costume3dId}/{UnitKey(entry.Unit)}/color{entry.ColorId}";
+        return candidateSources.Count switch
+        {
+            0 => throw new InvalidDataException($"Accessory {identity} has no original-color source"),
+            > 1 => throw new InvalidDataException($"Accessory {identity} resolves to multiple original-color sources; refusing to choose one"),
+            _ => accessoryIdBySource[candidateSources.Single()],
+        };
     }
 
     private static void AddOfficialPresetRoleAliases(

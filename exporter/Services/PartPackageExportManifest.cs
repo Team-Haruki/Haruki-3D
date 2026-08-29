@@ -125,69 +125,15 @@ public sealed class PartPackageExportManifest
             .Where(entry => entry.BundlePath is not null && entry.Status != "missing")
             .GroupBy(entry => entry.PackagePath, StringComparer.Ordinal))
         {
-            var packagePath = group.Key;
-            var runtimeJsonPath = Path.Combine(
+            RebuildPackageGroup(
+                group,
+                previous,
                 outputDirectory,
-                packagePath.Replace('/', Path.DirectorySeparatorChar),
-                "part-runtime.json"
+                sparseInput,
+                rebuilt,
+                missingSparseRuntimes,
+                missingSparseBundles
             );
-            var hasRuntime = RuntimeJsonWriter.OutputsExist(runtimeJsonPath);
-            var hasSparsePlaceholder = sparseInput &&
-                group.Any(PartPackageWorkPlanner.HasSparsePlaceholder);
-
-            if (!hasRuntime)
-            {
-                if (hasSparsePlaceholder)
-                {
-                    missingSparseRuntimes.Add(packagePath);
-                    foreach (var path in group
-                        .SelectMany(entry => new[] { entry.BundlePath, entry.ColorVariationBundlePath })
-                        .Where(path => IsEmptyExistingFile(path))
-                        .Select(path => ToLogicalBundlePath(path!)))
-                    {
-                        missingSparseBundles.Add(path);
-                    }
-                }
-                continue;
-            }
-
-            File.Delete(Path.Combine(
-                outputDirectory,
-                packagePath.Replace('/', Path.DirectorySeparatorChar),
-                "part-export-error.json"
-            ));
-
-            var current = group
-                .Where(entry => PartPackageWorkPlanner.HasRequiredBundleFiles(entry, sparseInput))
-                .OrderBy(entry => entry.Costume3dId)
-                .ThenBy(entry => entry.Unit ?? string.Empty, StringComparer.Ordinal)
-                .FirstOrDefault();
-            if (current is not null)
-            {
-                rebuilt[packagePath] = PartPackageInputStamp.From(current);
-            }
-            else if (
-                hasSparsePlaceholder &&
-                previous.packages.TryGetValue(packagePath, out var previousStamp)
-            )
-            {
-                rebuilt[packagePath] = previousStamp;
-            }
-            else if (hasSparsePlaceholder)
-            {
-                var placeholder = group
-                    .Where(entry => PartPackageWorkPlanner.HasRequiredBundleFiles(
-                        entry,
-                        sparseInput: false
-                    ))
-                    .OrderBy(entry => entry.Costume3dId)
-                    .ThenBy(entry => entry.Unit ?? string.Empty, StringComparer.Ordinal)
-                    .FirstOrDefault()
-                    ?? throw new InvalidOperationException(
-                        $"Sparse incremental input has no complete placeholder paths for {packagePath}."
-                    );
-                rebuilt[packagePath] = PartPackageInputStamp.From(placeholder);
-            }
         }
 
         if (missingSparseRuntimes.Count > 0)
@@ -216,6 +162,101 @@ public sealed class PartPackageExportManifest
         }
 
         WriteManifestAtomic(manifestPath, rebuilt);
+    }
+
+    private static void RebuildPackageGroup(
+        IGrouping<string, PartRegistryEntry> group,
+        PartPackageExportManifest previous,
+        string outputDirectory,
+        bool sparseInput,
+        Dictionary<string, PartPackageInputStamp> rebuilt,
+        List<string> missingSparseRuntimes,
+        HashSet<string> missingSparseBundles
+    )
+    {
+        var packagePath = group.Key;
+        var packageDirectory = Path.Combine(
+            outputDirectory,
+            packagePath.Replace('/', Path.DirectorySeparatorChar)
+        );
+        var hasSparsePlaceholder = sparseInput &&
+            group.Any(PartPackageWorkPlanner.HasSparsePlaceholder);
+        if (!RuntimeJsonWriter.OutputsExist(Path.Combine(packageDirectory, "part-runtime.json")))
+        {
+            CollectMissingSparseRuntime(
+                group,
+                packagePath,
+                hasSparsePlaceholder,
+                missingSparseRuntimes,
+                missingSparseBundles
+            );
+            return;
+        }
+
+        File.Delete(Path.Combine(packageDirectory, "part-export-error.json"));
+        var stamp = ResolveRebuiltStamp(group, previous, sparseInput, hasSparsePlaceholder);
+        if (stamp is not null)
+        {
+            rebuilt[packagePath] = stamp;
+        }
+    }
+
+    private static void CollectMissingSparseRuntime(
+        IGrouping<string, PartRegistryEntry> group,
+        string packagePath,
+        bool hasSparsePlaceholder,
+        List<string> missingSparseRuntimes,
+        HashSet<string> missingSparseBundles
+    )
+    {
+        if (!hasSparsePlaceholder)
+        {
+            return;
+        }
+        missingSparseRuntimes.Add(packagePath);
+        foreach (var path in group
+            .SelectMany(entry => new[] { entry.BundlePath, entry.ColorVariationBundlePath })
+            .Where(path => IsEmptyExistingFile(path))
+            .Select(path => ToLogicalBundlePath(path!)))
+        {
+            missingSparseBundles.Add(path);
+        }
+    }
+
+    private static PartPackageInputStamp? ResolveRebuiltStamp(
+        IGrouping<string, PartRegistryEntry> group,
+        PartPackageExportManifest previous,
+        bool sparseInput,
+        bool hasSparsePlaceholder
+    )
+    {
+        var current = group
+            .Where(entry => PartPackageWorkPlanner.HasRequiredBundleFiles(entry, sparseInput))
+            .OrderBy(entry => entry.Costume3dId)
+            .ThenBy(entry => entry.Unit ?? string.Empty, StringComparer.Ordinal)
+            .FirstOrDefault();
+        if (current is not null)
+        {
+            return PartPackageInputStamp.From(current);
+        }
+        if (hasSparsePlaceholder && previous.packages.TryGetValue(group.Key, out var previousStamp))
+        {
+            return previousStamp;
+        }
+        if (!hasSparsePlaceholder)
+        {
+            return null;
+        }
+
+        var placeholder = group
+            .Where(entry => PartPackageWorkPlanner.HasRequiredBundleFiles(entry, sparseInput: false))
+            .OrderBy(entry => entry.Costume3dId)
+            .ThenBy(entry => entry.Unit ?? string.Empty, StringComparer.Ordinal)
+            .FirstOrDefault()
+            ?? throw new InvalidOperationException(
+                $"Sparse incremental input has no complete placeholder paths for {group.Key}."
+            );
+        return PartPackageInputStamp.From(placeholder);
     }
 
     private static void WriteManifestAtomic(

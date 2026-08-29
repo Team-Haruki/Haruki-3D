@@ -529,6 +529,98 @@ function normalizePartRegistry(input: PartRegistryInput): PartRegistryEntry[] {
   return Array.isArray(input) ? input : input.entries ?? input.parts ?? [];
 }
 
+type AddPartCandidate = (entry: PartRegistryEntry | undefined) => void;
+
+function findRegistryEntryInRegistry(
+  registry: PartRegistryEntry[],
+  characterId: number,
+  partType: RuntimePartType,
+  costume3dId: number,
+  unit?: string | null
+) {
+  return registry.find((entry) =>
+    entry.characterId === characterId &&
+    entry.costume3dId === costume3dId &&
+    tryRuntimePartSlot(entry) === partType &&
+    (unit === undefined || entry.unit === unit) &&
+    isUsableRegistryEntry(entry)
+  );
+}
+
+function addPreferredRoleCandidates(
+  registry: PartRegistryEntry[],
+  roles: RuntimeRoleCatalogEntry[],
+  preferredCharacterId: number,
+  addEntry: AddPartCandidate
+) {
+  const findRegistryEntry = (
+    characterId: number,
+    partType: RuntimePartType,
+    costume3dId: number,
+    unit?: string | null
+  ) => findRegistryEntryInRegistry(registry, characterId, partType, costume3dId, unit);
+  for (const entry of roles) {
+    if (entry.characterId !== preferredCharacterId) continue;
+    if (typeof entry.bodyCostume3dId === "number") {
+      addEntry(findRegistryEntry(entry.characterId, "body", entry.bodyCostume3dId, entry.unit));
+    }
+    if (typeof entry.headCostume3dId === "number") {
+      addEntry(findRegistryEntry(entry.characterId, "head", entry.headCostume3dId, entry.unit));
+      addEntry(findRegistryEntry(entry.characterId, "head_optional", entry.headCostume3dId, entry.unit));
+    }
+    if (typeof entry.hairCostume3dId === "number") {
+      addEntry(findRegistryEntry(entry.characterId, "hair", entry.hairCostume3dId, entry.unit));
+    }
+  }
+}
+
+function addCompatibleHeadHairCandidates(
+  registry: PartRegistryEntry[],
+  preferredCharacterId: number,
+  deniedHeadHairKeys: ReadonlySet<string>,
+  addEntry: AddPartCandidate
+) {
+  const heads = registry
+    .filter((entry) =>
+      entry.characterId === preferredCharacterId &&
+      ["head", "head_optional"].includes(tryRuntimePartSlot(entry) ?? "") &&
+      isUsableRegistryEntry(entry)
+    )
+    .sort((left, right) => left.costume3dId - right.costume3dId);
+  const hairs = registry
+    .filter((entry) =>
+      entry.characterId === preferredCharacterId &&
+      tryRuntimePartSlot(entry) === "hair" &&
+      isUsableRegistryEntry(entry)
+    )
+    .sort((left, right) => left.costume3dId - right.costume3dId);
+  for (const head of heads) {
+    for (const hair of hairs) {
+      const denied = tryRuntimePartSlot(head) !== "head" &&
+        deniedHeadHairKeys.has(
+          headHairCompatibilityKey(head.unit ?? hair.unit, head.costume3dId, hair.costume3dId)
+        );
+      if (denied) continue;
+      addEntry(head);
+      addEntry(hair);
+    }
+  }
+}
+
+function collectPreferredCostumeIds(
+  roles: RuntimeRoleCatalogEntry[],
+  preferredCharacterId: number | null
+) {
+  const ids = new Set<number>();
+  for (const entry of roles) {
+    if (preferredCharacterId !== null && entry.characterId !== preferredCharacterId) continue;
+    for (const id of [entry.bodyCostume3dId, entry.headCostume3dId, entry.hairCostume3dId]) {
+      if (typeof id === "number") ids.add(id);
+    }
+  }
+  return ids;
+}
+
 function selectPartRuntimeCandidates(
   registry: PartRegistryEntry[],
   roles: RuntimeRoleCatalogEntry[],
@@ -550,36 +642,10 @@ function selectPartRuntimeCandidates(
     seen.add(key);
     ordered.push(entry);
   };
-  const findRegistryEntry = (
-    characterId: number,
-    partType: RuntimePartType,
-    costume3dId: number,
-    unit?: string | null
-  ) => registry.find((entry) =>
-    entry.characterId === characterId &&
-    entry.costume3dId === costume3dId &&
-    tryRuntimePartSlot(entry) === partType &&
-    (unit === undefined || entry.unit === unit) &&
-    isUsableRegistryEntry(entry)
-  );
   const deniedHeadHairKeys = getDeniedHeadHairCompatibilityKeys(compatibility);
 
   if (preferredCharacterId !== null) {
-    for (const entry of roles) {
-      if (entry.characterId !== preferredCharacterId) {
-        continue;
-      }
-      if (typeof entry.bodyCostume3dId === "number") {
-        addEntry(findRegistryEntry(entry.characterId, "body", entry.bodyCostume3dId, entry.unit));
-      }
-      if (typeof entry.headCostume3dId === "number") {
-        addEntry(findRegistryEntry(entry.characterId, "head", entry.headCostume3dId, entry.unit));
-        addEntry(findRegistryEntry(entry.characterId, "head_optional", entry.headCostume3dId, entry.unit));
-      }
-      if (typeof entry.hairCostume3dId === "number") {
-        addEntry(findRegistryEntry(entry.characterId, "hair", entry.hairCostume3dId, entry.unit));
-      }
-    }
+    addPreferredRoleCandidates(registry, roles, preferredCharacterId, addEntry);
     addEntry(registry
       .filter((entry) =>
         entry.characterId === preferredCharacterId &&
@@ -587,50 +653,10 @@ function selectPartRuntimeCandidates(
         isUsableRegistryEntry(entry)
       )
       .sort((left, right) => left.costume3dId - right.costume3dId)[0]);
-
-    const heads = registry
-      .filter((entry) =>
-        entry.characterId === preferredCharacterId &&
-        ["head", "head_optional"].includes(tryRuntimePartSlot(entry) ?? "") &&
-        isUsableRegistryEntry(entry)
-      )
-      .sort((left, right) => left.costume3dId - right.costume3dId);
-    const hairs = registry
-      .filter((entry) =>
-        entry.characterId === preferredCharacterId &&
-        tryRuntimePartSlot(entry) === "hair" &&
-        isUsableRegistryEntry(entry)
-      )
-      .sort((left, right) => left.costume3dId - right.costume3dId);
-    for (const head of heads) {
-      for (const hair of hairs) {
-        if (
-          tryRuntimePartSlot(head) !== "head" &&
-          deniedHeadHairKeys.has(headHairCompatibilityKey(head.unit ?? hair.unit, head.costume3dId, hair.costume3dId))
-        ) {
-          continue;
-        }
-        addEntry(head);
-        addEntry(hair);
-      }
-    }
+    addCompatibleHeadHairCandidates(registry, preferredCharacterId, deniedHeadHairKeys, addEntry);
   }
 
-  const preferredCostumeIds = new Set<number>();
-  for (const entry of roles) {
-    if (preferredCharacterId !== null && entry.characterId !== preferredCharacterId) {
-      continue;
-    }
-    for (const id of [
-      entry.bodyCostume3dId,
-      entry.headCostume3dId,
-      entry.hairCostume3dId,
-    ]) {
-      if (typeof id === "number") {
-        preferredCostumeIds.add(id);
-      }
-    }
-  }
+  const preferredCostumeIds = collectPreferredCostumeIds(roles, preferredCharacterId);
 
   const scored = registry
     .filter(isLoadableRegistryEntry)

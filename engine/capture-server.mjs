@@ -205,16 +205,79 @@ function readRequestJson(req) {
   });
 }
 
-function validateCaptureRequest(input) {
-  const readNumber = (value, fallback) => {
-    if (value === undefined || value === null || value === "") {
-      return fallback;
-    }
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : fallback;
+function readNumber(value, fallback) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function readIntInRange(value, fallback, min, max) {
+  return Math.min(Math.max(Math.trunc(readNumber(value, fallback)), min), max);
+}
+
+function readCaptureId(input, name) {
+  const value = Number(input[name]);
+  if (!Number.isInteger(value) || value <= 0) {
+    throw new Error(`${name} must be a positive integer.`);
+  }
+  return value;
+}
+
+function readCaptureStringList(...values) {
+  return values
+    .flatMap((value) => Array.isArray(value) ? value : [value])
+    .flatMap((value) => typeof value === "string" ? value.split(",") : [])
+    .map((value) => value.trim())
+    .filter(Boolean);
+}
+
+function readBoolean(value) {
+  return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function readProjectedShadow(value) {
+  const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
+  const readNumber = (name, fallback, min, max = Infinity) => {
+    const parsed = Number(source[name]);
+    const resolved = Number.isFinite(parsed) ? parsed : fallback;
+    return Math.min(Math.max(resolved, min), max);
   };
-  const readIntInRange = (value, fallback, min, max) =>
-    Math.min(Math.max(Math.trunc(readNumber(value, fallback)), min), max);
+  const readBool = (name, fallback) =>
+    source[name] === undefined ? fallback : readBoolean(source[name]);
+  return {
+    width: readNumber("width", defaultProjectedShadow.width, 0.001),
+    height: readNumber("height", defaultProjectedShadow.height, 0.001),
+    opacity: readNumber("opacity", defaultProjectedShadow.opacity, 0, 1),
+    crossSize: readNumber("crossSize", defaultProjectedShadow.crossSize, 0.001),
+    crossOpacity: readNumber("crossOpacity", defaultProjectedShadow.crossOpacity, 0, 1),
+    floorY: readNumber("floorY", defaultProjectedShadow.floorY, -Infinity),
+    adjustShadow: readBool("adjustShadow", defaultProjectedShadow.adjustShadow),
+    adjustAlpha: readBool("adjustAlpha", defaultProjectedShadow.adjustAlpha),
+    invisibleHeight: readNumber("invisibleHeight", defaultProjectedShadow.invisibleHeight, 0.001),
+    directionalShadow: readBool("directionalShadow", defaultProjectedShadow.directionalShadow),
+  };
+}
+
+function readCaptureTtlMs(value) {
+  const seconds = Number(value);
+  return !Number.isFinite(seconds) || seconds <= 0
+    ? tempCaptureTtlMs
+    : Math.trunc(seconds * 1000);
+}
+
+function readHeadPackagePath(value) {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") {
+    throw new Error("headPackagePath must be a string or null.");
+  }
+  const path = value.trim();
+  if (path === "" || path.length > 1024 || path.includes("\0")) {
+    throw new Error("headPackagePath must be a non-empty string of at most 1024 characters without NUL bytes.");
+  }
+  return path;
+}
+
+function validateCaptureRequest(input) {
   const cacheMode = input.cacheMode === "temporary" ? "temporary" : "persistent";
   let imageId = String(input.imageId ?? "");
   if (imageId === "") {
@@ -234,79 +297,27 @@ function validateCaptureRequest(input) {
   if (region !== "" && !/^[A-Za-z0-9_-]+$/.test(region)) {
     throw new Error("region must match /^[A-Za-z0-9_-]+$/.");
   }
-  const readId = (name) => {
-    const value = Number(input[name]);
-    if (!Number.isInteger(value) || value <= 0) {
-      throw new Error(`${name} must be a positive integer.`);
-    }
-    return value;
-  };
-  const readStringList = (...values) => values
-    .flatMap((value) => Array.isArray(value) ? value : [value])
-    .flatMap((value) => typeof value === "string" ? value.split(",") : [])
-    .map((value) => value.trim())
-    .filter(Boolean);
-  const readBoolean = (value) => value === true || value === "true" || value === 1 || value === "1";
-  const readProjectedShadow = (value) => {
-    const source = value && typeof value === "object" && !Array.isArray(value) ? value : {};
-    const readNumber = (name, fallback, min, max = Infinity) => {
-      const parsed = Number(source[name]);
-      const value = Number.isFinite(parsed) ? parsed : fallback;
-      return Math.min(Math.max(value, min), max);
-    };
-    const readBool = (name, fallback) =>
-      source[name] === undefined ? fallback : readBoolean(source[name]);
-    return {
-      width: readNumber("width", defaultProjectedShadow.width, 0.001),
-      height: readNumber("height", defaultProjectedShadow.height, 0.001),
-      opacity: readNumber("opacity", defaultProjectedShadow.opacity, 0, 1),
-      crossSize: readNumber("crossSize", defaultProjectedShadow.crossSize, 0.001),
-      crossOpacity: readNumber("crossOpacity", defaultProjectedShadow.crossOpacity, 0, 1),
-      floorY: readNumber("floorY", defaultProjectedShadow.floorY, -Infinity),
-      adjustShadow: readBool("adjustShadow", defaultProjectedShadow.adjustShadow),
-      adjustAlpha: readBool("adjustAlpha", defaultProjectedShadow.adjustAlpha),
-      invisibleHeight: readNumber("invisibleHeight", defaultProjectedShadow.invisibleHeight, 0.001),
-      directionalShadow: readBool("directionalShadow", defaultProjectedShadow.directionalShadow),
-    };
-  };
-  const readTtlMs = (value) => {
-    const seconds = Number(value);
-    if (!Number.isFinite(seconds) || seconds <= 0) {
-      return tempCaptureTtlMs;
-    }
-    return Math.trunc(seconds * 1000);
-  };
   const traceMaxEvents = Number(input.traceUtjMaxEvents);
   const optionalHeadOptional = input.headOptionalCostume3dId;
-  const optionalHeadPackagePath = input.headPackagePath;
-  let headPackagePath = null;
-  if (optionalHeadPackagePath !== undefined && optionalHeadPackagePath !== null) {
-    if (typeof optionalHeadPackagePath !== "string") {
-      throw new Error("headPackagePath must be a string or null.");
-    }
-    headPackagePath = optionalHeadPackagePath.trim();
-    if (headPackagePath === "" || headPackagePath.length > 1024 || headPackagePath.includes("\0")) {
-      throw new Error("headPackagePath must be a non-empty string of at most 1024 characters without NUL bytes.");
-    }
-  }
+  const headPackagePath = readHeadPackagePath(input.headPackagePath);
   const width = readIntInRange(input.width, defaultWidth, 320, MAX_CAPTURE_DIMENSION);
   const height = readIntInRange(input.height, defaultHeight, 320, MAX_CAPTURE_DIMENSION);
   const scale = Math.min(Math.max(readNumber(input.scale, defaultScale), 1), 2);
   return {
     imageId,
     cacheMode,
-    ttlMs: cacheMode === "temporary" ? readTtlMs(input.ttlSeconds) : 0,
+    ttlMs: cacheMode === "temporary" ? readCaptureTtlMs(input.ttlSeconds) : 0,
     runtimeBaseUrl: region === "" ? "/runtime/" : `/runtime/${region}/`,
     region: region || null,
     roleId,
-    bodyCostume3dId: readId("bodyCostume3dId"),
-    headCostume3dId: readId("headCostume3dId"),
+    bodyCostume3dId: readCaptureId(input, "bodyCostume3dId"),
+    headCostume3dId: readCaptureId(input, "headCostume3dId"),
     headPackagePath,
-    hairCostume3dId: readId("hairCostume3dId"),
+    hairCostume3dId: readCaptureId(input, "hairCostume3dId"),
     headOptionalCostume3dId:
       optionalHeadOptional === undefined || optionalHeadOptional === null
         ? null
-        : readId("headOptionalCostume3dId"),
+        : readCaptureId(input, "headOptionalCostume3dId"),
     phase: Math.min(Math.max(readNumber(input.phase, defaultPhase), 0), 1),
     cameraPreset: normalizeCameraPreset(input.cameraPreset, defaultCameraPreset),
     cameraProfile: normalizeCameraProfile(input.cameraProfile, defaultCameraProfile),
@@ -332,7 +343,7 @@ function validateCaptureRequest(input) {
     height,
     scale,
     timeoutMs: readIntInRange(input.timeoutMs, defaultTimeoutMs, 5000, MAX_CAPTURE_TIMEOUT_MS),
-    traceUtjBones: readStringList(input.traceUtjBones, input.traceUtjBone),
+    traceUtjBones: readCaptureStringList(input.traceUtjBones, input.traceUtjBone),
     traceUtjMaxEvents: Math.min(
       Math.max(
         Math.trunc(Number.isFinite(traceMaxEvents) ? traceMaxEvents : 240),
@@ -340,7 +351,7 @@ function validateCaptureRequest(input) {
       ),
       MAX_TRACE_EVENTS
     ),
-    springDebugBones: readStringList(input.springDebugBones, input.springDebugBone),
+    springDebugBones: readCaptureStringList(input.springDebugBones, input.springDebugBone),
     springDebugAllOffsets: readBoolean(input.springDebugAllOffsets),
     springRuntimeMode:
       input.springRuntimeMode === "off" || input.springRuntimeMode === "unity-prefab"
@@ -599,48 +610,49 @@ class DevToolsSocket {
 
   handleData(chunk) {
     this.buffer = Buffer.concat([this.buffer, chunk]);
-    while (this.buffer.length >= 2) {
-      const first = this.buffer[0];
-      const second = this.buffer[1];
-      const opcode = first & 0x0f;
-      const masked = Boolean(second & 0x80);
-      let offset = 2;
-      let length = second & 0x7f;
-      if (length === 126) {
-        if (this.buffer.length < offset + 2) {
-          return;
-        }
-        length = this.buffer.readUInt16BE(offset);
-        offset += 2;
-      } else if (length === 127) {
-        if (this.buffer.length < offset + 8) {
-          return;
-        }
-        length = Number(this.buffer.readBigUInt64BE(offset));
-        offset += 8;
-      }
-      const maskOffset = offset;
-      if (masked) {
-        offset += 4;
-      }
-      if (this.buffer.length < offset + length) {
-        return;
-      }
-      let payload = this.buffer.slice(offset, offset + length);
-      if (masked) {
-        const mask = this.buffer.slice(maskOffset, maskOffset + 4);
-        payload = Buffer.from(payload.map((byte, index) => byte ^ mask[index % 4]));
-      }
-      this.buffer = this.buffer.slice(offset + length);
-      if (opcode === 0x8) {
+    while (true) {
+      const frame = this.readFrame();
+      if (!frame) return;
+
+      this.buffer = this.buffer.slice(frame.offset + frame.length);
+      if (frame.opcode === 0x8) {
         this.close();
         return;
       }
-      if (opcode !== 0x1) {
-        continue;
+      if (frame.opcode === 0x1) {
+        this.handleMessage(frame.payload.toString("utf8"));
       }
-      this.handleMessage(payload.toString("utf8"));
     }
+  }
+
+  readFrame() {
+    if (this.buffer.length < 2) return null;
+
+    const first = this.buffer[0];
+    const second = this.buffer[1];
+    let offset = 2;
+    let length = second & 0x7f;
+    if (length === 126) {
+      if (this.buffer.length < offset + 2) return null;
+      length = this.buffer.readUInt16BE(offset);
+      offset += 2;
+    } else if (length === 127) {
+      if (this.buffer.length < offset + 8) return null;
+      length = Number(this.buffer.readBigUInt64BE(offset));
+      offset += 8;
+    }
+
+    const masked = Boolean(second & 0x80);
+    const maskOffset = offset;
+    if (masked) offset += 4;
+    if (this.buffer.length < offset + length) return null;
+
+    let payload = this.buffer.slice(offset, offset + length);
+    if (masked) {
+      const mask = this.buffer.slice(maskOffset, maskOffset + 4);
+      payload = Buffer.from(payload.map((byte, index) => byte ^ mask[index % 4]));
+    }
+    return { opcode: first & 0x0f, offset, length, payload };
   }
 
   handleMessage(message) {
@@ -965,50 +977,65 @@ async function captureRoleParts(input) {
   }
 }
 
-const server = http.createServer(async (req, res) => {
-  try {
-    const requestUrl = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
-    const route = resolveRegionRoute(requestUrl.pathname, runtimeRoot);
-    if (!route) {
-      res.writeHead(404);
-      res.end("not found");
-      return;
+async function handleCaptureRoute(req, res, route) {
+  clearIdleShutdownTimer();
+  const body = applyRouteRegion(await readRequestJson(req), route.region);
+  const result = await enqueue(async () => {
+    clearIdleShutdownTimer();
+    try {
+      return await captureRoleParts(body);
+    } finally {
+      scheduleIdleShutdown();
     }
-    const requestPath = route.pathname;
-    if (req.method === "GET" && requestPath === "/healthz") {
-      const healthy = captureSession.healthy();
-      sendJson(res, healthy ? 200 : 503, { ok: healthy, ...captureSession.status() });
-      return;
-    }
-    if (req.method === "POST" && requestPath === "/capture") {
-      clearIdleShutdownTimer();
-      const body = applyRouteRegion(await readRequestJson(req), route.region);
-      const result = await enqueue(async () => {
-        clearIdleShutdownTimer();
-        try {
-          return await captureRoleParts(body);
-        } finally {
-          scheduleIdleShutdown();
-        }
-      });
-      sendJson(res, 200, result);
-      return;
-    }
-    if ((req.method === "GET" || req.method === "HEAD") && requestPath.startsWith("/captures/")) {
-      serveFile(captureOutputDir, requestPath.slice("/captures/".length), req, res);
-      return;
-    }
-    if ((req.method === "GET" || req.method === "HEAD") && requestPath.startsWith("/runtime/")) {
-      serveRuntimeFile(route.runtimeRoot, requestPath.slice("/runtime/".length), req, res);
-      return;
-    }
-    if (req.method === "GET" || req.method === "HEAD") {
-      const relativePath = requestPath === "/" ? "capture.html" : requestPath;
-      serveEngineFile(relativePath, req, res);
-      return;
-    }
+  });
+  sendJson(res, 200, result);
+}
+
+function tryServeCaptureAsset(req, res, route) {
+  const requestPath = route.pathname;
+  const readable = req.method === "GET" || req.method === "HEAD";
+  if (readable && requestPath.startsWith("/captures/")) {
+    serveFile(captureOutputDir, requestPath.slice("/captures/".length), req, res);
+    return true;
+  }
+  if (readable && requestPath.startsWith("/runtime/")) {
+    serveRuntimeFile(route.runtimeRoot, requestPath.slice("/runtime/".length), req, res);
+    return true;
+  }
+  if (readable) {
+    const relativePath = requestPath === "/" ? "capture.html" : requestPath;
+    serveEngineFile(relativePath, req, res);
+    return true;
+  }
+  return false;
+}
+
+async function handleServerRequest(req, res) {
+  const requestUrl = new URL(req.url ?? "/", `http://127.0.0.1:${port}`);
+  const route = resolveRegionRoute(requestUrl.pathname, runtimeRoot);
+  if (!route) {
+    res.writeHead(404);
+    res.end("not found");
+    return;
+  }
+  if (req.method === "GET" && route.pathname === "/healthz") {
+    const healthy = captureSession.healthy();
+    sendJson(res, healthy ? 200 : 503, { ok: healthy, ...captureSession.status() });
+    return;
+  }
+  if (req.method === "POST" && route.pathname === "/capture") {
+    await handleCaptureRoute(req, res, route);
+    return;
+  }
+  if (!tryServeCaptureAsset(req, res, route)) {
     res.writeHead(405);
     res.end("method not allowed");
+  }
+}
+
+const server = http.createServer(async (req, res) => {
+  try {
+    await handleServerRequest(req, res);
   } catch (error) {
     scheduleIdleShutdown();
     sendJson(res, Number.isInteger(error?.statusCode) ? error.statusCode : 500, {
@@ -1065,32 +1092,37 @@ async function cleanupExpiredTemporaryCaptures(nowMs) {
   }
   const files = [];
   for (const entry of entries) {
-    if (!entry.isFile() || !/^tmp_[A-Za-z0-9._-]+\.png$/.test(entry.name)) {
-      continue;
-    }
-    const filePath = path.join(captureOutputDir, entry.name);
-    let stat;
-    try {
-      stat = await fs.promises.stat(filePath);
-    } catch (error) {
-      if (error?.code === "ENOENT") {
-        continue;
-      }
-      throw error;
-    }
-    if (tempCaptureTtlMs > 0 && nowMs - stat.mtimeMs > tempCaptureTtlMs) {
-      await fs.promises.rm(filePath, { force: true });
-      continue;
-    }
-    files.push({
-      filePath,
-      createdMs: Number.isFinite(stat.birthtimeMs) ? stat.birthtimeMs : stat.ctimeMs,
-      size: stat.size,
-    });
+    const file = await inspectTemporaryCapture(entry, nowMs);
+    if (file) files.push(file);
   }
-  if (tempCaptureMaxBytes <= 0) {
-    return;
+  await enforceTemporaryCaptureQuota(files);
+}
+
+async function inspectTemporaryCapture(entry, nowMs) {
+  if (!entry.isFile() || !/^tmp_[A-Za-z0-9._-]+\.png$/.test(entry.name)) return null;
+
+  const filePath = path.join(captureOutputDir, entry.name);
+  let stat;
+  try {
+    stat = await fs.promises.stat(filePath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
   }
+  if (tempCaptureTtlMs > 0 && nowMs - stat.mtimeMs > tempCaptureTtlMs) {
+    await fs.promises.rm(filePath, { force: true });
+    return null;
+  }
+  return {
+    filePath,
+    createdMs: Number.isFinite(stat.birthtimeMs) ? stat.birthtimeMs : stat.ctimeMs,
+    size: stat.size,
+  };
+}
+
+async function enforceTemporaryCaptureQuota(files) {
+  if (tempCaptureMaxBytes <= 0) return;
+
   let total = files.reduce((sum, file) => sum + file.size, 0);
   files.sort((a, b) => a.createdMs - b.createdMs);
   for (const file of files) {

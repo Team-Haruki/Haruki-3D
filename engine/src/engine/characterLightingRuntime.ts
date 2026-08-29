@@ -72,6 +72,21 @@ function applySkinColors(material: THREE.ShaderMaterial, colors: RuntimeSkinColo
   }
 }
 
+function applyDebugEntrySkinColors(
+  entry: RuntimeMaterialDebug,
+  colors: RuntimeSkinColors
+) {
+  if (entry.shaderSkinColorDefault !== undefined && entry.shaderSkinColorDefault !== null) {
+    entry.shaderSkinColorDefault = colors.default.toLowerCase();
+  }
+  if (entry.shaderSkinColor1 !== undefined && entry.shaderSkinColor1 !== null) {
+    entry.shaderSkinColor1 = colors.shadow1.toLowerCase();
+  }
+  if (entry.shaderSkinColor2 !== undefined && entry.shaderSkinColor2 !== null) {
+    entry.shaderSkinColor2 = colors.shadow2.toLowerCase();
+  }
+}
+
 type CharacterLightingRuntimeOptions = {
   bodyMaterial: THREE.ShaderMaterial;
   hairMaterial: THREE.ShaderMaterial;
@@ -287,15 +302,7 @@ export class CharacterLightingRuntime {
     this.forEachShaderMaterial(apply);
     for (const entries of this.debugEntries) {
       for (const entry of entries) {
-        if (entry.shaderSkinColorDefault !== undefined && entry.shaderSkinColorDefault !== null) {
-          entry.shaderSkinColorDefault = colors.default.toLowerCase();
-        }
-        if (entry.shaderSkinColor1 !== undefined && entry.shaderSkinColor1 !== null) {
-          entry.shaderSkinColor1 = colors.shadow1.toLowerCase();
-        }
-        if (entry.shaderSkinColor2 !== undefined && entry.shaderSkinColor2 !== null) {
-          entry.shaderSkinColor2 = colors.shadow2.toLowerCase();
-        }
+        applyDebugEntrySkinColors(entry, colors);
       }
     }
   }

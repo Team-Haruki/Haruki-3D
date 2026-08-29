@@ -4,7 +4,7 @@ namespace PjskBundle2Parts.Services;
 
 public sealed class BundleDependencyIndex
 {
-    private readonly IReadOnlyDictionary<string, IReadOnlyList<string>> dependencies;
+    private readonly Dictionary<string, IReadOnlyList<string>> dependencies;
 
     public BundleDependencyIndex(string? path)
     {

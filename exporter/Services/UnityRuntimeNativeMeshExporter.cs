@@ -175,37 +175,59 @@ public sealed class UnityRuntimeNativeMeshExporter
 
         foreach (var renderer in activeRenderers)
         {
-            if (string.IsNullOrWhiteSpace(renderer.TransformPath))
+            if (TryBuildPartNativeMesh(
+                    partKind,
+                    renderer,
+                    meshLookup,
+                    transformPaths,
+                    transformPathByPathId,
+                    morphMap,
+                    out var nativeMesh,
+                    out var warning
+                ))
             {
-                warnings.Add($"{partKind} renderer {renderer.PathId} skipped: renderer has no transform path.");
-                continue;
+                result.Add(nativeMesh!);
             }
-
-            if (!TryResolveImportedMesh(renderer, meshLookup, transformPaths, transformPathByPathId, out var mesh, out var failure))
+            else
             {
-                warnings.Add($"{partKind} renderer '{renderer.TransformPath}' skipped: {failure}");
-                continue;
+                warnings.Add(warning);
             }
+        }
 
-            var rendererBonePaths = new List<string>();
-            var missingBone = false;
-            foreach (var pathId in renderer.SkinnedMeshBones)
-            {
-                if (!transformPathByPathId.TryGetValue(pathId, out var bonePath))
-                {
-                    missingBone = true;
-                    break;
-                }
-                rendererBonePaths.Add(bonePath);
-            }
+        return result;
+    }
 
-            if (missingBone)
-            {
-                warnings.Add($"{partKind} mesh '{mesh.Path}' skipped: renderer {renderer.PathId} has unresolved skinned bone PathIDs.");
-                continue;
-            }
+    private static bool TryBuildPartNativeMesh(
+        string partKind,
+        SpringPrefabRenderer renderer,
+        Dictionary<string, IReadOnlyList<ImportedMesh>> meshLookup,
+        List<string> transformPaths,
+        Dictionary<long, string> transformPathByPathId,
+        Dictionary<string, ImportedMorph> morphMap,
+        out PjskUnityRuntimeNativeMesh? nativeMesh,
+        out string warning
+    )
+    {
+        nativeMesh = null;
+        if (string.IsNullOrWhiteSpace(renderer.TransformPath))
+        {
+            warning = $"{partKind} renderer {renderer.PathId} skipped: renderer has no transform path.";
+            return false;
+        }
 
-            if (!TryResolveSkinBinding(
+        if (!TryResolveImportedMesh(renderer, meshLookup, transformPaths, transformPathByPathId, out var mesh, out var failure))
+        {
+            warning = $"{partKind} renderer '{renderer.TransformPath}' skipped: {failure}";
+            return false;
+        }
+
+        if (!TryResolveRendererBonePaths(renderer, transformPathByPathId, out var rendererBonePaths))
+        {
+            warning = $"{partKind} mesh '{mesh.Path}' skipped: renderer {renderer.PathId} has unresolved skinned bone PathIDs.";
+            return false;
+        }
+
+        if (!TryResolveSkinBinding(
                 mesh,
                 rendererBonePaths,
                 renderer.SkinnedMeshBones,
@@ -213,28 +235,44 @@ public sealed class UnityRuntimeNativeMeshExporter
                 out var skinBinding,
                 out var skinFailure
             ))
-            {
-                warnings.Add($"{partKind} mesh '{mesh.Path}' skipped: {skinFailure}");
-                continue;
-            }
-
-            var rootBonePath = renderer.RootBonePathId is long rootBonePathId &&
-                transformPathByPathId.TryGetValue(rootBonePathId, out var resolvedRootBonePath)
-                ? resolvedRootBonePath
-                : null;
-
-            result.Add(BuildNativeMesh(
-                partKind,
-                mesh,
-                renderer,
-                renderer.TransformPath,
-                rootBonePath,
-                skinBinding,
-                ResolveMorphTargets(mesh.Path, morphMap)
-            ));
+        {
+            warning = $"{partKind} mesh '{mesh.Path}' skipped: {skinFailure}";
+            return false;
         }
 
-        return result;
+        var rootBonePath = renderer.RootBonePathId is long rootBonePathId &&
+            transformPathByPathId.TryGetValue(rootBonePathId, out var resolvedRootBonePath)
+            ? resolvedRootBonePath
+            : null;
+        nativeMesh = BuildNativeMesh(
+            partKind,
+            mesh,
+            renderer,
+            renderer.TransformPath,
+            rootBonePath,
+            skinBinding,
+            ResolveMorphTargets(mesh.Path, morphMap)
+        );
+        warning = string.Empty;
+        return true;
+    }
+
+    private static bool TryResolveRendererBonePaths(
+        SpringPrefabRenderer renderer,
+        Dictionary<long, string> transformPathByPathId,
+        out List<string> rendererBonePaths
+    )
+    {
+        rendererBonePaths = new List<string>();
+        foreach (var pathId in renderer.SkinnedMeshBones)
+        {
+            if (!transformPathByPathId.TryGetValue(pathId, out var bonePath))
+            {
+                return false;
+            }
+            rendererBonePaths.Add(bonePath);
+        }
+        return true;
     }
 
     private static bool IsActiveRenderer(
@@ -303,7 +341,7 @@ public sealed class UnityRuntimeNativeMeshExporter
 
     private static bool TryResolveImportedMesh(
         SpringPrefabRenderer renderer,
-        IReadOnlyDictionary<string, IReadOnlyList<ImportedMesh>> meshLookup,
+        Dictionary<string, IReadOnlyList<ImportedMesh>> meshLookup,
         IReadOnlyList<string> transformPaths,
         Dictionary<long, string> transformPathByPathId,
         out ImportedMesh mesh,
@@ -427,7 +465,7 @@ public sealed class UnityRuntimeNativeMeshExporter
         SpringPrefabRenderer renderer,
         ImportedMesh mesh,
         IReadOnlyList<string> transformPaths,
-        IReadOnlyDictionary<long, string> transformPathByPathId
+        Dictionary<long, string> transformPathByPathId
     )
     {
         var importedBoneCount = mesh.BoneList?.Count ?? 0;
@@ -1006,7 +1044,7 @@ public sealed class UnityRuntimeNativeMeshExporter
 
     private static IReadOnlyList<ImportedMorph> ResolveMorphTargets(
         string meshPath,
-        IReadOnlyDictionary<string, ImportedMorph> morphMap
+        Dictionary<string, ImportedMorph> morphMap
     )
     {
         if (morphMap.TryGetValue(meshPath, out var morph))

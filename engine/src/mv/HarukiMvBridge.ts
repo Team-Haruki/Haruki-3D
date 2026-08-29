@@ -323,24 +323,10 @@ export function createHarukiMvBridge(runtime: HarukiMvRuntime): HarukiMvBridge {
   };
 }
 
-function createRenderProfilePayload(request: HarukiMvRenderProfileRequest) {
-  if (!Number.isInteger(request.refreshRate) || request.refreshRate <= 0) {
-    throw new RangeError("MV render profile refreshRate must be a positive integer.");
-  }
-
-  const resolution = request.resolution ?? "device";
-  const outputResolution = {
-    device: 0,
-    "720p": 1,
-    "1080p": 2,
-    "1440p": 3,
-    "4k-uhd": 4,
-    custom: 5,
-  }[resolution];
-  if (outputResolution === undefined) {
-    throw new RangeError("MV render profile resolution is invalid.");
-  }
-
+function resolveRenderProfileDimensions(
+  request: HarukiMvRenderProfileRequest,
+  resolution: NonNullable<HarukiMvRenderProfileRequest["resolution"]> | "device"
+) {
   let width = 0;
   let height = 0;
   let dpi = 0;
@@ -383,6 +369,32 @@ function createRenderProfilePayload(request: HarukiMvRenderProfileRequest) {
   } else {
     ({ width, height } = HARUKI_MV_RENDER_PRESETS[resolution]);
   }
+
+  return { width, height, dpi, quality, playMode };
+}
+
+function createRenderProfilePayload(request: HarukiMvRenderProfileRequest) {
+  if (!Number.isInteger(request.refreshRate) || request.refreshRate <= 0) {
+    throw new RangeError("MV render profile refreshRate must be a positive integer.");
+  }
+
+  const resolution = request.resolution ?? "device";
+  const outputResolution = {
+    device: 0,
+    "720p": 1,
+    "1080p": 2,
+    "1440p": 3,
+    "4k-uhd": 4,
+    custom: 5,
+  }[resolution];
+  if (outputResolution === undefined) {
+    throw new RangeError("MV render profile resolution is invalid.");
+  }
+
+  const { width, height, dpi, quality, playMode } = resolveRenderProfileDimensions(
+    request,
+    resolution
+  );
 
   return {
     width,

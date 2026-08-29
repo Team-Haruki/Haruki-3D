@@ -413,7 +413,7 @@ public sealed class VrmSpringBoneCandidateBuilder
         }
     }
 
-    private static IReadOnlyList<SpringBoneEntry> ResolveRuntimeManagerBones(
+    private static List<SpringBoneEntry> ResolveRuntimeManagerBones(
         SpringBoneExport part,
         SpringMonoBehaviourEntry manager,
         IReadOnlyDictionary<long, SpringBoneEntry> bonesByPathId,

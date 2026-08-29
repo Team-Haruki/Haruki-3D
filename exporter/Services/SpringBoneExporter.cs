@@ -224,128 +224,28 @@ public sealed class SpringBoneExporter
         var gameObjects = objects.OfType<GameObject>()
             .OrderBy(gameObject => BuildTransformPathOrName(gameObject), StringComparer.Ordinal)
             .ThenBy(gameObject => gameObject.m_PathID)
-            .Select(gameObject =>
-            {
-                var transformPath = gameObject.m_Transform is null ? null : BuildTransformPath(gameObject.m_Transform);
-                return new SpringPrefabGameObject(
-                    PathId: gameObject.m_PathID,
-                    Name: gameObject.m_Name,
-                    ActiveSelf: ReadGameObjectActiveSelf(gameObject),
-                    ActiveInHierarchy: ReadGameObjectActiveInHierarchy(gameObject),
-                    TransformPathId: gameObject.m_Transform?.m_PathID,
-                    TransformPath: transformPath,
-                    ComponentPathIds: gameObject.m_Components
-                        .Select(component => component.m_PathID)
-                        .Where(pathId => pathId != 0)
-                        .ToList()
-                );
-            })
+            .Select(BuildPrefabGameObject)
             .ToList();
         var transforms = objects.OfType<Transform>()
             .OrderBy(transform => BuildTransformPath(transform), StringComparer.Ordinal)
             .ThenBy(transform => transform.m_PathID)
-            .Select(transform =>
-            {
-                var gameObjectPathId = transform.m_GameObject.m_PathID == 0
-                    ? (long?)null
-                    : transform.m_GameObject.m_PathID;
-                var path = BuildTransformPath(transform);
-                return new SpringPrefabTransform(
-                    PathId: transform.m_PathID,
-                    GameObjectPathId: gameObjectPathId,
-                    Name: ResolveTransformName(transform),
-                    TransformPath: path,
-                    PoseRoot: ExtractPoseRoot(path),
-                    ParentPathId: transform.m_Father.m_PathID == 0 ? null : transform.m_Father.m_PathID,
-                    ChildPathIds: transform.m_Children
-                        .Select(child => child.m_PathID)
-                        .Where(pathId => pathId != 0)
-                        .ToList(),
-                    LocalPosition: ToSpringVector3(transform.m_LocalPosition),
-                    LocalRotation: ToSpringQuaternion(transform.m_LocalRotation),
-                    LocalScale: ToSpringVector3(transform.m_LocalScale)
-                );
-            })
+            .Select(BuildPrefabTransform)
             .ToList();
         var renderers = objects.OfType<Renderer>()
             .OrderBy(renderer => ResolveGameObject(renderer.m_GameObject)?.TransformPath, StringComparer.Ordinal)
             .ThenBy(renderer => renderer.m_PathID)
-            .Select(renderer =>
-            {
-                var gameObject = ResolveGameObject(renderer.m_GameObject);
-                var transformPathId = gameObject?.TransformPathId;
-                var meshPathId = ResolveRendererMeshPathId(renderer, gameObject);
-                var meshName = ResolveRendererMeshName(renderer, gameObject);
-                var skinnedMeshBones = renderer is SkinnedMeshRenderer skinnedMeshRenderer
-                    ? skinnedMeshRenderer.m_Bones
-                        .Select(bone => bone.m_PathID)
-                        .Where(pathId => pathId != 0)
-                        .ToList()
-                    : new List<long>();
-                var rootBonePathId = rendererRawByPathId.TryGetValue(renderer.m_PathID, out var rendererRaw)
-                    ? ResolveObjectRef(ReadProperty(rendererRaw, "m_RootBone"), objectRefsByPathId)?.PathId
-                    : null;
-                return new SpringPrefabRenderer(
-                    PathId: renderer.m_PathID,
-                    TypeName: renderer.type.ToString(),
-                    GameObjectPathId: renderer.m_GameObject.m_PathID == 0 ? null : renderer.m_GameObject.m_PathID,
-                    TransformPathId: transformPathId,
-                    Name: gameObject?.Name,
-                    TransformPath: gameObject?.TransformPath,
-                    PoseRoot: ExtractPoseRoot(gameObject?.TransformPath),
-                    ActiveSelf: gameObject?.ActiveSelf,
-                    ActiveInHierarchy: gameObject?.ActiveInHierarchy,
-                    Enabled: ReadRendererEnabled(rendererRawByPathId, renderer.m_PathID) ?? false,
-                    MeshPathId: meshPathId,
-                    MeshName: meshName,
-                    SkinnedMeshBones: skinnedMeshBones,
-                    RootBonePathId: rootBonePathId,
-                    MaterialFileIds: renderer.m_Materials
-                        .Select(material => (long)material.m_FileID)
-                        .ToList(),
-                    MaterialPathIds: renderer.m_Materials
-                        .Select(material => material.m_PathID)
-                        .ToList()
-                );
-            })
+            .Select(renderer => BuildPrefabRenderer(renderer, rendererRawByPathId, objectRefsByPathId))
             .ToList();
         var animators = objects.OfType<Animator>()
             .OrderBy(animator => ResolveGameObject(animator.m_GameObject)?.TransformPath, StringComparer.Ordinal)
             .ThenBy(animator => animator.m_PathID)
-            .Select(animator =>
-            {
-                var gameObject = ResolveGameObject(animator.m_GameObject);
-                return new SpringPrefabAnimator(
-                    PathId: animator.m_PathID,
-                    GameObjectPathId: animator.m_GameObject.m_PathID == 0 ? null : animator.m_GameObject.m_PathID,
-                    Name: gameObject?.Name,
-                    TransformPath: gameObject?.TransformPath,
-                    PoseRoot: ExtractPoseRoot(gameObject?.TransformPath),
-                    Enabled: animator.m_Enabled != 0,
-                    HasTransformHierarchy: animator.m_HasTransformHierarchy,
-                    AvatarPathId: animator.m_Avatar.m_PathID == 0 ? null : animator.m_Avatar.m_PathID,
-                    ControllerPathId: animator.m_Controller.m_PathID == 0 ? null : animator.m_Controller.m_PathID
-                );
-            })
+            .Select(BuildPrefabAnimator)
             .ToList();
         var monoGraph = monoBehaviours
             .OrderBy(mono => ResolveGameObject(mono.Mono.m_GameObject)?.TransformPath, StringComparer.Ordinal)
             .ThenBy(mono => mono.ScriptName, StringComparer.Ordinal)
             .ThenBy(mono => mono.Mono.m_PathID)
-            .Select(mono =>
-            {
-                var gameObject = ResolveGameObject(mono.Mono.m_GameObject);
-                return new SpringPrefabMonoBehaviour(
-                    PathId: mono.Mono.m_PathID,
-                    ScriptName: mono.ScriptName,
-                    GameObjectPathId: mono.Mono.m_GameObject.m_PathID == 0 ? null : mono.Mono.m_GameObject.m_PathID,
-                    Name: gameObject?.Name,
-                    TransformPath: gameObject?.TransformPath,
-                    PoseRoot: ExtractPoseRoot(gameObject?.TransformPath),
-                    Enabled: ReadBool(mono.Raw, "m_Enabled"),
-                    ObjectReferenceFields: CollectObjectReferenceFields(mono.Raw)
-                );
-            })
+            .Select(BuildPrefabMonoBehaviour)
             .ToList();
         var constraints = objects
             .Where(IsUnityConstraintObject)
@@ -371,6 +271,112 @@ public sealed class SpringBoneExporter
             Constraints: constraints,
             ConstraintCapability: BuildConstraintCapability(),
             RootTransformPathIds: rootTransformPathIds
+        );
+    }
+
+    private static SpringPrefabGameObject BuildPrefabGameObject(GameObject gameObject)
+    {
+        var transformPath = gameObject.m_Transform is null
+            ? null
+            : BuildTransformPath(gameObject.m_Transform);
+        return new SpringPrefabGameObject(
+            PathId: gameObject.m_PathID,
+            Name: gameObject.m_Name,
+            ActiveSelf: ReadGameObjectActiveSelf(gameObject),
+            ActiveInHierarchy: ReadGameObjectActiveInHierarchy(gameObject),
+            TransformPathId: gameObject.m_Transform?.m_PathID,
+            TransformPath: transformPath,
+            ComponentPathIds: gameObject.m_Components
+                .Select(component => component.m_PathID)
+                .Where(pathId => pathId != 0)
+                .ToList()
+        );
+    }
+
+    private static SpringPrefabTransform BuildPrefabTransform(Transform transform)
+    {
+        var path = BuildTransformPath(transform);
+        return new SpringPrefabTransform(
+            PathId: transform.m_PathID,
+            GameObjectPathId: transform.m_GameObject.m_PathID == 0 ? null : transform.m_GameObject.m_PathID,
+            Name: ResolveTransformName(transform),
+            TransformPath: path,
+            PoseRoot: ExtractPoseRoot(path),
+            ParentPathId: transform.m_Father.m_PathID == 0 ? null : transform.m_Father.m_PathID,
+            ChildPathIds: transform.m_Children
+                .Select(child => child.m_PathID)
+                .Where(pathId => pathId != 0)
+                .ToList(),
+            LocalPosition: ToSpringVector3(transform.m_LocalPosition),
+            LocalRotation: ToSpringQuaternion(transform.m_LocalRotation),
+            LocalScale: ToSpringVector3(transform.m_LocalScale)
+        );
+    }
+
+    private static SpringPrefabRenderer BuildPrefabRenderer(
+        Renderer renderer,
+        Dictionary<long, JsonObject> rendererRawByPathId,
+        Dictionary<long, SpringObjectRef> objectRefsByPathId
+    )
+    {
+        var gameObject = ResolveGameObject(renderer.m_GameObject);
+        var skinnedMeshBones = renderer is SkinnedMeshRenderer skinnedMeshRenderer
+            ? skinnedMeshRenderer.m_Bones
+                .Select(bone => bone.m_PathID)
+                .Where(pathId => pathId != 0)
+                .ToList()
+            : new List<long>();
+        var rootBonePathId = rendererRawByPathId.TryGetValue(renderer.m_PathID, out var rendererRaw)
+            ? ResolveObjectRef(ReadProperty(rendererRaw, "m_RootBone"), objectRefsByPathId)?.PathId
+            : null;
+        return new SpringPrefabRenderer(
+            PathId: renderer.m_PathID,
+            TypeName: renderer.type.ToString(),
+            GameObjectPathId: renderer.m_GameObject.m_PathID == 0 ? null : renderer.m_GameObject.m_PathID,
+            TransformPathId: gameObject?.TransformPathId,
+            Name: gameObject?.Name,
+            TransformPath: gameObject?.TransformPath,
+            PoseRoot: ExtractPoseRoot(gameObject?.TransformPath),
+            ActiveSelf: gameObject?.ActiveSelf,
+            ActiveInHierarchy: gameObject?.ActiveInHierarchy,
+            Enabled: ReadRendererEnabled(rendererRawByPathId, renderer.m_PathID) ?? false,
+            MeshPathId: ResolveRendererMeshPathId(renderer, gameObject),
+            MeshName: ResolveRendererMeshName(renderer, gameObject),
+            SkinnedMeshBones: skinnedMeshBones,
+            RootBonePathId: rootBonePathId,
+            MaterialFileIds: renderer.m_Materials.Select(material => (long)material.m_FileID).ToList(),
+            MaterialPathIds: renderer.m_Materials.Select(material => material.m_PathID).ToList()
+        );
+    }
+
+    private static SpringPrefabAnimator BuildPrefabAnimator(Animator animator)
+    {
+        var gameObject = ResolveGameObject(animator.m_GameObject);
+        return new SpringPrefabAnimator(
+            PathId: animator.m_PathID,
+            GameObjectPathId: animator.m_GameObject.m_PathID == 0 ? null : animator.m_GameObject.m_PathID,
+            Name: gameObject?.Name,
+            TransformPath: gameObject?.TransformPath,
+            PoseRoot: ExtractPoseRoot(gameObject?.TransformPath),
+            Enabled: animator.m_Enabled != 0,
+            HasTransformHierarchy: animator.m_HasTransformHierarchy,
+            AvatarPathId: animator.m_Avatar.m_PathID == 0 ? null : animator.m_Avatar.m_PathID,
+            ControllerPathId: animator.m_Controller.m_PathID == 0 ? null : animator.m_Controller.m_PathID
+        );
+    }
+
+    private static SpringPrefabMonoBehaviour BuildPrefabMonoBehaviour(SpringMonoRaw mono)
+    {
+        var gameObject = ResolveGameObject(mono.Mono.m_GameObject);
+        return new SpringPrefabMonoBehaviour(
+            PathId: mono.Mono.m_PathID,
+            ScriptName: mono.ScriptName,
+            GameObjectPathId: mono.Mono.m_GameObject.m_PathID == 0 ? null : mono.Mono.m_GameObject.m_PathID,
+            Name: gameObject?.Name,
+            TransformPath: gameObject?.TransformPath,
+            PoseRoot: ExtractPoseRoot(gameObject?.TransformPath),
+            Enabled: ReadBool(mono.Raw, "m_Enabled"),
+            ObjectReferenceFields: CollectObjectReferenceFields(mono.Raw)
         );
     }
 
@@ -687,53 +693,56 @@ public sealed class SpringBoneExporter
         switch (node)
         {
             case JsonObject obj:
-            {
-                var currentFaceId = ReadString(obj, "key") ??
-                    ReadString(obj, "Key") ??
-                    ReadString(obj, "faceId") ??
-                    ReadString(obj, "FaceId") ??
-                    faceId;
-                var valueNode = ReadObject(obj, "value") ??
-                    ReadObject(obj, "Value");
-                if (valueNode is not null)
-                {
-                    if (TryReadAccessoryTransform(valueNode, currentFaceId, out var adjustment))
-                    {
-                        output.Add(adjustment);
-                    }
-                    CollectAccessoryTransformAdjustments(valueNode, currentFaceId, output);
-                    return;
-                }
-
-                if (TryReadAccessoryTransform(obj, currentFaceId, out var directAdjustment))
-                {
-                    output.Add(directAdjustment);
-                    return;
-                }
-
-                if (TryReadPairedDictionaryArrays(obj, output))
-                {
-                    return;
-                }
-
-                foreach (var pair in obj)
-                {
-                    var pairFaceId = LooksLikeFaceId(pair.Key) ? pair.Key : currentFaceId;
-                    if (TryReadAccessoryTransform(pair.Value, pairFaceId, out var pairAdjustment))
-                    {
-                        output.Add(pairAdjustment);
-                        continue;
-                    }
-                    CollectAccessoryTransformAdjustments(pair.Value, pairFaceId, output);
-                }
+                CollectAccessoryTransformAdjustments(obj, faceId, output);
                 return;
-            }
             case JsonArray array:
                 foreach (var item in array)
                 {
                     CollectAccessoryTransformAdjustments(item, faceId, output);
                 }
                 return;
+        }
+    }
+
+    private static void CollectAccessoryTransformAdjustments(
+        JsonObject obj,
+        string? faceId,
+        List<SpringAccessoryTransformAdjustment> output
+    )
+    {
+        var currentFaceId = ReadString(obj, "key") ??
+            ReadString(obj, "Key") ??
+            ReadString(obj, "faceId") ??
+            ReadString(obj, "FaceId") ??
+            faceId;
+        var valueNode = ReadObject(obj, "value") ?? ReadObject(obj, "Value");
+        if (valueNode is not null)
+        {
+            if (TryReadAccessoryTransform(valueNode, currentFaceId, out var adjustment))
+            {
+                output.Add(adjustment);
+            }
+            CollectAccessoryTransformAdjustments(valueNode, currentFaceId, output);
+            return;
+        }
+        if (TryReadAccessoryTransform(obj, currentFaceId, out var directAdjustment))
+        {
+            output.Add(directAdjustment);
+            return;
+        }
+        if (TryReadPairedDictionaryArrays(obj, output))
+        {
+            return;
+        }
+        foreach (var pair in obj)
+        {
+            var pairFaceId = LooksLikeFaceId(pair.Key) ? pair.Key : currentFaceId;
+            if (TryReadAccessoryTransform(pair.Value, pairFaceId, out var pairAdjustment))
+            {
+                output.Add(pairAdjustment);
+                continue;
+            }
+            CollectAccessoryTransformAdjustments(pair.Value, pairFaceId, output);
         }
     }
 

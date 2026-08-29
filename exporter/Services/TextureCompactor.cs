@@ -36,48 +36,7 @@ public sealed class TextureCompactor
         {
             try
             {
-                var before = new FileInfo(path).Length;
-                if (mode != "oxipng")
-                {
-                    results.Add(new TextureOptimizationResult(path, null, before, before));
-                    return;
-                }
-                var temporaryPath = path + $".{Guid.NewGuid():N}.optimize.png";
-                try
-                {
-                    File.Copy(path, temporaryPath);
-                    RunOxipng(temporaryPath);
-                    var after = new FileInfo(temporaryPath).Length;
-                    if (after < before)
-                    {
-                        var optimizedHash = ComputeSha256Hex(temporaryPath);
-                        var optimizedDirectory = Path.Combine(root, optimizedHash[..2]);
-                        var optimizedPath = Path.Combine(optimizedDirectory, optimizedHash + ".png");
-                        Directory.CreateDirectory(optimizedDirectory);
-                        try
-                        {
-                            File.Move(temporaryPath, optimizedPath);
-                        }
-                        catch (IOException) when (File.Exists(optimizedPath))
-                        {
-                            File.Delete(temporaryPath);
-                        }
-                        results.Add(new TextureOptimizationResult(
-                            path,
-                            $"/_texture_store/sha256/{optimizedHash[..2]}/{optimizedHash}.png",
-                            before,
-                            new FileInfo(optimizedPath).Length
-                        ));
-                    }
-                    else
-                    {
-                        results.Add(new TextureOptimizationResult(path, null, before, before));
-                    }
-                }
-                finally
-                {
-                    File.Delete(temporaryPath);
-                }
+                results.Add(OptimizeTextureFile(path, root, mode));
             }
             catch (Exception ex)
             {
@@ -119,6 +78,55 @@ public sealed class TextureCompactor
             JsonSerializer.SerializeToUtf8Bytes(report, JsonOptions)
         );
         return report;
+    }
+
+    private static TextureOptimizationResult OptimizeTextureFile(string path, string root, string mode)
+    {
+        var before = new FileInfo(path).Length;
+        if (mode != "oxipng") return new TextureOptimizationResult(path, null, before, before);
+
+        var temporaryPath = path + $".{Guid.NewGuid():N}.optimize.png";
+        try
+        {
+            File.Copy(path, temporaryPath);
+            RunOxipng(temporaryPath);
+            if (new FileInfo(temporaryPath).Length >= before)
+            {
+                return new TextureOptimizationResult(path, null, before, before);
+            }
+            return StoreOptimizedTexture(path, temporaryPath, root, before);
+        }
+        finally
+        {
+            File.Delete(temporaryPath);
+        }
+    }
+
+    private static TextureOptimizationResult StoreOptimizedTexture(
+        string originalPath,
+        string temporaryPath,
+        string root,
+        long before
+    )
+    {
+        var optimizedHash = ComputeSha256Hex(temporaryPath);
+        var optimizedDirectory = Path.Combine(root, optimizedHash[..2]);
+        var optimizedPath = Path.Combine(optimizedDirectory, optimizedHash + ".png");
+        Directory.CreateDirectory(optimizedDirectory);
+        try
+        {
+            File.Move(temporaryPath, optimizedPath);
+        }
+        catch (IOException) when (File.Exists(optimizedPath))
+        {
+            File.Delete(temporaryPath);
+        }
+        return new TextureOptimizationResult(
+            originalPath,
+            $"/_texture_store/sha256/{optimizedHash[..2]}/{optimizedHash}.png",
+            before,
+            new FileInfo(optimizedPath).Length
+        );
     }
 
     private sealed record TextureOptimizationResult(
@@ -232,47 +240,17 @@ public sealed class TextureCompactor
         var cached = new List<(Ktx2VariantKey Variant, string Path)>();
         foreach (var variant in variants)
         {
-            var sourceHash = Path.GetFileNameWithoutExtension(variant.SourcePath);
-            if (sourceHash.Length != 64 || sourceHash.Any(character => !Uri.IsHexDigit(character)))
+            if (!TryResolveCachedKtx2Variant(variant, sharedCacheDirectory, out var item))
             {
                 return false;
             }
-            var transfer = variant.Transfer.ToString().ToLowerInvariant();
-            var cachePath = Path.Combine(
-                sharedCacheDirectory,
-                "ktx2",
-                Ktx2EncoderVersion,
-                transfer,
-                sourceHash[..2],
-                sourceHash + ".ktx2"
-            );
-            if (!File.Exists(cachePath) || new FileInfo(cachePath).Length == 0)
-            {
-                return false;
-            }
-            cached.Add((variant, cachePath));
+            cached.Add(item);
         }
 
         var restored = new Dictionary<Ktx2VariantKey, Ktx2VariantResult>();
         foreach (var item in cached)
         {
-            var contentHash = ktx2ContentHashes.GetOrAdd(item.Path, ComputeSha256Hex);
-            var storePath = Path.Combine(
-                outputDirectory,
-                "_texture_store",
-                "sha256",
-                contentHash[..2],
-                contentHash + ".ktx2"
-            );
-            ContentAddressedFile.Ensure(
-                storePath,
-                contentHash,
-                temporaryPath => File.Copy(item.Path, temporaryPath)
-            );
-            restored[item.Variant] = new Ktx2VariantResult(
-                storePath,
-                $"/_texture_store/sha256/{contentHash[..2]}/{contentHash}.ktx2"
-            );
+            restored[item.Variant] = RestoreCachedKtx2Variant(item.Path, outputDirectory);
         }
 
         var rewritten = RewriteRuntimeNodeToKtx2(
@@ -283,6 +261,52 @@ public sealed class TextureCompactor
         );
         return rewritten > 0 &&
             CollectKtx2Variants(runtime, packageDirectory, outputDirectory, requireSource: false).Count == 0;
+    }
+
+    private static bool TryResolveCachedKtx2Variant(
+        Ktx2VariantKey variant,
+        string sharedCacheDirectory,
+        out (Ktx2VariantKey Variant, string Path) item
+    )
+    {
+        var sourceHash = Path.GetFileNameWithoutExtension(variant.SourcePath);
+        if (sourceHash.Length != 64 || sourceHash.Any(character => !Uri.IsHexDigit(character)))
+        {
+            item = default;
+            return false;
+        }
+        var transfer = variant.Transfer.ToString().ToLowerInvariant();
+        var cachePath = Path.Combine(
+            sharedCacheDirectory,
+            "ktx2",
+            Ktx2EncoderVersion,
+            transfer,
+            sourceHash[..2],
+            sourceHash + ".ktx2"
+        );
+        item = (variant, cachePath);
+        return File.Exists(cachePath) && new FileInfo(cachePath).Length > 0;
+    }
+
+    private Ktx2VariantResult RestoreCachedKtx2Variant(string cachePath, string outputDirectory)
+    {
+        var contentHash = ktx2ContentHashes.GetOrAdd(cachePath, ComputeSha256Hex);
+        var storePath = Path.Combine(
+            outputDirectory,
+            "_texture_store",
+            "sha256",
+            contentHash[..2],
+            contentHash + ".ktx2"
+        );
+        ContentAddressedFile.Ensure(
+            storePath,
+            contentHash,
+            temporaryPath => File.Copy(cachePath, temporaryPath)
+        );
+        return new Ktx2VariantResult(
+            storePath,
+            $"/_texture_store/sha256/{contentHash[..2]}/{contentHash}.ktx2"
+        );
     }
 
     private static List<Ktx2VariantKey> CollectKtx2Variants(
@@ -357,6 +381,19 @@ public sealed class TextureCompactor
         HashSet<string> aliases
     )
     {
+        CollectCharacterTextureAliases(runtime, packageDirectory, outputDirectory, requireSource, aliases);
+        CollectMaterialSlotVariants(runtime, packageDirectory, outputDirectory, requireSource, transfers);
+        CollectTextureRoleVariants(runtime, packageDirectory, outputDirectory, requireSource, transfers);
+    }
+
+    private static void CollectCharacterTextureAliases(
+        JsonObject runtime,
+        string packageDirectory,
+        string outputDirectory,
+        bool requireSource,
+        HashSet<string> aliases
+    )
+    {
         if (runtime["characterTextures"] is JsonObject characterTextures)
         {
             foreach (var value in characterTextures.Select(pair => pair.Value).OfType<JsonValue>())
@@ -368,6 +405,16 @@ public sealed class TextureCompactor
                 }
             }
         }
+    }
+
+    private static void CollectMaterialSlotVariants(
+        JsonObject runtime,
+        string packageDirectory,
+        string outputDirectory,
+        bool requireSource,
+        Dictionary<string, HashSet<Ktx2Transfer>> transfers
+    )
+    {
         if (runtime["materialSlots"] is JsonArray materialSlots)
         {
             foreach (var slot in materialSlots.OfType<JsonObject>())
@@ -390,6 +437,16 @@ public sealed class TextureCompactor
                 }
             }
         }
+    }
+
+    private static void CollectTextureRoleVariants(
+        JsonObject runtime,
+        string packageDirectory,
+        string outputDirectory,
+        bool requireSource,
+        Dictionary<string, HashSet<Ktx2Transfer>> transfers
+    )
+    {
         if (runtime["textureRoles"] is not JsonArray textureRoles)
         {
             return;
@@ -903,74 +960,9 @@ public sealed class TextureCompactor
         var packageDirectory = Path.GetDirectoryName(runtimeJsonPath)
             ?? throw new InvalidOperationException($"Runtime JSON has no parent directory: {runtimeJsonPath}");
         var node = ReadRuntimeJson(runtimeJsonPath);
-        var rewritten = 0;
-        if (node["characterTextures"] is JsonObject characterTextures)
-        {
-            foreach (var pair in characterTextures.ToList())
-            {
-                if (pair.Value is not JsonValue valueNode ||
-                    !valueNode.TryGetValue<string>(out var value))
-                {
-                    continue;
-                }
-                if (TryRewriteTexturePath(packageDirectory, outputDirectory, value, pathMap, out var rewrittenPath))
-                {
-                    characterTextures[pair.Key] = rewrittenPath;
-                    rewritten += 1;
-                }
-            }
-        }
-        if (node["materialSlots"] is JsonArray materialSlots)
-        {
-            foreach (var materialSlot in materialSlots.OfType<JsonObject>())
-            {
-                foreach (var propertyName in new[] { "mainTex", "shadowTex", "valueTex", "faceShadowTex" })
-                {
-                    if (materialSlot[propertyName] is not JsonValue valueNode ||
-                        !valueNode.TryGetValue<string>(out var value))
-                    {
-                        continue;
-                    }
-                    if (TryRewriteTexturePath(packageDirectory, outputDirectory, value, pathMap, out var rewrittenPath))
-                    {
-                        materialSlot[propertyName] = rewrittenPath;
-                        rewritten += 1;
-                    }
-                }
-                foreach (var texture in EnumerateRawMaterialTextures(materialSlot))
-                {
-                    if (texture["uri"] is JsonValue rawValueNode &&
-                        rawValueNode.TryGetValue<string>(out var rawValue) &&
-                        TryRewriteTexturePath(
-                            packageDirectory,
-                            outputDirectory,
-                            rawValue,
-                            pathMap,
-                            out var rewrittenRawPath
-                        ))
-                    {
-                        texture["uri"] = rewrittenRawPath;
-                        rewritten += 1;
-                    }
-                }
-            }
-        }
-        if (node["textureRoles"] is JsonArray textureRoles)
-        {
-            foreach (var textureRole in textureRoles.OfType<JsonObject>())
-            {
-                if (textureRole["uri"] is not JsonValue valueNode ||
-                    !valueNode.TryGetValue<string>(out var value))
-                {
-                    continue;
-                }
-                if (TryRewriteTexturePath(packageDirectory, outputDirectory, value, pathMap, out var rewrittenPath))
-                {
-                    textureRole["uri"] = rewrittenPath;
-                    rewritten += 1;
-                }
-            }
-        }
+        var rewritten = RewriteTextureMap(node["characterTextures"] as JsonObject, packageDirectory, outputDirectory, pathMap);
+        rewritten += RewriteMaterialSlotTextures(node["materialSlots"] as JsonArray, packageDirectory, outputDirectory, pathMap);
+        rewritten += RewriteTextureRoles(node["textureRoles"] as JsonArray, packageDirectory, outputDirectory, pathMap);
         RuntimeJsonWriter.Write(
             runtimeJsonPath,
             node,
@@ -978,6 +970,93 @@ public sealed class TextureCompactor
             binaryArraySchema: RuntimeBinaryArraySchema.PartRuntime
         );
         return rewritten;
+    }
+
+    private static int RewriteTextureMap(
+        JsonObject? textures,
+        string packageDirectory,
+        string outputDirectory,
+        IReadOnlyDictionary<string, string> pathMap
+    )
+    {
+        if (textures is null) return 0;
+        var rewritten = 0;
+        foreach (var pair in textures.ToList())
+        {
+            if (pair.Value is JsonValue valueNode &&
+                valueNode.TryGetValue<string>(out var value) &&
+                TryRewriteTexturePath(packageDirectory, outputDirectory, value, pathMap, out var rewrittenPath))
+            {
+                textures[pair.Key] = rewrittenPath;
+                rewritten += 1;
+            }
+        }
+        return rewritten;
+    }
+
+    private static int RewriteMaterialSlotTextures(
+        JsonArray? materialSlots,
+        string packageDirectory,
+        string outputDirectory,
+        IReadOnlyDictionary<string, string> pathMap
+    )
+    {
+        if (materialSlots is null) return 0;
+        var rewritten = 0;
+        foreach (var materialSlot in materialSlots.OfType<JsonObject>())
+        {
+            rewritten += RewriteNamedTextures(materialSlot, packageDirectory, outputDirectory, pathMap);
+            foreach (var texture in EnumerateRawMaterialTextures(materialSlot))
+            {
+                rewritten += RewriteTextureProperty(texture, "uri", packageDirectory, outputDirectory, pathMap);
+            }
+        }
+        return rewritten;
+    }
+
+    private static int RewriteNamedTextures(
+        JsonObject materialSlot,
+        string packageDirectory,
+        string outputDirectory,
+        IReadOnlyDictionary<string, string> pathMap
+    )
+    {
+        var rewritten = 0;
+        foreach (var propertyName in new[] { "mainTex", "shadowTex", "valueTex", "faceShadowTex" })
+        {
+            rewritten += RewriteTextureProperty(materialSlot, propertyName, packageDirectory, outputDirectory, pathMap);
+        }
+        return rewritten;
+    }
+
+    private static int RewriteTextureRoles(
+        JsonArray? textureRoles,
+        string packageDirectory,
+        string outputDirectory,
+        IReadOnlyDictionary<string, string> pathMap
+    )
+    {
+        if (textureRoles is null) return 0;
+        return textureRoles.OfType<JsonObject>().Sum(role =>
+            RewriteTextureProperty(role, "uri", packageDirectory, outputDirectory, pathMap));
+    }
+
+    private static int RewriteTextureProperty(
+        JsonObject node,
+        string propertyName,
+        string packageDirectory,
+        string outputDirectory,
+        IReadOnlyDictionary<string, string> pathMap
+    )
+    {
+        if (node[propertyName] is not JsonValue valueNode ||
+            !valueNode.TryGetValue<string>(out var value) ||
+            !TryRewriteTexturePath(packageDirectory, outputDirectory, value, pathMap, out var rewrittenPath))
+        {
+            return 0;
+        }
+        node[propertyName] = rewrittenPath;
+        return 1;
     }
 
     private static JsonObject ReadRuntimeJson(string runtimeJsonPath)
