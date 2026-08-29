@@ -9,6 +9,7 @@ export default defineConfig({
     plugins: () => [externalizeBrotliWasm()],
   },
   build: {
+    sourcemap: true,
     lib: {
       entry: {
         index: fileURLToPath(new URL("./src/index.ts", import.meta.url)),

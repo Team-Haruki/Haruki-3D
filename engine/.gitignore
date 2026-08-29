@@ -4,6 +4,8 @@ dist-consumer
 test-results
 playwright-report
 blob-report
+coverage
+coverage-root
 .DS_Store
 haruki-3d-engine.config.json
 
