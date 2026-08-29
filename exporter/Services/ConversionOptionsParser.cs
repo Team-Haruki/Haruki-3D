@@ -5,6 +5,11 @@ namespace PjskBundle2Parts.Services;
 
 public static class ConversionOptionsParser
 {
+    private static readonly JsonSerializerOptions ReadJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
+
     public static string Usage =>
         "Usage:\n" +
         "  Haruki-3D-Exporter --emit-costume-registries --master <master-directory> --asset-root <AssetBundles-root> --out <directory>\n" +
@@ -574,10 +579,7 @@ public static class ConversionOptionsParser
         var json = File.ReadAllText(configPath);
         return JsonSerializer.Deserialize<ExporterConfig>(
             json,
-            new JsonSerializerOptions
-            {
-                PropertyNameCaseInsensitive = true
-            }
+            ReadJsonOptions
         ) ?? throw new InvalidOperationException("config JSON is empty.");
     }
 

@@ -9,6 +9,36 @@ public sealed class ConversionPlanner
     {
         WriteIndented = true,
     };
+    private static readonly string[] SummaryNotes =
+    [
+        "This conversion plan now includes real bundle inventory extracted via AssetStudio.",
+        "Body input was resolved from a directory-aware bundle locator.",
+        "Head input was resolved from a file-aware bundle locator.",
+    ];
+    private static readonly string[] RuntimePayloadKeys =
+    [
+        "sekaiRuntimeMaterialProfile", "bodyManifest", "headManifest", "materialSlots",
+        "textureRoles", "morphChannelBindings", "bodyHeadAssembly", "pjskSpringBone",
+        "springBoneSourceMetadata",
+    ];
+    private static readonly string[] RuntimeMaterialKinds =
+    [
+        "body", "hair", "accessory", "face_sdf", "face", "eye", "eyelight", "eyelash", "eyebrow",
+    ];
+    private static readonly string[] PreservedSekaiFeatures =
+    [
+        "Sekai C/S/H texture role separation",
+        "FaceShadowTex/SDF UV1 semantics",
+        "body/head stitch metadata before final VRM merge is stable",
+        "PJSK morph hash bindings for face motion JSON",
+        "plugin/viewer tuned preview lighting",
+    ];
+    private static readonly string[] UnresolvedParityFeatures =
+    [
+        "browser equivalent of the runtime face SDF bone-basis driver",
+        "springbone.json to VRM springBone mapping",
+        "exact Unity shader controller animation tracks",
+    ];
     private readonly IReadOnlyDictionary<string, float> characterHeightMetersById;
 
     public ConversionPlanner(
@@ -45,12 +75,7 @@ public sealed class ConversionPlanner
             headInventory.Roots.Count,
             bodyInventory.SkinnedMeshes.Count,
             headInventory.SkinnedMeshes.Count,
-            new[]
-            {
-                "This conversion plan now includes real bundle inventory extracted via AssetStudio.",
-                "Body input was resolved from a directory-aware bundle locator.",
-                "Head input was resolved from a file-aware bundle locator.",
-            }
+            SummaryNotes
         );
 
         var bodyManifest = BuildBodyTemplate(body, skeletonId, bodyInventory);
@@ -88,13 +113,13 @@ public sealed class ConversionPlanner
         );
     }
 
-    public async Task WritePlanAsync(ConversionPlan plan)
+    public static async Task WritePlanAsync(ConversionPlan plan)
     {
         await using var stream = File.Create(plan.PlanPath);
         await JsonSerializer.SerializeAsync(stream, plan.Summary, JsonOptions);
     }
 
-    public async Task WriteManifestTemplatesAsync(ConversionPlan plan)
+    public static async Task WriteManifestTemplatesAsync(ConversionPlan plan)
     {
         await using (var bodyStream = File.Create(plan.BodyManifestTemplatePath))
         {
@@ -115,7 +140,7 @@ public sealed class ConversionPlanner
         }
     }
 
-    public async Task WriteInventoriesAsync(ConversionPlan plan)
+    public static async Task WriteInventoriesAsync(ConversionPlan plan)
     {
         await using (var bodyStream = File.Create(plan.BodyInventoryPath))
         {
@@ -128,7 +153,7 @@ public sealed class ConversionPlanner
         }
     }
 
-    public async Task WriteSekaiVrmProfileAsync(ConversionPlan plan)
+    public static async Task WriteSekaiVrmProfileAsync(ConversionPlan plan)
     {
         await using var stream = File.Create(plan.SekaiVrmProfilePath);
         await JsonSerializer.SerializeAsync(stream, plan.SekaiVrmProfile, JsonOptions);
@@ -140,7 +165,7 @@ public sealed class ConversionPlanner
         BundleInventory inventory
     )
     {
-        var rootName = inventory.Roots.FirstOrDefault()?.Name ?? "BodyRoot";
+        var rootName = inventory.Roots.Count > 0 ? inventory.Roots[0].Name : "BodyRoot";
         var neckAttachNode = SelectPreferredBodyAttachNode(inventory.AttachNodeCandidates);
         var materialLookup = MaterialIdentityLookup.FromInventory(inventory.Materials);
         var bodyMaterialSlots = inventory.SkinnedMeshes
@@ -179,7 +204,9 @@ public sealed class ConversionPlanner
 
         return new BodyAssetManifest(
             Id: $"body-{body.CharacterId}-{body.BundleStem}",
-            DisplayName: inventory.Roots.FirstOrDefault()?.Name ?? $"Body {body.CharacterId} {body.BundleStem}",
+            DisplayName: inventory.Roots.Count > 0
+                ? inventory.Roots[0].Name
+                : $"Body {body.CharacterId} {body.BundleStem}",
             CharacterId: body.CharacterId,
             CharacterHeightMeters: ResolveCharacterHeightMeters(body.CharacterId),
             Source: new AssetSource(
@@ -302,45 +329,11 @@ public sealed class ConversionPlanner
             SekaiRuntimeExtras: new SekaiRuntimeExtrasProfile(
                 ExtensionName: "PJSK_sekai_runtime",
                 RequiredForExactViewerRender: true,
-                PayloadKeys: new[]
-                {
-                    "sekaiRuntimeMaterialProfile",
-                    "bodyManifest",
-                    "headManifest",
-                    "materialSlots",
-                    "textureRoles",
-                    "morphChannelBindings",
-                    "bodyHeadAssembly",
-                    "pjskSpringBone",
-                    "springBoneSourceMetadata",
-                },
-                MaterialKinds: new[]
-                {
-                    "body",
-                    "hair",
-                    "accessory",
-                    "face_sdf",
-                    "face",
-                    "eye",
-                    "eyelight",
-                    "eyelash",
-                    "eyebrow",
-                }
+                PayloadKeys: RuntimePayloadKeys,
+                MaterialKinds: RuntimeMaterialKinds
             ),
-            PreserveOutsideStandardVrm: new[]
-            {
-                "Sekai C/S/H texture role separation",
-                "FaceShadowTex/SDF UV1 semantics",
-                "body/head stitch metadata before final VRM merge is stable",
-                "PJSK morph hash bindings for face motion JSON",
-                "plugin/viewer tuned preview lighting",
-            },
-            UnresolvedBeforeTrueParity: new[]
-            {
-                "browser equivalent of the runtime face SDF bone-basis driver",
-                "springbone.json to VRM springBone mapping",
-                "exact Unity shader controller animation tracks",
-            },
+            PreserveOutsideStandardVrm: PreservedSekaiFeatures,
+            UnresolvedBeforeTrueParity: UnresolvedParityFeatures,
             SekaiRuntimeMaterialProfile: runtimeProfile
         );
     }
@@ -411,7 +404,9 @@ public sealed class ConversionPlanner
 
         return new HeadAssetManifest(
             Id: $"head-{head.CharacterId}-{head.BundleStem}",
-            DisplayName: headInventory.Roots.FirstOrDefault()?.Name ?? $"Head {head.CharacterId} {head.BundleStem}",
+            DisplayName: headInventory.Roots.Count > 0
+                ? headInventory.Roots[0].Name
+                : $"Head {head.CharacterId} {head.BundleStem}",
             CharacterId: head.CharacterId,
             CharacterHeightMeters: ResolveCharacterHeightMeters(head.CharacterId),
             Source: new AssetSource(
@@ -471,7 +466,7 @@ public sealed class ConversionPlanner
             ?? inventory.Roots.FirstOrDefault(root =>
                 string.Equals(root.Name, "face", StringComparison.OrdinalIgnoreCase))
             ?.Name
-            ?? inventory.Roots.FirstOrDefault()?.Name
+            ?? (inventory.Roots.Count > 0 ? inventory.Roots[0].Name : null)
             ?? "HeadRoot";
     }
 
@@ -572,7 +567,7 @@ public sealed class ConversionPlanner
     {
         return candidates.FirstOrDefault(name => string.Equals(name, "Neck", StringComparison.OrdinalIgnoreCase))
             ?? candidates.FirstOrDefault(name => string.Equals(name, "Head", StringComparison.OrdinalIgnoreCase))
-            ?? candidates.FirstOrDefault()
+            ?? (candidates.Count > 0 ? candidates[0] : null)
             ?? "Neck";
     }
 
@@ -581,7 +576,7 @@ public sealed class ConversionPlanner
         return candidates.FirstOrDefault(name => string.Equals(name, "NeckSocket", StringComparison.OrdinalIgnoreCase))
             ?? candidates.FirstOrDefault(name => string.Equals(name, "Neck", StringComparison.OrdinalIgnoreCase))
             ?? candidates.FirstOrDefault(name => string.Equals(name, "Head", StringComparison.OrdinalIgnoreCase))
-            ?? candidates.FirstOrDefault()
+            ?? (candidates.Count > 0 ? candidates[0] : null)
             ?? "Neck";
     }
 

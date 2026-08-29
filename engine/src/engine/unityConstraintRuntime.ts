@@ -595,37 +595,57 @@ function applyConstraintWeightAndAxes(
     ? unityEulerDegreesToThreeQuaternion(asRawUnityVector(constraint.rotationAtRest))
     : originalRotation;
 
-  if (controlsTranslation) {
-    const axes = readRuntimeNumber(constraint.translationAxis) ?? ALL_AXES;
-    const blended = restPosition.clone().lerp(targetPosition, weight);
-    owner.position.set(
-      axisEnabled(axes, 1) ? blended.x : restPosition.x,
-      axisEnabled(axes, 2) ? blended.y : restPosition.y,
-      axisEnabled(axes, 4) ? blended.z : restPosition.z
-    );
-  } else {
-    owner.position.copy(originalPosition);
-  }
-
-  if (controlsRotation) {
-    const axes = readRuntimeNumber(constraint.rotationAxis) ?? ALL_AXES;
-    const restEuler = new THREE.Euler().setFromQuaternion(restRotation, "ZXY");
-    const targetEuler = new THREE.Euler().setFromQuaternion(targetRotation, "ZXY");
-    const axisTarget = new THREE.Euler(
-      axisEnabled(axes, 1) ? targetEuler.x : restEuler.x,
-      axisEnabled(axes, 2) ? targetEuler.y : restEuler.y,
-      axisEnabled(axes, 4) ? targetEuler.z : restEuler.z,
-      "ZXY"
-    );
-    owner.quaternion.copy(restRotation).slerp(
-      new THREE.Quaternion().setFromEuler(axisTarget),
-      weight
-    ).normalize();
-  } else {
-    owner.quaternion.copy(originalRotation);
-  }
+  applyConstraintTranslation(owner, constraint, originalPosition, restPosition, targetPosition, weight, controlsTranslation);
+  applyConstraintRotation(owner, constraint, originalRotation, restRotation, targetRotation, weight, controlsRotation);
   owner.updateMatrix();
   owner.updateMatrixWorld(true);
+}
+
+function applyConstraintTranslation(
+  owner: THREE.Object3D,
+  constraint: RuntimeConstraintSource,
+  original: THREE.Vector3,
+  rest: THREE.Vector3,
+  target: THREE.Vector3,
+  weight: number,
+  enabled: boolean
+) {
+  if (!enabled) {
+    owner.position.copy(original);
+    return;
+  }
+  const axes = readRuntimeNumber(constraint.translationAxis) ?? ALL_AXES;
+  const blended = rest.clone().lerp(target, weight);
+  owner.position.set(
+    axisEnabled(axes, 1) ? blended.x : rest.x,
+    axisEnabled(axes, 2) ? blended.y : rest.y,
+    axisEnabled(axes, 4) ? blended.z : rest.z
+  );
+}
+
+function applyConstraintRotation(
+  owner: THREE.Object3D,
+  constraint: RuntimeConstraintSource,
+  original: THREE.Quaternion,
+  rest: THREE.Quaternion,
+  target: THREE.Quaternion,
+  weight: number,
+  enabled: boolean
+) {
+  if (!enabled) {
+    owner.quaternion.copy(original);
+    return;
+  }
+  const axes = readRuntimeNumber(constraint.rotationAxis) ?? ALL_AXES;
+  const restEuler = new THREE.Euler().setFromQuaternion(rest, "ZXY");
+  const targetEuler = new THREE.Euler().setFromQuaternion(target, "ZXY");
+  const axisTarget = new THREE.Euler(
+    axisEnabled(axes, 1) ? targetEuler.x : restEuler.x,
+    axisEnabled(axes, 2) ? targetEuler.y : restEuler.y,
+    axisEnabled(axes, 4) ? targetEuler.z : restEuler.z,
+    "ZXY"
+  );
+  owner.quaternion.copy(rest).slerp(new THREE.Quaternion().setFromEuler(axisTarget), weight).normalize();
 }
 
 function axisEnabled(mask: number, axis: number): boolean {

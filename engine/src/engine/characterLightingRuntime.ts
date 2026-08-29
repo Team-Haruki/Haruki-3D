@@ -59,6 +59,19 @@ type CharacterLightingDebug = {
   head: RuntimeMaterialDebug[];
 };
 
+function applySkinColors(material: THREE.ShaderMaterial, colors: RuntimeSkinColors) {
+  const uniforms = material.uniforms;
+  if (uniforms.uSkinColorDefault) {
+    setSekaiGammaColor(uniforms.uSkinColorDefault.value, colors.default);
+  }
+  if (uniforms.uSkinColor1) {
+    setSekaiGammaColor(uniforms.uSkinColor1.value, colors.shadow1);
+  }
+  if (uniforms.uSkinColor2) {
+    setSekaiGammaColor(uniforms.uSkinColor2.value, colors.shadow2);
+  }
+}
+
 type CharacterLightingRuntimeOptions = {
   bodyMaterial: THREE.ShaderMaterial;
   hairMaterial: THREE.ShaderMaterial;
@@ -268,17 +281,7 @@ export class CharacterLightingRuntime {
   private applyCharacterSkinColors() {
     const colors = this.skinColors;
     if (!colors) return;
-    const apply = (material: THREE.ShaderMaterial) => {
-      if (material.uniforms.uSkinColorDefault) {
-        setSekaiGammaColor(material.uniforms.uSkinColorDefault.value, colors.default);
-      }
-      if (material.uniforms.uSkinColor1) {
-        setSekaiGammaColor(material.uniforms.uSkinColor1.value, colors.shadow1);
-      }
-      if (material.uniforms.uSkinColor2) {
-        setSekaiGammaColor(material.uniforms.uSkinColor2.value, colors.shadow2);
-      }
-    };
+    const apply = (material: THREE.ShaderMaterial) => applySkinColors(material, colors);
     [this.options.bodyMaterial, this.options.hairMaterial, this.options.faceMaterial]
       .forEach(apply);
     this.forEachShaderMaterial(apply);

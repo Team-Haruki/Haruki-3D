@@ -18,7 +18,7 @@ public sealed class VrmSpringBoneCandidateBuilder
         new(0x20, "R_Elbow", "CL_Right_Elbow"),
     };
 
-    public VrmSpringBoneCandidate Build(CombinedSpringBoneExport raw)
+    public static VrmSpringBoneCandidate Build(CombinedSpringBoneExport raw)
     {
         var warnings = new List<string>();
         var colliders = new List<VrmSpringBoneColliderCandidate>();
@@ -83,7 +83,7 @@ public sealed class VrmSpringBoneCandidateBuilder
         );
     }
 
-    private static IReadOnlyList<VrmSpringBonePivotCandidate> BuildSpringBonePivots(
+    private static List<VrmSpringBonePivotCandidate> BuildSpringBonePivots(
         params SpringBoneExport[] parts
     )
     {
@@ -445,7 +445,7 @@ public sealed class VrmSpringBoneCandidateBuilder
         return ReadSerializedManagerBones(part, manager, bonesByPathId, warnings);
     }
 
-    private static IReadOnlyList<SpringBoneEntry> ReadSerializedManagerBones(
+    private static List<SpringBoneEntry> ReadSerializedManagerBones(
         SpringBoneExport part,
         SpringMonoBehaviourEntry manager,
         IReadOnlyDictionary<long, SpringBoneEntry> bonesByPathId,
@@ -699,7 +699,7 @@ public sealed class VrmSpringBoneCandidateBuilder
         );
     }
 
-    private static IReadOnlyList<VrmSpringBoneForceProviderCandidate> BuildForceProviders(
+    private static List<VrmSpringBoneForceProviderCandidate> BuildForceProviders(
         SpringBoneExport part,
         IReadOnlyList<SpringMonoBehaviourEntry> fallbackForceProviders,
         SpringMonoBehaviourEntry manager
@@ -838,7 +838,7 @@ public sealed class VrmSpringBoneCandidateBuilder
 
     private static IEnumerable<SpringBoneEntry> OrderChainBones(
         IEnumerable<SpringBoneEntry> bones,
-        IReadOnlyDictionary<long, int> orderByPathId
+        Dictionary<long, int> orderByPathId
     )
     {
         return bones

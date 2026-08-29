@@ -16,10 +16,7 @@ public static class PartPackageWorkPlanner
         bool sparseInput = false
     )
     {
-        if (workerCount < 1)
-        {
-            throw new ArgumentOutOfRangeException(nameof(workerCount));
-        }
+        ArgumentOutOfRangeException.ThrowIfLessThan(workerCount, 1);
 
         var representatives = entries
             .Where(entry => entry.BundlePath is not null && entry.Status != "missing")

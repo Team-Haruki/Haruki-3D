@@ -9,6 +9,8 @@ namespace PjskBundle2Parts.Services;
 
 public sealed class SpringBoneExporter
 {
+    private static readonly string[] ColliderPropertyNames =
+    ["colliders", "sphereColliders", "capsuleColliders", "panelColliders"];
     private const string SekaiUnityVersion = "2022.3.21f1";
     private static readonly string[] UnityConstraintTypeNames =
     {
@@ -34,7 +36,7 @@ public sealed class SpringBoneExporter
         "CharacterAccessoryTransformData",
     };
 
-    public SpringBoneExport Export(ResolvedBundleInput input)
+    public static SpringBoneExport Export(ResolvedBundleInput input)
     {
         using var readableBundle = new SekaiBundleDecryptor().PrepareReadableWorkspace(
             input.ResolvedBundlePath,
@@ -55,7 +57,7 @@ public sealed class SpringBoneExporter
         return Export(input, primaryObjects);
     }
 
-    public SpringBoneExport Export(ResolvedBundleInput input, IReadOnlyList<Object> objects)
+    public static SpringBoneExport Export(ResolvedBundleInput input, IReadOnlyList<Object> objects)
     {
         var objectRefsByPathId = BuildObjectRefIndex(objects);
         var rendererRawByPathId = objects
@@ -470,7 +472,7 @@ public sealed class SpringBoneExporter
         };
     }
 
-    private static IReadOnlyList<SpringPrefabConstraintSource> ReadConstraintSources(
+    private static List<SpringPrefabConstraintSource> ReadConstraintSources(
         JsonObject raw,
         IReadOnlyDictionary<long, SpringObjectRef> objectRefsByPathId
     )
@@ -545,18 +547,12 @@ public sealed class SpringBoneExporter
         );
     }
 
-    private static IReadOnlyList<SpringObjectRef> ReadColliderRefs(
+    private static List<SpringObjectRef> ReadColliderRefs(
         JsonObject raw,
         IReadOnlyDictionary<long, SpringObjectRef> objectRefsByPathId
     )
     {
-        return new[]
-            {
-                "colliders",
-                "sphereColliders",
-                "capsuleColliders",
-                "panelColliders",
-            }
+        return ColliderPropertyNames
             .SelectMany(key => ReadObjectArray(raw, key))
             .Select(value => ResolveObjectRef(value, objectRefsByPathId))
             .Where(reference => reference is not null)
@@ -567,7 +563,7 @@ public sealed class SpringBoneExporter
     private static SpringColliderEntry BuildSpringColliderEntry(
         SpringMonoRaw entry,
         IReadOnlyDictionary<long, SpringObjectRef> objectRefsByPathId,
-        IReadOnlyDictionary<long, bool?> rendererEnabledByPathId
+        Dictionary<long, bool?> rendererEnabledByPathId
     )
     {
         var linkedRendererNode = ReadObject(entry.Raw, "linkedRenderer");
@@ -611,7 +607,7 @@ public sealed class SpringBoneExporter
         );
     }
 
-    private static IReadOnlyList<SpringAccessoryTransformAdjustment> BuildAccessoryTransformAdjustments(
+    private static List<SpringAccessoryTransformAdjustment> BuildAccessoryTransformAdjustments(
         IReadOnlyList<SpringMonoRaw> allMonoBehaviours
     )
     {
@@ -639,7 +635,7 @@ public sealed class SpringBoneExporter
             .ToList();
     }
 
-    private static IReadOnlyList<SpringAccessoryTransformAdjustment> ReadAccessoryTransformAdjustments(JsonObject raw)
+    private static List<SpringAccessoryTransformAdjustment> ReadAccessoryTransformAdjustments(JsonObject raw)
     {
         var root = ReadObject(raw, "_faceIdAccessoryTransformDict") ??
             ReadObject(raw, "faceIdAccessoryTransformDict") ??
@@ -1206,7 +1202,7 @@ public sealed class SpringBoneExporter
     }
 
     private static bool? ReadRendererEnabled(
-        IReadOnlyDictionary<long, JsonObject> rendererRawByPathId,
+        Dictionary<long, JsonObject> rendererRawByPathId,
         long pathId
     )
     {
@@ -1428,7 +1424,7 @@ public sealed class SpringBoneExporter
         return new SpringQuaternion(value.X, value.Y, value.Z, value.W);
     }
 
-    private static IReadOnlyList<SpringPrefabObjectReferenceField> CollectObjectReferenceFields(JsonObject raw)
+    private static List<SpringPrefabObjectReferenceField> CollectObjectReferenceFields(JsonObject raw)
     {
         var fields = new List<SpringPrefabObjectReferenceField>();
         foreach (var pair in raw)
@@ -1481,7 +1477,7 @@ public sealed class SpringBoneExporter
         }
     }
 
-    private static IReadOnlyDictionary<long, SpringObjectRef> BuildObjectRefIndex(
+    private static Dictionary<long, SpringObjectRef> BuildObjectRefIndex(
         IReadOnlyList<Object> objects
     )
     {

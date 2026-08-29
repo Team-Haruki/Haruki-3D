@@ -209,27 +209,22 @@ function sizeBytesAtLeast(primary, secondary, fallback, min) {
 
 function durationMsValue(...values) {
   for (const value of values) {
-    if (typeof value === "number" && Number.isFinite(value)) {
-      return value;
-    }
-    if (typeof value !== "string" || !value.trim()) {
-      continue;
-    }
-    const trimmed = value.trim();
-    const numeric = Number(trimmed);
-    if (Number.isFinite(numeric)) {
-      return numeric;
-    }
-    const match = trimmed.match(/^(\d+(?:\.\d+)?)(ms|s|m|h)$/i);
-    if (!match) {
-      continue;
-    }
-    const amount = Number(match[1]);
-    const unit = match[2].toLowerCase();
-    const multiplier = unit === "h" ? 3600000 : unit === "m" ? 60000 : unit === "s" ? 1000 : 1;
-    return amount * multiplier;
+    const parsed = parseDurationMs(value);
+    if (parsed !== null) return parsed;
   }
   return 0;
+}
+
+function parseDurationMs(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? value : null;
+  if (typeof value !== "string" || !value.trim()) return null;
+  const trimmed = value.trim();
+  const numeric = Number(trimmed);
+  if (Number.isFinite(numeric)) return numeric;
+  const match = trimmed.match(/^(\d+(?:\.\d+)?)(ms|s|m|h)$/i);
+  if (!match) return null;
+  const multipliers = { ms: 1, s: 1000, m: 60000, h: 3600000 };
+  return Number(match[1]) * multipliers[match[2].toLowerCase()];
 }
 
 function sizeBytesValue(...values) {
@@ -269,13 +264,13 @@ function sizeBytesValue(...values) {
   return 0;
 }
 
-function springRuntimeMode(primary, secondary) {
-  const value = stringValue(primary, secondary, "unity-prefab");
+function springRuntimeMode(primary, secondary, tertiary) {
+  const value = stringValue(primary, secondary, tertiary, "unity-prefab");
   return value === "off" ? "off" : "unity-prefab";
 }
 
-function cameraPreset(primary, secondary) {
-  const value = stringValue(primary, secondary, "capture");
+function cameraPreset(primary, secondary, tertiary) {
+  const value = stringValue(primary, secondary, tertiary, "capture");
   return normalizeCameraPreset(value);
 }
 

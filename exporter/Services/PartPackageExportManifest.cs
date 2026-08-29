@@ -10,6 +10,10 @@ public sealed class PartPackageExportManifest
         WriteIndented = false,
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
+    private static readonly JsonSerializerOptions ReadJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
 
     private readonly string? manifestPath;
     private readonly Dictionary<string, PartPackageInputStamp> packages;
@@ -43,7 +47,7 @@ public sealed class PartPackageExportManifest
         {
             var packages = JsonSerializer.Deserialize<Dictionary<string, PartPackageInputStamp>>(
                 File.ReadAllText(manifestPath),
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+                ReadJsonOptions
             ) ?? new Dictionary<string, PartPackageInputStamp>(StringComparer.Ordinal);
             return new PartPackageExportManifest(
                 manifestPath,

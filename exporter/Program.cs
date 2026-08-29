@@ -11,9 +11,9 @@ var parseResult = ConversionOptionsParser.Parse(args);
 
 if (!parseResult.IsSuccess || parseResult.Options is null)
 {
-    Console.Error.WriteLine(parseResult.ErrorMessage);
-    Console.Error.WriteLine();
-    Console.Error.WriteLine(ConversionOptionsParser.Usage);
+    await Console.Error.WriteLineAsync(parseResult.ErrorMessage);
+    await Console.Error.WriteLineAsync();
+    await Console.Error.WriteLineAsync(ConversionOptionsParser.Usage);
     return 1;
 }
 
@@ -23,7 +23,7 @@ if (options.EmitMvSourceSet)
 {
     try
     {
-        var result = new MvSourceSetExporter().Export(
+        var result = MvSourceSetExporter.Export(
             options.MvManifestPath!,
             options.AssetRoot!,
             options.OutputDirectory
@@ -37,7 +37,7 @@ if (options.EmitMvSourceSet)
     }
     catch (Exception ex)
     {
-        Console.Error.WriteLine($"MV source set export failed: {ex.Message}");
+        await Console.Error.WriteLineAsync($"MV source set export failed: {ex.Message}");
         return 2;
     }
 }
@@ -54,7 +54,7 @@ if (options.EmitRuntimeRoleCatalog)
     }
     catch (Exception ex)
     {
-        Console.Error.WriteLine($"Runtime role catalog export failed: {ex.Message}");
+        await Console.Error.WriteLineAsync($"Runtime role catalog export failed: {ex.Message}");
         return 2;
     }
 }
@@ -62,7 +62,7 @@ if (options.OptimizeTextureStore)
 {
     try
     {
-        var report = new TextureCompactor().OptimizeStore(
+        var report = TextureCompactor.OptimizeStore(
             options.OutputDirectory,
             options.PngOptimizeMode,
             options.TextureCompactWorkers
@@ -76,7 +76,7 @@ if (options.OptimizeTextureStore)
     }
     catch (Exception ex)
     {
-        Console.Error.WriteLine($"Texture store optimization failed: {ex.Message}");
+        await Console.Error.WriteLineAsync($"Texture store optimization failed: {ex.Message}");
         return 2;
     }
 }
@@ -84,8 +84,7 @@ if (options.ExportFaceMotion)
 {
     try
     {
-        var faceMotionExporter = new MotionPackageExporter();
-        var outputPath = faceMotionExporter.ExportFaceMotion(
+        var outputPath = MotionPackageExporter.ExportFaceMotion(
             options.MotionPath!,
             options.OutputDirectory,
             options.FaceMotionSourcePath
@@ -95,7 +94,7 @@ if (options.ExportFaceMotion)
     }
     catch (Exception ex)
     {
-        Console.Error.WriteLine($"Face motion export failed: {ex.Message}");
+        await Console.Error.WriteLineAsync($"Face motion export failed: {ex.Message}");
         return 2;
     }
 }
@@ -126,7 +125,7 @@ if (options.EmitRoleRuntimes)
     }
     catch (Exception ex)
     {
-        Console.Error.WriteLine($"Role runtime export failed: {ex.Message}");
+        await Console.Error.WriteLineAsync($"Role runtime export failed: {ex.Message}");
         return 2;
     }
 }
@@ -149,7 +148,7 @@ if (options.EmitCostumeRegistries)
     }
     catch (Exception ex)
     {
-        Console.Error.WriteLine($"Costume registry export failed: {ex.Message}");
+        await Console.Error.WriteLineAsync($"Costume registry export failed: {ex.Message}");
         return 2;
     }
 }
@@ -217,14 +216,14 @@ if (options.EmitPartPackages)
             );
             if (!string.IsNullOrWhiteSpace(options.PartPackageWorkList))
             {
-                File.WriteAllText(
+                await File.WriteAllTextAsync(
                     PartPackageWorkPlanner.SummaryPath(options.PartPackageWorkList),
                     JsonSerializer.Serialize(PartPackageWorkerSummary.From(batch))
                 );
             }
             if (failed > 0)
             {
-                Console.Error.WriteLine($"Skipped {failed} part runtime package(s); see part-export-error.json files in the output tree.");
+                await Console.Error.WriteLineAsync($"Skipped {failed} part runtime package(s); see part-export-error.json files in the output tree.");
                 return 2;
             }
             RunOutputFinalization(options);
@@ -233,12 +232,12 @@ if (options.EmitPartPackages)
     }
     catch (Exception ex)
     {
-        Console.Error.WriteLine($"Part package export failed: {ex.Message}");
+        await Console.Error.WriteLineAsync($"Part package export failed: {ex.Message}");
         return 2;
     }
 }
 
-Console.Error.WriteLine("Choose one final pipeline operation: --emit-mv-source-set, --emit-costume-registries, --emit-runtime-role-catalog, --emit-part-packages, --emit-role-runtimes, --export-face-motion, or --optimize-texture-store.");
+await Console.Error.WriteLineAsync("Choose one final pipeline operation: --emit-mv-source-set, --emit-costume-registries, --emit-runtime-role-catalog, --emit-part-packages, --emit-role-runtimes, --export-face-motion, or --optimize-texture-store.");
 return 1;
 
 static IReadOnlyDictionary<string, float> LoadCharacterHeightMetersById(string masterDirectory)
@@ -264,7 +263,7 @@ static int RunPartPackageWorkers(
     {
         var planningStopwatch = Stopwatch.StartNew();
         var sparseInput = File.Exists(Path.Combine(options.AssetRoot!, ".haruki-sparse-input"));
-        var registry = new CostumeRegistryExporter().ExportInMemory(
+        var registry = CostumeRegistryExporter.ExportInMemory(
             options.MasterDirectory!,
             options.AssetRoot!
         );
@@ -461,8 +460,7 @@ static void RunTextureCompactionIfEnabled(ConversionOptions options)
     {
         return;
     }
-    var compactor = new TextureCompactor();
-    var report = compactor.Compact(
+    var report = TextureCompactor.Compact(
         options.OutputDirectory,
         options.PngOptimizeMode,
         options.TextureCompactWorkers
@@ -493,7 +491,7 @@ static void RunKtx2TranscodeIfEnabled(ConversionOptions options)
     {
         return;
     }
-    var report = new TextureCompactor().TranscodeStoreToKtx2(
+    var report = TextureCompactor.TranscodeStoreToKtx2(
         options.OutputDirectory,
         options.TextureCompactWorkers,
         options.SharedContentStore
@@ -513,7 +511,7 @@ static void RunContentAddressedStoreIfEnabled(ConversionOptions options)
         return;
     }
 
-    var report = new ContentAddressedStore().Compact(
+    var report = ContentAddressedStore.Compact(
         options.OutputDirectory,
         options.SharedContentStore
     );

@@ -286,7 +286,7 @@ File.WriteAllText(mvManifestPath, JsonSerializer.Serialize(new
         new { bundle = "live_pv/model/characterv2/color_variation/head_optional/0112/a03/02", dependencies = Array.Empty<string>() },
     },
 }));
-var mvSourceResult = new MvSourceSetExporter().Export(mvManifestPath, mvAssetRoot, mvOutput);
+var mvSourceResult = MvSourceSetExporter.Export(mvManifestPath, mvAssetRoot, mvOutput);
 var mvSourceSet = JsonNode.Parse(File.ReadAllText(Path.Combine(mvOutput, "mv-source-set.json")))!;
 Expect(
     mvSourceResult.MusicId == 112 &&
@@ -895,7 +895,7 @@ var raceTargets = Enumerable.Range(0, 48).Select(index =>
     File.WriteAllBytes(target, raceBytes);
     return target;
 }).ToArray();
-new ContentAddressedStore().Compact(raceRoot, raceStore);
+ContentAddressedStore.Compact(raceRoot, raceStore);
 var raceWorkers = raceTargets.Select(target =>
 {
     var startInfo = new ProcessStartInfo(Environment.ProcessPath!);
@@ -1061,7 +1061,7 @@ Expect(File.ReadAllBytes(concurrentPublishTarget).SequenceEqual(directTextureByt
 Expect(!Directory.EnumerateFiles(Path.GetDirectoryName(concurrentPublishTarget)!, "*.tmp").Any(),
     "concurrent content publishing cleans temporary files");
 
-var storeOptimization = new TextureCompactor().OptimizeStore(
+var storeOptimization = TextureCompactor.OptimizeStore(
     directTextureRoot,
     "off",
     2
@@ -1116,7 +1116,7 @@ var packageC = Path.Combine(compactDir, "parts", "_sources", "hair", "c");
 WriteRuntimePackage(packageA, "textures/body/a.png", new byte[] { 1, 2, 3, 4 });
 WriteRuntimePackage(packageB, "textures/head/b.png", new byte[] { 1, 2, 3, 4 });
 WriteRuntimePackage(packageC, "textures/hair/c.png", new byte[] { 9, 8, 7 });
-var compactReport = new TextureCompactor().Compact(compactDir, "off", 3);
+var compactReport = TextureCompactor.Compact(compactDir, "off", 3);
 Expect(compactReport.TextureFileCount == 3, "texture compactor scans package textures");
 Expect(compactReport.UniqueHashCount == 2, "texture compactor groups by exact SHA-256");
 Expect(compactReport.DuplicateFileCount == 1, "texture compactor counts duplicate files");
@@ -1150,7 +1150,7 @@ WriteRuntimePackage(
     "textures/body/a.png",
     new byte[] { 1, 2, 3, 4 }
 );
-var compactMessagePackReport = new TextureCompactor().Compact(
+var compactMessagePackReport = TextureCompactor.Compact(
     compactMessagePackDir,
     "off",
     1
@@ -1220,7 +1220,7 @@ if (!OperatingSystem.IsWindows())
     Ktx2TranscodeReport ktxReport;
     try
     {
-        ktxReport = new TextureCompactor().TranscodeStoreToKtx2(ktxRoot, 2, ktxSharedCache);
+        ktxReport = TextureCompactor.TranscodeStoreToKtx2(ktxRoot, 2, ktxSharedCache);
     }
     finally
     {
@@ -1278,7 +1278,7 @@ if (!OperatingSystem.IsWindows())
     Environment.SetEnvironmentVariable("HARUKI_KTX_TOOL", "/bin/false");
     try
     {
-        _ = new TextureCompactor().TranscodeStoreToKtx2(ktxRoot, 2, ktxSharedCache);
+        _ = TextureCompactor.TranscodeStoreToKtx2(ktxRoot, 2, ktxSharedCache);
     }
     finally
     {
@@ -1305,7 +1305,7 @@ if (!OperatingSystem.IsWindows())
     Environment.SetEnvironmentVariable("HARUKI_KTX_TOOL", "/bin/false");
     try
     {
-        _ = new TextureCompactor().TranscodeStoreToKtx2(failedKtxRoot, 1);
+        _ = TextureCompactor.TranscodeStoreToKtx2(failedKtxRoot, 1);
         throw new Exception("failed KTX2 encoder should abort finalization");
     }
     catch (InvalidOperationException)
@@ -1389,9 +1389,9 @@ var casRegionA = Path.Combine(tempDir, "cas-region-a");
 var casRegionB = Path.Combine(tempDir, "cas-region-b");
 WriteCasFixture(casRegionA);
 WriteCasFixture(casRegionB);
-var firstCasReport = new ContentAddressedStore().Compact(casRegionA, sharedCas);
-var secondCasReport = new ContentAddressedStore().Compact(casRegionB, sharedCas);
-var unchangedCasReport = new ContentAddressedStore().Compact(casRegionB, sharedCas);
+var firstCasReport = ContentAddressedStore.Compact(casRegionA, sharedCas);
+var secondCasReport = ContentAddressedStore.Compact(casRegionB, sharedCas);
+var unchangedCasReport = ContentAddressedStore.Compact(casRegionB, sharedCas);
 Expect(firstCasReport.TextureFileCount == 1, "shared CAS scans compacted textures");
 Expect(firstCasReport.PartRuntimeFileCount == 1, "shared CAS scans part runtime packages");
 Expect(firstCasReport.NewContentCount == 2, "first region seeds exact content in the shared CAS");
@@ -1423,12 +1423,12 @@ using (var changedRuntime = RuntimeJsonWriter.ReadJsonDocument(
 }
 var casStatePath = Path.Combine(casRegionB, "content-addressed-store-state.json");
 File.WriteAllText(casStatePath, "{\"parts/_sources/body/source/part-runtime.msgpack.br\": {\"length\": 4,");
-var corruptStateCasReport = new ContentAddressedStore().Compact(casRegionB, sharedCas);
+var corruptStateCasReport = ContentAddressedStore.Compact(casRegionB, sharedCas);
 Expect(corruptStateCasReport.UnchangedFileCount == 0,
     "corrupt CAS state is treated as a first run with full re-verification instead of failing");
 Expect(corruptStateCasReport.TextureFileCount == 1 && corruptStateCasReport.PartRuntimeFileCount == 1,
     "corrupt-state CAS recovery still compacts every scanned file");
-var recoveredCasReport = new ContentAddressedStore().Compact(casRegionB, sharedCas);
+var recoveredCasReport = ContentAddressedStore.Compact(casRegionB, sharedCas);
 Expect(recoveredCasReport.UnchangedFileCount == 2,
     "CAS state is rebuilt atomically after corrupt-state recovery");
 Expect(!Directory.EnumerateFiles(casRegionB, "*.tmp").Any(),
@@ -1932,7 +1932,7 @@ File.WriteAllBytes(exclusiveAccessoryColor, new byte[] { 11 });
 File.WriteAllBytes(defaultHairFallback, new byte[] { 5 });
 File.WriteAllBytes(faceModelTypeVariant, new byte[] { 6 });
 File.WriteAllBytes(presetBody, new byte[] { 7 });
-var registryExport = new CostumeRegistryExporter().ExportInMemory(registryMasterDir, registryAssetRoot);
+var registryExport = CostumeRegistryExporter.ExportInMemory(registryMasterDir, registryAssetRoot);
 Expect(
     registryExport.HeadHairCompatibility.Rules.All(rule => rule.State is "not_available" or "default_hint"),
     "compatibility registry contains only blacklist rows and default-hair hints"

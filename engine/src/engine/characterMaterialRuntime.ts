@@ -344,14 +344,13 @@ export function normalizeMeshSlotName(name: string) {
 }
 
 export function tuneLightingForPreview(
-  kind: string | undefined,
+  _kind: string | undefined,
   lighting: MaterialLightingSettings | undefined,
   rawMaterial?: RawMaterialProperties
 ) {
   if (!lighting) {
     return undefined;
   }
-  void kind;
   const scalar = (name: string, fallback: number) =>
     readRawMaterialFloat(rawMaterial, name) ?? fallback;
   const boolean = (name: string, keyword: string | undefined, fallback: boolean | null | undefined) =>

@@ -3,12 +3,18 @@ using PjskBundle2Parts.Models;
 
 namespace PjskBundle2Parts.Services;
 
-public sealed class BundleInputResolver
+public sealed partial class BundleInputResolver
 {
-    private static readonly Regex CharacterIdRegex =
-        new(@"(?<=/)(\d{2})(?=/)", RegexOptions.Compiled);
+    private const int RegexTimeoutMilliseconds = 1_000;
 
-    public ResolvedBundleInput ResolveBody(string inputPath)
+    [GeneratedRegex(
+        @"(?<=/)(\d{2})(?=/)",
+        RegexOptions.None,
+        RegexTimeoutMilliseconds
+    )]
+    private static partial Regex CharacterIdRegex();
+
+    public static ResolvedBundleInput ResolveBody(string inputPath)
     {
         var normalized = Normalize(inputPath);
         if (File.Exists(normalized))
@@ -42,7 +48,7 @@ public sealed class BundleInputResolver
         return BuildResolved(BundlePartKind.Body, inputPath, candidates[0]);
     }
 
-    public ResolvedBundleInput ResolveHead(string inputPath)
+    public static ResolvedBundleInput ResolveHead(string inputPath)
     {
         var normalized = Normalize(inputPath);
         if (File.Exists(normalized))
@@ -88,7 +94,7 @@ public sealed class BundleInputResolver
         );
     }
 
-    private static IEnumerable<string> EnumerateBundleFiles(string directory)
+    private static string[] EnumerateBundleFiles(string directory)
     {
         return Directory.GetFiles(directory, "*.bundle", SearchOption.TopDirectoryOnly);
     }
@@ -101,7 +107,7 @@ public sealed class BundleInputResolver
     private static string InferCharacterId(string path)
     {
         var unixPath = path.Replace('\\', '/');
-        var match = CharacterIdRegex.Match(unixPath);
+        var match = CharacterIdRegex().Match(unixPath);
         return match.Success ? match.Groups[1].Value : "unknown";
     }
 

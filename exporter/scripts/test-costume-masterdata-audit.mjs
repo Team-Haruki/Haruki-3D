@@ -202,7 +202,14 @@ function costume(id, partType, characterId, groupId, colorId) {
   };
 }
 
-function model(costume3dId, unit, assetbundleName, headCostume3dAssetbundleType = null, colorAssetbundleName = null) {
+function model(
+  costume3dId,
+  unit,
+  assetbundleName,
+  headCostume3dAssetbundleType = null,
+  colorAssetbundleName = null,
+  part = null,
+) {
   return {
     id: costume3dId * 10,
     costume3dId,
@@ -210,7 +217,7 @@ function model(costume3dId, unit, assetbundleName, headCostume3dAssetbundleType 
     assetbundleName,
     headCostume3dAssetbundleType,
     colorAssetbundleName,
-    part: headCostume3dAssetbundleType === "head_only" ? "a01" : null,
+    part,
     thumbnailAssetbundleName: null,
   };
 }

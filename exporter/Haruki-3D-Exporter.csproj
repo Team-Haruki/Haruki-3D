@@ -5,6 +5,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**;Tests/**</DefaultItemExcludes>
     <AssetStudioRoot Condition="'$(AssetStudioRoot)' == '' and '$(OS)' == 'Windows_NT'">D:\github\AssetStudio-Haruki</AssetStudioRoot>
     <AssetStudioRoot Condition="'$(AssetStudioRoot)' == ''">/mnt/d/github/AssetStudio-Haruki</AssetStudioRoot>

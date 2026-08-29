@@ -185,7 +185,7 @@ function resolveVariantGroupKey(assetbundleName) {
   if (!assetbundleName) {
     return "";
   }
-  const normalizedName = assetbundleName.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+  const normalizedName = trimSlashes(assetbundleName.replaceAll("\\", "/"));
   const directory = path.posix.dirname(normalizedName);
   const leaf = path.posix.basename(normalizedName);
   const groupLeaf = /[a-z]$/i.test(leaf) ? leaf.slice(0, -1) : leaf;
@@ -239,7 +239,7 @@ function headOptionalBundleExists(assetbundleName, part) {
   if (!assetbundleName) {
     return false;
   }
-  const normalizedName = assetbundleName.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+  const normalizedName = trimSlashes(assetbundleName.replaceAll("\\", "/"));
   const pieces = normalizedName.split("/");
   const accessoryId = pieces[0];
   const attachNode = part || pieces[1];
@@ -249,6 +249,14 @@ function headOptionalBundleExists(assetbundleName, part) {
   return headOptionalRoots.some((root) => (
     existsSync(path.join(root, accessoryId, `${attachNode}.bundle`))
   ));
+}
+
+function trimSlashes(value) {
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === "/") start += 1;
+  while (end > start && value[end - 1] === "/") end -= 1;
+  return value.slice(start, end);
 }
 
 function listVariantGroupBundles(groupKey) {

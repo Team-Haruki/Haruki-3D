@@ -18,7 +18,7 @@ public sealed class TextureCompactor
         WriteIndented = false
     };
 
-    public TextureStoreOptimizationReport OptimizeStore(
+    public static TextureStoreOptimizationReport OptimizeStore(
         string outputDirectory,
         string pngOptimizeMode,
         int workers
@@ -128,7 +128,7 @@ public sealed class TextureCompactor
         long After
     );
 
-    public Ktx2TranscodeReport TranscodeStoreToKtx2(
+    public static Ktx2TranscodeReport TranscodeStoreToKtx2(
         string outputDirectory,
         int workers,
         string? sharedCacheDirectory = null
@@ -285,7 +285,7 @@ public sealed class TextureCompactor
             CollectKtx2Variants(runtime, packageDirectory, outputDirectory, requireSource: false).Count == 0;
     }
 
-    private static IReadOnlyList<Ktx2VariantKey> CollectKtx2Variants(
+    private static List<Ktx2VariantKey> CollectKtx2Variants(
         IReadOnlyList<string> runtimeFiles,
         string outputDirectory
     )
@@ -318,7 +318,7 @@ public sealed class TextureCompactor
             .ToList();
     }
 
-    private static IReadOnlyList<Ktx2VariantKey> CollectKtx2Variants(
+    private static List<Ktx2VariantKey> CollectKtx2Variants(
         JsonObject runtime,
         string packageDirectory,
         string outputDirectory,
@@ -692,7 +692,7 @@ public sealed class TextureCompactor
         return true;
     }
 
-    public TextureCompactionReport Compact(
+    public static TextureCompactionReport Compact(
         string outputDirectory,
         string pngOptimizeMode,
         int workers
@@ -786,7 +786,7 @@ public sealed class TextureCompactor
             .ToList();
     }
 
-    private static IReadOnlyList<TextureStoreResult> OptimizeGroups(
+    private static List<TextureStoreResult> OptimizeGroups(
         IReadOnlyList<TextureHashGroup> groups,
         string storeRoot,
         string pngOptimizeMode,
@@ -1014,7 +1014,7 @@ public sealed class TextureCompactor
         {
             return null;
         }
-        var path = value.StartsWith("/", StringComparison.Ordinal)
+        var path = value.StartsWith('/')
             ? Path.Combine(outputDirectory, value.TrimStart('/').Replace('/', Path.DirectorySeparatorChar))
             : Path.Combine(packageDirectory, value.Replace('/', Path.DirectorySeparatorChar));
         return Path.GetFullPath(path);
@@ -1221,7 +1221,7 @@ public sealed class TextureCompactor
 
     private static void RunOxipng(string pngPath)
     {
-        var startInfo = new ProcessStartInfo("oxipng")
+        var startInfo = new ProcessStartInfo("/usr/local/bin/oxipng")
         {
             RedirectStandardError = true,
             RedirectStandardOutput = true,

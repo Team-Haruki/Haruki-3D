@@ -352,7 +352,7 @@ function countCardUnlockPartsets() {
   for (const rows of cardCostumesByCardId.values()) {
     partsets.push(rows
       .map((row) => costumeById.get(row.costume3dId)?.partType ?? "<missing>")
-      .sort()
+      .sort((left, right) => String(left).localeCompare(String(right)))
       .join("+"));
   }
   return countBy(partsets, (entry) => entry);
@@ -362,7 +362,7 @@ function countCostumeGroupPartsets() {
   const partsets = [];
   for (const entries of costumesByGroupId.values()) {
     partsets.push([...new Set(entries.map((entry) => entry.partType ?? "<missing>"))]
-      .sort()
+      .sort((left, right) => String(left).localeCompare(String(right)))
       .join("+"));
   }
   return countBy(partsets, (entry) => entry);
@@ -469,7 +469,12 @@ function readCostume3dModels() {
 }
 
 function normalizeBundleName(assetbundleName) {
-  return assetbundleName.replaceAll("\\", "/").replace(/^\/+|\/+$/g, "");
+  const value = assetbundleName.replaceAll("\\", "/");
+  let start = 0;
+  let end = value.length;
+  while (start < end && value[start] === "/") start += 1;
+  while (end > start && value[end - 1] === "/") end -= 1;
+  return value.slice(start, end);
 }
 
 function printHumanSummary(result) {

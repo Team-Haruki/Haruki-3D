@@ -32,7 +32,7 @@ public sealed class BundleHashIndex
             .ToLowerInvariant();
     }
 
-    private static IReadOnlyDictionary<string, byte[]> Load(string? path)
+    private static Dictionary<string, byte[]> Load(string? path)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
         {

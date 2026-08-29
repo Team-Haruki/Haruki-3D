@@ -190,7 +190,7 @@ public static class RuntimeRoleCatalogExporter
         return Build(roles, masterVersion);
     }
 
-    private static RuntimeRoleCatalog Build(IReadOnlyList<RuntimeRoleCatalogEntry> roles, string masterVersion)
+    private static RuntimeRoleCatalog Build(List<RuntimeRoleCatalogEntry> roles, string masterVersion)
     {
         if (string.IsNullOrWhiteSpace(masterVersion))
         {

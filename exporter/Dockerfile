@@ -57,4 +57,5 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY --from=build /app/exporter /app/exporter
 COPY --from=oxipng /usr/local/cargo/bin/oxipng /usr/local/bin/oxipng
 
+USER app
 ENTRYPOINT ["/app/exporter/Haruki-3D-Exporter"]

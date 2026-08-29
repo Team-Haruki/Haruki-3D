@@ -5,7 +5,7 @@ namespace PjskBundle2Parts.Services;
 
 public sealed class UnityRuntimeTextureExporter
 {
-    public IReadOnlyDictionary<string, string> ExportPartTextures(
+    public static IReadOnlyDictionary<string, string> ExportPartTextures(
         string packageDirectory,
         string runtimeOutputDirectory,
         string partKind,
@@ -64,7 +64,7 @@ public sealed class UnityRuntimeTextureExporter
         return aliases;
     }
 
-    public IReadOnlyDictionary<string, string> ExportPartTextures(
+    public static IReadOnlyDictionary<string, string> ExportPartTextures(
         string outputDirectory,
         string partKind,
         IImported imported,
@@ -93,7 +93,7 @@ public sealed class UnityRuntimeTextureExporter
         return result;
     }
 
-    public IReadOnlyDictionary<string, string> ExportCharacterTextures(
+    public static IReadOnlyDictionary<string, string> ExportCharacterTextures(
         string outputDirectory,
         IImported bodyImported,
         IImported headImported,
@@ -240,7 +240,7 @@ public sealed class UnityRuntimeTextureExporter
 
     private static void ApplyOverrideAliases(
         BundleInventory inventory,
-        IReadOnlyDictionary<string, string> overrideAliases,
+        Dictionary<string, string> overrideAliases,
         Dictionary<string, string> result
     )
     {

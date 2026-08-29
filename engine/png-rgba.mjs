@@ -123,28 +123,21 @@ function unfilterScanlines(raw, width, height, bytesPerPixel) {
       const left = i >= bytesPerPixel ? decoded[decodedRow + i - bytesPerPixel] : 0;
       const up = row > 0 ? decoded[decodedRow - rowLength + i] : 0;
       const upLeft = row > 0 && i >= bytesPerPixel ? decoded[decodedRow - rowLength + i - bytesPerPixel] : 0;
-      switch (filterType) {
-        case 0:
-          decoded[decodedRow + i] = value;
-          break;
-        case 1:
-          decoded[decodedRow + i] = (value + left) & 0xff;
-          break;
-        case 2:
-          decoded[decodedRow + i] = (value + up) & 0xff;
-          break;
-        case 3:
-          decoded[decodedRow + i] = (value + Math.floor((left + up) / 2)) & 0xff;
-          break;
-        case 4:
-          decoded[decodedRow + i] = (value + paeth(left, up, upLeft)) & 0xff;
-          break;
-        default:
-          throw new Error(`Unsupported PNG scanline filter: ${filterType}.`);
-      }
+      decoded[decodedRow + i] = unfilterByte(filterType, value, left, up, upLeft);
     }
   }
   return decoded;
+}
+
+function unfilterByte(filterType, value, left, up, upLeft) {
+  switch (filterType) {
+    case 0: return value;
+    case 1: return (value + left) & 0xff;
+    case 2: return (value + up) & 0xff;
+    case 3: return (value + Math.floor((left + up) / 2)) & 0xff;
+    case 4: return (value + paeth(left, up, upLeft)) & 0xff;
+    default: throw new Error(`Unsupported PNG scanline filter: ${filterType}.`);
+  }
 }
 
 function paeth(left, up, upLeft) {

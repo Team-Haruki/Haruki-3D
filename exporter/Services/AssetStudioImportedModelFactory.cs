@@ -44,7 +44,7 @@ public sealed class AssetStudioImportedModelFactory
         return CreateImportedModel(input, rootGameObjects, preferredRootOverride);
     }
 
-    public IImported CreateImportedModel(
+    public ModelConverter CreateImportedModel(
         ResolvedBundleInput input,
         IReadOnlyList<Object> objects,
         string? preferredRootOverride = null
@@ -58,7 +58,7 @@ public sealed class AssetStudioImportedModelFactory
         return CreateImportedModel(input, rootGameObjects, preferredRootOverride);
     }
 
-    public IImported CreateImportedModel(
+    public ModelConverter CreateImportedModel(
         ResolvedBundleInput input,
         GameObject preferredRoot
     )
@@ -66,9 +66,9 @@ public sealed class AssetStudioImportedModelFactory
         return new ModelConverter(preferredRoot, ImageFormat.Png, null, convertModelTextures);
     }
 
-    private IImported CreateImportedModel(
+    private ModelConverter CreateImportedModel(
         ResolvedBundleInput input,
-        IReadOnlyList<GameObject> rootGameObjects,
+        List<GameObject> rootGameObjects,
         string? preferredRootOverride
     )
     {
@@ -97,7 +97,7 @@ public sealed class AssetStudioImportedModelFactory
         return new ModelConverter(preferredRoot, ImageFormat.Png, null, convertModelTextures);
     }
 
-    public IReadOnlyList<ImportedTexture> CreateImportedTextures(string bundlePath)
+    public static IReadOnlyList<ImportedTexture> CreateImportedTextures(string bundlePath)
     {
         using var readableBundle = new SekaiBundleDecryptor().PrepareReadableBundle(bundlePath);
         var manager = new AssetsManager();

@@ -2118,9 +2118,6 @@ export class Haruki3DEngine {
     }
   }
 
-  private addSceneReference() {
-  }
-
   private setCameraTarget(target: THREE.Vector3) {
     this.cameraTarget.copy(target);
     this.controls?.target.copy(target);

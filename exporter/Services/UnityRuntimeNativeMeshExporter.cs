@@ -5,7 +5,7 @@ namespace PjskBundle2Parts.Services;
 
 public sealed class UnityRuntimeNativeMeshExporter
 {
-    public PjskUnityRuntimeNativeMeshSet ExportSinglePart(
+    public static PjskUnityRuntimeNativeMeshSet ExportSinglePart(
         string partKind,
         IImported imported,
         SpringPrefabGraph graph,
@@ -25,7 +25,7 @@ public sealed class UnityRuntimeNativeMeshExporter
         );
     }
 
-    public PjskUnityRuntimeNativeMeshSet Export(
+    public static PjskUnityRuntimeNativeMeshSet Export(
         IImported bodyImported,
         IImported headImported,
         PjskSpringBoneRuntimeUnitySetup runtimeUnitySetup,
@@ -150,7 +150,7 @@ public sealed class UnityRuntimeNativeMeshExporter
         return result;
     }
 
-    private static IReadOnlyList<PjskUnityRuntimeNativeMesh> ExportPart(
+    private static List<PjskUnityRuntimeNativeMesh> ExportPart(
         string partKind,
         IImported imported,
         SpringPrefabGraph graph,
@@ -305,7 +305,7 @@ public sealed class UnityRuntimeNativeMeshExporter
         SpringPrefabRenderer renderer,
         IReadOnlyDictionary<string, IReadOnlyList<ImportedMesh>> meshLookup,
         IReadOnlyList<string> transformPaths,
-        IReadOnlyDictionary<long, string> transformPathByPathId,
+        Dictionary<long, string> transformPathByPathId,
         out ImportedMesh mesh,
         out string failure
     )
@@ -464,7 +464,7 @@ public sealed class UnityRuntimeNativeMeshExporter
 
     private static bool TryResolveSkinBinding(
         ImportedMesh mesh,
-        IReadOnlyList<string> rendererBonePaths,
+        List<string> rendererBonePaths,
         IReadOnlyList<long>? rendererBonePathIds,
         IReadOnlyList<string> transformPaths,
         out NativeSkinBinding binding,
@@ -497,8 +497,8 @@ public sealed class UnityRuntimeNativeMeshExporter
         var importedBoneCount = mesh.BoneList?.Count ?? 0;
         if (importedBoneCount == 0)
         {
-            var rigidBonePaths = rendererBonePaths.Count == 0
-                ? Array.Empty<string>()
+            List<string> rigidBonePaths = rendererBonePaths.Count == 0
+                ? []
                 : rendererBonePaths;
             binding = new NativeSkinBinding(
                 rigidBonePaths,
@@ -596,7 +596,7 @@ public sealed class UnityRuntimeNativeMeshExporter
         return true;
     }
 
-    private static IReadOnlyDictionary<int, string> ResolveImportedBonePathsByIndex(
+    private static Dictionary<int, string> ResolveImportedBonePathsByIndex(
         ImportedMesh mesh,
         IReadOnlyList<string> transformPaths,
         IReadOnlySet<string> preferredPaths
@@ -687,7 +687,7 @@ public sealed class UnityRuntimeNativeMeshExporter
         return max;
     }
 
-    private static IReadOnlySet<int> CollectUsedBoneIndices(ImportedMesh mesh)
+    private static HashSet<int> CollectUsedBoneIndices(ImportedMesh mesh)
     {
         var result = new HashSet<int>();
         foreach (var vertex in mesh.VertexList)
@@ -711,7 +711,7 @@ public sealed class UnityRuntimeNativeMeshExporter
         return result;
     }
 
-    private static IReadOnlyDictionary<string, IReadOnlyList<ImportedMesh>> BuildImportedMeshLookupMap(
+    private static Dictionary<string, IReadOnlyList<ImportedMesh>> BuildImportedMeshLookupMap(
         IEnumerable<ImportedMesh> meshes
     )
     {
@@ -995,7 +995,7 @@ public sealed class UnityRuntimeNativeMeshExporter
         return result;
     }
 
-    private static IReadOnlyDictionary<string, ImportedMorph> BuildMorphMap(
+    private static Dictionary<string, ImportedMorph> BuildMorphMap(
         IReadOnlyList<ImportedMorph> morphList
     )
     {

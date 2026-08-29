@@ -5,6 +5,11 @@ namespace PjskBundle2Parts.Services;
 
 public static class CharacterHeightResolver
 {
+    private static readonly JsonSerializerOptions ReadJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
+
     public static IReadOnlyDictionary<string, float> LoadMetersByCharacterId(string masterDirectory)
     {
         var gameCharactersPath = Path.Combine(
@@ -19,7 +24,7 @@ public static class CharacterHeightResolver
         using var stream = File.OpenRead(gameCharactersPath);
         var characters = JsonSerializer.Deserialize<IReadOnlyList<GameCharacterMaster>>(
             stream,
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+            ReadJsonOptions
         ) ?? Array.Empty<GameCharacterMaster>();
 
         return characters.ToDictionary(

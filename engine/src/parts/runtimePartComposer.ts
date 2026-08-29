@@ -1160,11 +1160,27 @@ function resolvePackageRelativePath(packagePath: string, path: string) {
   if (!path || /^[a-z][a-z0-9+.-]*:/i.test(path) || path.startsWith("/")) {
     return path;
   }
-  const normalizedPackagePath = packagePath.replace(/\/+$/, "");
+  const normalizedPackagePath = trimTrailingSlashes(packagePath);
   if (!normalizedPackagePath || path.startsWith(`${normalizedPackagePath}/`)) {
     return path;
   }
-  return `${normalizedPackagePath}/${path.replace(/^\/+/, "")}`;
+  return `${normalizedPackagePath}/${trimLeadingSlashes(path)}`;
+}
+
+function trimTrailingSlashes(value: string) {
+  let end = value.length;
+  while (end > 0 && value[end - 1] === "/") {
+    end -= 1;
+  }
+  return value.slice(0, end);
+}
+
+function trimLeadingSlashes(value: string) {
+  let start = 0;
+  while (start < value.length && value[start] === "/") {
+    start += 1;
+  }
+  return value.slice(start);
 }
 
 function normalizeVec3(
@@ -1888,68 +1904,10 @@ function cloneArrayWithPartPrefix<T = unknown>(
     const cloned = { ...entry };
     cloned.runtimePartIndex = partIndex;
     cloned.runtimePartType = partType;
-    if (typeof cloned.pathId === "number") {
-      cloned.pathId = remapNumericId(cloned.pathId, partIndex);
-    }
-    if (typeof cloned.index === "number") {
-      cloned.index = remapNumericId(cloned.index, partIndex);
-    }
-    if (typeof cloned.managerPathId === "number") {
-      cloned.managerPathId = remapNumericId(cloned.managerPathId, partIndex);
-    }
-    if (typeof cloned.pivotSourcePathId === "number") {
-      cloned.pivotSourcePathId = remapNumericId(cloned.pivotSourcePathId, partIndex);
-    }
-    if (typeof cloned.sourceSpringBonePathId === "number") {
-      cloned.sourceSpringBonePathId = remapNumericId(cloned.sourceSpringBonePathId, partIndex);
-    }
-    if (Array.isArray(cloned.bonePathIds)) {
-      cloned.bonePathIds = cloned.bonePathIds.map((id) =>
-        typeof id === "number" ? remapNumericId(id, partIndex) : id
-      );
-    }
+    remapScalarFields(cloned, partIndex);
+    remapArrayFields(cloned, partIndex);
     if (Array.isArray(cloned.forceProviders)) {
       cloned.forceProviders = remapRuntimeForceProviders(cloned.forceProviders, partIndex);
-    }
-    if (Array.isArray(cloned.directColliderPathIds)) {
-      cloned.directColliderPathIds = cloned.directColliderPathIds.map((id) =>
-        typeof id === "number" ? remapNumericId(id, partIndex) : id
-      );
-    }
-    if (Array.isArray(cloned.sourceColliderPathIds)) {
-      cloned.sourceColliderPathIds = cloned.sourceColliderPathIds.map((id) =>
-        typeof id === "number" ? remapNumericId(id, partIndex) : id
-      );
-    }
-    if (Array.isArray(cloned.colliders)) {
-      cloned.colliders = cloned.colliders.map((id) =>
-        typeof id === "number" ? remapNumericId(id, partIndex) : id
-      );
-    }
-    if (Array.isArray(cloned.selectedColliderIndexes)) {
-      cloned.selectedColliderIndexes = cloned.selectedColliderIndexes.map((id) =>
-        typeof id === "number" ? remapNumericId(id, partIndex) : id
-      );
-    }
-    if (Array.isArray(cloned.sphereColliderIndexes)) {
-      cloned.sphereColliderIndexes = cloned.sphereColliderIndexes.map((id) =>
-        typeof id === "number" ? remapNumericId(id, partIndex) : id
-      );
-    }
-    if (Array.isArray(cloned.capsuleColliderIndexes)) {
-      cloned.capsuleColliderIndexes = cloned.capsuleColliderIndexes.map((id) =>
-        typeof id === "number" ? remapNumericId(id, partIndex) : id
-      );
-    }
-    if (Array.isArray(cloned.panelColliderIndexes)) {
-      cloned.panelColliderIndexes = cloned.panelColliderIndexes.map((id) =>
-        typeof id === "number" ? remapNumericId(id, partIndex) : id
-      );
-    }
-    if (Array.isArray(cloned.springBonePathIds)) {
-      cloned.springBonePathIds = cloned.springBonePathIds.map((id) =>
-        typeof id === "number" ? remapNumericId(id, partIndex) : id
-      );
     }
     if (isRecord(cloned.collidersByRoot)) {
       cloned.collidersByRoot = remapColliderRoots(cloned.collidersByRoot, partIndex);
@@ -1959,6 +1917,29 @@ function cloneArrayWithPartPrefix<T = unknown>(
     }
     return cloned as T;
   });
+}
+
+const remappedScalarFields = [
+  "pathId", "index", "managerPathId", "pivotSourcePathId", "sourceSpringBonePathId",
+] as const;
+const remappedArrayFields = [
+  "bonePathIds", "directColliderPathIds", "sourceColliderPathIds", "colliders",
+  "selectedColliderIndexes", "sphereColliderIndexes", "capsuleColliderIndexes",
+  "panelColliderIndexes", "springBonePathIds",
+] as const;
+
+function remapScalarFields(cloned: Record<string, unknown>, partIndex: number) {
+  for (const key of remappedScalarFields) {
+    if (typeof cloned[key] === "number") cloned[key] = remapNumericId(cloned[key], partIndex);
+  }
+}
+
+function remapArrayFields(cloned: Record<string, unknown>, partIndex: number) {
+  for (const key of remappedArrayFields) {
+    const values = cloned[key];
+    if (!Array.isArray(values)) continue;
+    cloned[key] = values.map((id) => typeof id === "number" ? remapNumericId(id, partIndex) : id);
+  }
 }
 
 function remapRuntimeForceProviders(value: unknown[], partIndex: number): unknown[] {

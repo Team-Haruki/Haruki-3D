@@ -1673,7 +1673,7 @@ function buildSetupDiagnostics(
     officialSpringComponentCount: springComponents.pathIds.size,
     rejectedUnverifiedBoneSourceCount: 0,
     activeRootCount: activeRoots.size,
-    activeRoots: [...activeRoots].sort(),
+    activeRoots: [...activeRoots].sort((left, right) => left.localeCompare(right)),
   };
 }
 
@@ -2226,17 +2226,9 @@ function selectUnityColliderRoot(
   if (jointRoot && availableRoots.has(jointRoot)) {
     return { root: jointRoot, reason: "joint root matched candidate root" };
   }
-  if (manager.partKind === "Head" || jointRoot === "face") {
-    const defaultBodyRoot = normalizeRootName(
-      setup.rootSelectionProfile?.defaultBodyRoot ??
-      setup.activeRootProfile?.defaultBodyRoot
-    );
-    if (defaultBodyRoot && availableRoots.has(defaultBodyRoot)) {
-      return { root: defaultBodyRoot, reason: "head/face uses runtime defaultBodyRoot" };
-    }
-    if (availableRoots.has("body")) {
-      return { root: "body", reason: "head/face body fallback" };
-    }
+  const headFallback = selectHeadColliderRoot(setup, manager, jointRoot, availableRoots);
+  if (headFallback) {
+    return headFallback;
   }
   const decisionDefaultRoot = normalizeRootName(decision?.defaultRoot);
   if (decisionDefaultRoot && availableRoots.has(decisionDefaultRoot)) {
@@ -2258,6 +2250,24 @@ function selectUnityColliderRoot(
       ? `binding.defaultRoot ${bindingDefaultRoot} not available after manager cache`
       : "no matching root",
   };
+}
+
+function selectHeadColliderRoot(
+  setup: RuntimeUnitySetup0414,
+  manager: RuntimeManagerSource,
+  jointRoot: string | null,
+  availableRoots: ReadonlyMap<string, RuntimeCollider[]>
+): { root: string; reason: string } | null {
+  if (manager.partKind !== "Head" && jointRoot !== "face") return null;
+  const defaultBodyRoot = normalizeRootName(
+    setup.rootSelectionProfile?.defaultBodyRoot ?? setup.activeRootProfile?.defaultBodyRoot
+  );
+  if (defaultBodyRoot && availableRoots.has(defaultBodyRoot)) {
+    return { root: defaultBodyRoot, reason: "head/face uses runtime defaultBodyRoot" };
+  }
+  return availableRoots.has("body")
+    ? { root: "body", reason: "head/face body fallback" }
+    : null;
 }
 
 function buildColliderBindingDiagnostic(

@@ -56,7 +56,7 @@ public static class BundleDependencyResolver
         return Path.GetFileNameWithoutExtension(path);
     }
 
-    private static IReadOnlyList<string> BuildOrderedBundleList(string primaryPath, IEnumerable<string> bundlePaths)
+    private static List<string> BuildOrderedBundleList(string primaryPath, IEnumerable<string> bundlePaths)
     {
         var normalizedPrimary = Path.GetFullPath(primaryPath);
         return bundlePaths

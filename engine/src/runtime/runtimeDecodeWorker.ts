@@ -3,6 +3,9 @@ import { decodeRuntimeMessagePackBrotliDirect } from "./runtimeMessagePackDecode
 type DecodeRequest = { id: number; bytes: ArrayBuffer; wasmUrl: string };
 
 globalThis.onmessage = async (event: MessageEvent<DecodeRequest>) => {
+  if (event.origin && event.origin !== globalThis.location.origin) {
+    return;
+  }
   const { id, bytes, wasmUrl } = event.data;
   try {
     const value = await decodeRuntimeMessagePackBrotliDirect(bytes, wasmUrl);

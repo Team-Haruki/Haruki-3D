@@ -55,8 +55,17 @@ public sealed class MotionPackageExporter
         PropertyNameCaseInsensitive = true,
         Converters = { new JsonStringEnumConverter() },
     };
+    private static readonly JsonSerializerOptions PrettyJsonOptions = new()
+    {
+        WriteIndented = true,
+    };
+    private static readonly string[] CoordinateConversionNotes =
+    [
+        "Animation curve values are stored in Three.js viewer space after exporter conversion.",
+        "The viewer must not convert transform animation values again.",
+    ];
 
-    public MotionExportResult Export(
+    public static MotionExportResult Export(
         string? motionPath,
         string outputDirectory,
         IImported? bodyModel = null
@@ -88,7 +97,7 @@ public sealed class MotionPackageExporter
         return ExportFromBundle(normalized, outputDirectory, bodyModel);
     }
 
-    public string ExportFaceMotion(
+    public static string ExportFaceMotion(
         string motionPath,
         string outputPath,
         string? sourcePath = null
@@ -100,7 +109,7 @@ public sealed class MotionPackageExporter
         }
 
         var normalized = Path.GetFullPath(Environment.ExpandEnvironmentVariables(motionPath));
-        var clips = Directory.Exists(normalized)
+        IReadOnlyList<DecodedUnityClip> clips = Directory.Exists(normalized)
             ? ReadDecodedClipsFromFolder(normalized)
             : File.Exists(normalized) && Path.GetExtension(normalized).Equals(".json", StringComparison.OrdinalIgnoreCase)
                 ? ReadDecodedClipsFromJsonFile(normalized)
@@ -120,7 +129,7 @@ public sealed class MotionPackageExporter
         Directory.CreateDirectory(Path.GetDirectoryName(resolvedOutputPath)!);
         File.WriteAllText(
             resolvedOutputPath,
-            JsonSerializer.Serialize(faceMotion, new JsonSerializerOptions { WriteIndented = true })
+            JsonSerializer.Serialize(faceMotion, PrettyJsonOptions)
         );
         return resolvedOutputPath;
     }
@@ -268,7 +277,7 @@ public sealed class MotionPackageExporter
         return (unityMotionOutput, bodyMotionBindings, faceMotion, lightMotion);
     }
 
-    private static IReadOnlyList<DecodedUnityClip> DecodeUnityClipsFromBundle(string bundlePath)
+    private static List<DecodedUnityClip> DecodeUnityClipsFromBundle(string bundlePath)
     {
         if (!File.Exists(bundlePath))
         {
@@ -315,7 +324,7 @@ public sealed class MotionPackageExporter
         return decodedClips;
     }
 
-    private static IReadOnlyList<DecodedUnityClip> ReadDecodedClipsFromFolder(string motionFolder)
+    private static List<DecodedUnityClip> ReadDecodedClipsFromFolder(string motionFolder)
     {
         var result = new List<DecodedUnityClip>();
         foreach (var file in Directory.EnumerateFiles(motionFolder, "*.json", SearchOption.AllDirectories)
@@ -356,7 +365,7 @@ public sealed class MotionPackageExporter
             .ToList();
     }
 
-    private static IReadOnlyList<DecodedUnityClip> ReadDecodedClipsFromJsonFile(string file)
+    private static DecodedUnityClip[] ReadDecodedClipsFromJsonFile(string file)
     {
         try
         {
@@ -524,7 +533,7 @@ public sealed class MotionPackageExporter
         );
     }
 
-    private static List<BindingRange> BuildBindingRanges(IReadOnlyList<GenericBinding> bindings)
+    private static List<BindingRange> BuildBindingRanges(List<GenericBinding> bindings)
     {
         var ranges = new List<BindingRange>(bindings.Count);
         var start = 0;
@@ -645,11 +654,7 @@ public sealed class MotionPackageExporter
                 PositionConversion: "exporter_mirror_x",
                 RotationConversion: "exporter_negate_quaternion_yz",
                 ScaleConversion: "identity",
-                Notes: new[]
-                {
-                    "Animation curve values are stored in Three.js viewer space after exporter conversion.",
-                    "The viewer must not convert transform animation values again."
-                }
+                Notes: CoordinateConversionNotes
             ),
             SampleRate: BakeSampleRate,
             Clips: clips
@@ -671,7 +676,7 @@ public sealed class MotionPackageExporter
         RuntimeJsonWriter.Write(
             outputPath,
             runtime,
-            new JsonSerializerOptions { WriteIndented = true },
+            PrettyJsonOptions,
             binaryArraySchema: RuntimeBinaryArraySchema.UnityMotion
         );
     }
@@ -1135,7 +1140,7 @@ public sealed class MotionPackageExporter
         return NormalizeQuaternion(new[] { quaternion.X, quaternion.Y, quaternion.Z, quaternion.W });
     }
 
-    private static bool CanCollapseTrack(IReadOnlyList<float> values, int componentCount)
+    private static bool CanCollapseTrack(List<float> values, int componentCount)
     {
         if (values.Count <= componentCount * 2)
         {
@@ -1155,7 +1160,7 @@ public sealed class MotionPackageExporter
         return true;
     }
 
-    private static bool CanCollapseScalarCurve(IReadOnlyList<PjskFaceMotionKeyframe> keyframes)
+    private static bool CanCollapseScalarCurve(List<PjskFaceMotionKeyframe> keyframes)
     {
         if (keyframes.Count <= 2)
         {

@@ -12,6 +12,21 @@ namespace PjskBundle2Parts.Services;
 
 public sealed class PartPackageExporter
 {
+    private static readonly string[] SinglePartCoordinateNotes =
+    ["Single-part package; viewer composer must merge active parts before simulation."];
+    private static readonly string[] SinglePartSetupSteps =
+    [
+        "mount part graph",
+        "merge active part springbone",
+        "rebuild SpringManager ownership from composed hierarchy",
+        "repair constraints after composition",
+        "rebind current body colliders",
+        "reset spring runtime",
+    ];
+    private static readonly string[] HeadOptionalMountNotes =
+    ["Viewer must verify attachNode exists in the current composed prefab graph before mounting."];
+    private static readonly string[] DefaultMountNotes =
+    ["Viewer composer mounts this part and rebuilds SpringBone runtime after changes."];
     private static readonly JsonSerializerOptions WriteJsonOptions = new()
     {
         WriteIndented = false,
@@ -19,13 +34,7 @@ public sealed class PartPackageExporter
         DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
     };
 
-    private readonly BundleInputResolver resolver = new();
-    private readonly AssetStudioBundleParser parser = new();
     private readonly AssetStudioImportedModelFactory modelFactory;
-    private readonly OfficialUnityResourceExtractor resourceExtractor = new();
-    private readonly SpringBoneExporter springBoneExporter = new();
-    private readonly UnityRuntimeNativeMeshExporter nativeMeshExporter = new();
-    private readonly UnityRuntimeTextureExporter textureExporter = new();
     private readonly IReadOnlyDictionary<string, float> characterHeightMetersById;
     private BundleHashIndex bundleHashes = new(null);
     private BundleDependencyIndex bundleDependencies = new(null);
@@ -217,7 +226,7 @@ public sealed class PartPackageExporter
         }
     }
 
-    private static IReadOnlyList<PartRegistryEntry> SelectRepresentativePartEntries(IReadOnlyList<PartRegistryEntry> entries)
+    private static List<PartRegistryEntry> SelectRepresentativePartEntries(IReadOnlyList<PartRegistryEntry> entries)
     {
         return entries
             .GroupBy(entry => entry.PackagePath, StringComparer.Ordinal)
@@ -406,25 +415,25 @@ public sealed class PartPackageExporter
                 "head_optional" => "optional",
                 _ => throw new InvalidOperationException($"Unsupported runtime part type '{normalizedType}'."),
             };
-            var officialResource = resourceExtractor.Extract(
+            var officialResource = OfficialUnityResourceExtractor.Extract(
                 input,
                 loadedBundle.PrimaryObjects,
                 resourceName
             );
-            var inventory = parser.Parse(
+            var inventory = AssetStudioBundleParser.Parse(
                 input,
                 officialResource.Objects,
                 loadedBundle.Objects,
                 loadedBundle.AssetsFileCount
             );
             var imported = modelFactory.CreateImportedModel(input, officialResource.RootGameObject);
-            var baseTextures = textureExporter.ExportPartTextures(
+            var baseTextures = UnityRuntimeTextureExporter.ExportPartTextures(
                 packageDirectory,
                 outputDirectory,
                 normalizedType,
                 inventory
             );
-            var springBone = springBoneExporter.Export(input, officialResource.Objects);
+            var springBone = SpringBoneExporter.Export(input, officialResource.Objects);
             var runtimeSpringBone = BuildPartSpringBone(normalizedType, springBone);
             var nativeMeshes = ExportNativeMeshes(normalizedType, imported, runtimeSpringBone);
             var builtMaterialSlots = BuildMaterialSlots(
@@ -434,7 +443,7 @@ public sealed class PartPackageExporter
                 imported,
                 nativeMeshes
             );
-            var morphChannelBindings = normalizedType is "head" or "hair"
+            IReadOnlyList<HeadMorphChannel> morphChannelBindings = normalizedType is "head" or "hair"
                 ? ReadHeadMorphBindings(imported)
                 : Array.Empty<HeadMorphChannel>();
             var nativeDeduplication = DeduplicateNativeMeshes(nativeMeshes, builtMaterialSlots.Slots);
@@ -454,9 +463,9 @@ public sealed class PartPackageExporter
         }
         var core = cachedCore;
         var overrideTextures = entry.ColorVariationBundlePath is not null
-            ? modelFactory.CreateImportedTextures(entry.ColorVariationBundlePath)
+            ? AssetStudioImportedModelFactory.CreateImportedTextures(entry.ColorVariationBundlePath)
             : Array.Empty<ImportedTexture>();
-        var textures = textureExporter.ExportPartTextures(
+        var textures = UnityRuntimeTextureExporter.ExportPartTextures(
             packageDirectory,
             outputDirectory,
             normalizedType,
@@ -568,7 +577,7 @@ public sealed class PartPackageExporter
         }
     }
 
-    private ResolvedBundleInput ResolveInput(PartRegistryEntry entry)
+    private static ResolvedBundleInput ResolveInput(PartRegistryEntry entry)
     {
         if (entry.BundlePath is null)
         {
@@ -577,8 +586,8 @@ public sealed class PartPackageExporter
 
         var normalizedType = ResolveRuntimePartType(entry);
         var input = normalizedType == "body"
-            ? resolver.ResolveBody(entry.BundlePath)
-            : resolver.ResolveHead(entry.BundlePath);
+            ? BundleInputResolver.ResolveBody(entry.BundlePath)
+            : BundleInputResolver.ResolveHead(entry.BundlePath);
         return input with { CharacterId = entry.CharacterId.ToString("00") };
     }
 
@@ -615,7 +624,7 @@ public sealed class PartPackageExporter
         var combined = partType == "body"
             ? new CombinedSpringBoneExport(1, springBone, EmptySpringBone("Head"))
             : new CombinedSpringBoneExport(1, EmptySpringBone("Body"), springBone);
-        var candidate = new VrmSpringBoneCandidateBuilder().Build(combined);
+        var candidate = VrmSpringBoneCandidateBuilder.Build(combined);
         var setup = BuildSinglePartRuntimeSetup(partType, springBone, candidate);
         return new PartRuntimeSpringBone(
             PartKind: ToRuntimePartKind(partType),
@@ -691,7 +700,7 @@ public sealed class PartPackageExporter
                 PositionConversion: "viewer_mirror_x",
                 RotationConversion: "viewer_negate_quaternion_yz",
                 ScaleConversion: "identity",
-                Notes: new[] { "Single-part package; viewer composer must merge active parts before simulation." }
+                Notes: SinglePartCoordinateNotes
             ),
             PrefabGraphs: new[] { springBone.PrefabGraph },
             BodyHeadAssembly: null,
@@ -714,7 +723,7 @@ public sealed class PartPackageExporter
                 DiscoveryMode: "single_part_runtime_package",
                 RootPolicy: "official_model_combine_setup; manager ownership is rebuilt from composed hierarchy",
                 ManagerPathIds: managers.Select(manager => manager.PathId).ToList(),
-                OrderedSteps: new[] { "mount part graph", "merge active part springbone", "rebuild SpringManager ownership from composed hierarchy", "repair constraints after composition", "rebind current body colliders", "reset spring runtime" },
+                OrderedSteps: SinglePartSetupSteps,
                 DirectBindingCount: bindings.Count(binding => binding.SourceKind == "direct"),
                 ColliderFlagBindingCount: bindings.Count(binding => binding.SourceKind == "colliderFlag")
             ),
@@ -773,7 +782,7 @@ public sealed class PartPackageExporter
             .ToList();
     }
 
-    private static IReadOnlyList<string> ResolveColliderFlagPrefixes(int colliderFlag)
+    private static List<string> ResolveColliderFlagPrefixes(int colliderFlag)
     {
         var prefixes = new List<string>();
         if ((colliderFlag & 1) != 0)
@@ -803,13 +812,13 @@ public sealed class PartPackageExporter
         return prefixes;
     }
 
-    private PjskUnityRuntimeNativeMeshSet ExportNativeMeshes(
+    private static PjskUnityRuntimeNativeMeshSet ExportNativeMeshes(
         string partType,
         IImported imported,
         PartRuntimeSpringBone springBone
     )
     {
-        var nativeMeshes = nativeMeshExporter.ExportSinglePart(
+        var nativeMeshes = UnityRuntimeNativeMeshExporter.ExportSinglePart(
             partType == "body" ? "Body" : partType == "head_optional" ? "Accessory" : "Head",
             imported,
             springBone.PrefabGraph,
@@ -946,7 +955,7 @@ public sealed class PartPackageExporter
 
     private static int ScoreNativeMeshMaterialCompleteness(
         PjskUnityRuntimeNativeMesh mesh,
-        IReadOnlyDictionary<string, PjskSekaiRuntimeMaterialSlot> materialSlotByKey
+        Dictionary<string, PjskSekaiRuntimeMaterialSlot> materialSlotByKey
     )
     {
         var score = 0;
@@ -1188,7 +1197,7 @@ public sealed class PartPackageExporter
         return string.IsNullOrWhiteSpace(materialName) ? slot.MaterialName : materialName;
     }
 
-    private static IReadOnlyList<TextureSlotInventory> BuildSyntheticTextureSlots(ImportedMaterial material)
+    private static List<TextureSlotInventory> BuildSyntheticTextureSlots(ImportedMaterial material)
     {
         var textureNames = material.Textures
             .Select(texture => texture.Name)
@@ -1212,7 +1221,7 @@ public sealed class PartPackageExporter
             markers.Any(marker => name.Contains(marker, StringComparison.OrdinalIgnoreCase)));
     }
 
-    private static IReadOnlyList<PjskSekaiRuntimeTextureRole> BuildTextureRoles(IReadOnlyList<PjskSekaiRuntimeMaterialSlot> slots)
+    private static List<PjskSekaiRuntimeTextureRole> BuildTextureRoles(IReadOnlyList<PjskSekaiRuntimeMaterialSlot> slots)
     {
         var roles = new List<PjskSekaiRuntimeTextureRole>();
         foreach (var slot in slots)
@@ -1357,7 +1366,7 @@ public sealed class PartPackageExporter
                 meshUrl = "part-runtime.msgpack.br",
                 manifestUrl = "part-runtime.msgpack.br",
             },
-            rootNodeName = inventory.Roots.FirstOrDefault()?.Name,
+            rootNodeName = inventory.Roots.Count > 0 ? inventory.Roots[0].Name : null,
             attachNode = entry.AttachNode,
             proxy = partType == "body"
                 ? BuildPartBodyProxy(SekaiMaterialMetadata.BuildBodyProxy(inventory.Materials))
@@ -1527,19 +1536,19 @@ public sealed class PartPackageExporter
                 "head_optional" => "attach_node",
                 _ => "head_origin",
             },
-            RootNodeName: inventory.Roots.FirstOrDefault()?.Name,
+            RootNodeName: inventory.Roots.Count > 0 ? inventory.Roots[0].Name : null,
             AttachNode: entry.AttachNode,
             ExpectedSkeletonId: entry.CharacterId.ToString("00"),
             Notes: partType == "head_optional"
-                ? new[] { "Viewer must verify attachNode exists in the current composed prefab graph before mounting." }
-                : new[] { "Viewer composer mounts this part and rebuilds SpringBone runtime after changes." },
+                ? HeadOptionalMountNotes
+                : DefaultMountNotes,
             AccessoryTransformAdjustments: accessoryTransformAdjustments is { Count: > 0 }
                 ? accessoryTransformAdjustments
                 : null
         );
     }
 
-    private IReadOnlyList<PartRegistryEntry> LoadPartEntries(
+    private static IReadOnlyList<PartRegistryEntry> LoadPartEntries(
         string masterDirectory,
         string assetRoot,
         string? workListPath = null
@@ -1549,7 +1558,7 @@ public sealed class PartPackageExporter
         {
             return PartPackageWorkPlanner.Load(workListPath).Entries;
         }
-        var output = new CostumeRegistryExporter().ExportInMemory(masterDirectory, assetRoot);
+        var output = CostumeRegistryExporter.ExportInMemory(masterDirectory, assetRoot);
         return output.PartRegistry.Entries;
     }
 
@@ -1653,7 +1662,7 @@ public sealed class PartPackageExporter
         return bool.TryParse(value.ToString(), out var parsed) ? parsed : null;
     }
 
-    private static IReadOnlyList<PjskSpringBoneRuntimeManagerColliderCache> BuildManagerColliderCaches(
+    private static List<PjskSpringBoneRuntimeManagerColliderCache> BuildManagerColliderCaches(
         IReadOnlyList<PjskSpringBoneRuntimeManager> managers,
         IReadOnlyList<PjskSpringBoneRuntimeCollider> colliders
     )
@@ -1755,13 +1764,13 @@ public sealed class PartPackageExporter
     private static string? SelectHeadRootName(BundleInventory inventory)
     {
         return inventory.Roots.FirstOrDefault(root => string.Equals(root.Name, "face", StringComparison.OrdinalIgnoreCase))?.Name
-            ?? inventory.Roots.FirstOrDefault()?.Name;
+            ?? (inventory.Roots.Count > 0 ? inventory.Roots[0].Name : null);
     }
 
     private static string? SelectAccessoryRootName(BundleInventory inventory)
     {
         return inventory.Roots.FirstOrDefault(root => string.Equals(root.Name, "optional", StringComparison.OrdinalIgnoreCase))?.Name
-            ?? inventory.Roots.FirstOrDefault()?.Name;
+            ?? (inventory.Roots.Count > 0 ? inventory.Roots[0].Name : null);
     }
 
     private PartRuntimeSource BuildSource(
@@ -2001,7 +2010,7 @@ public sealed class PartPackageExporter
             ["26"] = 1.75f,
         };
 
-    private static IReadOnlyList<HeadMorphChannel> ReadHeadMorphBindings(IImported importedHead)
+    private static List<HeadMorphChannel> ReadHeadMorphBindings(IImported importedHead)
     {
         return importedHead.MorphList
             .Where(morph => morph.Path.EndsWith("/Face", StringComparison.OrdinalIgnoreCase) || string.Equals(morph.Path, "face/Face", StringComparison.OrdinalIgnoreCase))

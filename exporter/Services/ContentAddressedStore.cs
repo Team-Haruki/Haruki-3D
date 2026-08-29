@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace PjskBundle2Parts.Services;
 
-public sealed class ContentAddressedStore
+public sealed partial class ContentAddressedStore
 {
     private const string StateFileName = "content-addressed-store-state.json";
 
@@ -13,8 +13,12 @@ public sealed class ContentAddressedStore
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
     };
+    private static readonly JsonSerializerOptions ReadJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
 
-    public ContentAddressedStoreReport Compact(string outputDirectory, string sharedStoreDirectory)
+    public static ContentAddressedStoreReport Compact(string outputDirectory, string sharedStoreDirectory)
     {
         outputDirectory = Path.GetFullPath(outputDirectory);
         sharedStoreDirectory = Path.GetFullPath(sharedStoreDirectory);
@@ -129,7 +133,7 @@ public sealed class ContentAddressedStore
         {
             return JsonSerializer.Deserialize<Dictionary<string, ContentAddressedStoreStateEntry>>(
                 File.ReadAllText(path),
-                new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+                ReadJsonOptions
             ) is { } state
                 ? state
                     .Where(pair => pair.Value is { Hash.Length: 64, Extension: not null })
@@ -219,12 +223,22 @@ public sealed class ContentAddressedStore
         return Convert.ToHexString(SHA256.HashData(stream)).ToLowerInvariant();
     }
 
-    [DllImport("libc", EntryPoint = "link", SetLastError = true)]
-    private static extern int CreateHardLinkUnix(string canonicalPath, string newPath);
+    [LibraryImport(
+        "libc",
+        EntryPoint = "link",
+        SetLastError = true,
+        StringMarshalling = StringMarshalling.Utf8
+    )]
+    private static partial int CreateHardLinkUnix(string canonicalPath, string newPath);
 
-    [DllImport("Kernel32.dll", EntryPoint = "CreateHardLinkW", CharSet = CharSet.Unicode, SetLastError = true)]
+    [LibraryImport(
+        "Kernel32.dll",
+        EntryPoint = "CreateHardLinkW",
+        SetLastError = true,
+        StringMarshalling = StringMarshalling.Utf16
+    )]
     [return: MarshalAs(UnmanagedType.Bool)]
-    private static extern bool CreateHardLinkWindows(string newPath, string existingPath, IntPtr securityAttributes);
+    private static partial bool CreateHardLinkWindows(string newPath, string existingPath, IntPtr securityAttributes);
 }
 
 public sealed record ContentAddressedStoreReport(

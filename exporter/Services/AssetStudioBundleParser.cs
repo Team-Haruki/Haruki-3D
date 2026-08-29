@@ -40,7 +40,7 @@ public sealed class AssetStudioBundleParser
         return Parse(input, objects, objects, assetsFileCount);
     }
 
-    public BundleInventory Parse(
+    public static BundleInventory Parse(
         ResolvedBundleInput input,
         IReadOnlyList<Object> primaryObjects,
         IReadOnlyList<Object> allObjects,
@@ -279,7 +279,7 @@ public sealed class AssetStudioBundleParser
         );
     }
 
-    private static IReadOnlyList<RenderMaterialSlotInventory> BuildMaterialSlots(IReadOnlyList<PPtr<Material>> materials)
+    private static List<RenderMaterialSlotInventory> BuildMaterialSlots(IReadOnlyList<PPtr<Material>> materials)
     {
         return materials
             .Select((ptr, index) =>
@@ -316,7 +316,7 @@ public sealed class AssetStudioBundleParser
         return $"{BuildTransformPath(father)}/{gameObject.m_Name}";
     }
 
-    private static IReadOnlyList<string> InferAttachCandidates(IReadOnlyList<string> boneNames)
+    private static List<string> InferAttachCandidates(IReadOnlyList<string> boneNames)
     {
         return boneNames
             .Where(name =>
@@ -327,7 +327,7 @@ public sealed class AssetStudioBundleParser
             .ToList();
     }
 
-    private static IReadOnlyList<string> InferOriginCandidates(IReadOnlyList<string> boneNames)
+    private static List<string> InferOriginCandidates(IReadOnlyList<string> boneNames)
     {
         return boneNames
             .Where(name =>

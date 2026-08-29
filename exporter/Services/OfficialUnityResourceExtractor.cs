@@ -13,7 +13,7 @@ public sealed record OfficialUnityResource(
 
 public sealed class OfficialUnityResourceExtractor
 {
-    public OfficialUnityResource Extract(
+    public static OfficialUnityResource Extract(
         ResolvedBundleInput input,
         IReadOnlyList<Object> primaryObjects,
         string resourceName

@@ -5,7 +5,38 @@ namespace PjskBundle2Parts.Services;
 
 public sealed class PjskSekaiRuntimeExtensionBuilder
 {
-    public PjskSekaiRuntimeBuildResult Build(
+    private static readonly string[] RuntimeAuthorityNotes =
+    [
+        "Unity runtime JSON is the authoritative container for Transform, mesh, material, motion, and SpringBone data.",
+        "GLB and VRM containers are not emitted by the pure Unity runtime export path.",
+        "Face expressions are still driven by PJSK morph hash/channel bindings until VRM expression mapping is implemented.",
+    ];
+    private static readonly string[] UnityCoordinateNotes =
+    [
+        "Prefab graph transforms and runtime SpringBone metadata are stored in Unity source space.",
+        "Three.js viewers must convert source transforms before rendering or simulation in viewer space.",
+        "Native mesh geometry, bind matrices, morph deltas, and ImportedFrame rest transforms are already converted by AssetStudio and must not be mirrored again.",
+    ];
+    private static readonly string[] FaceRootCandidates = ["face"];
+    private static readonly string[] FaceOriginCandidates = ["face/Position/Hip/Waist/Spine/Chest/Neck"];
+    private static readonly string[] BodyHeadAssemblyNotes =
+    [
+        "Body and head prefab roots are stored as separate Unity prefab graphs.",
+        "Runtime must reproduce Sekai.Live.ModelUtility.ModelCombineSetup: graft face Neck/Head into body bones.",
+        "Body Head children are drained to face Head; body renderer Neck/Head slots resolve to face Neck/Head.",
+    ];
+    private static readonly string[] RuntimeSetupSteps =
+    [
+        "ModelUtility.ModelCombineSetup",
+        "ModelUtility.SpringBoneSetup",
+        "ModelUtility.ConstraintSetup",
+        "CharacterModel.Setup",
+        "CharacterModel.SetupSpringBone",
+        "SpringManager.FindSpringBones(true)",
+        "SpringManager.SetupCollider",
+        "SpringBone.Initialize",
+    ];
+    public static PjskSekaiRuntimeBuildResult Build(
         ConversionPlan plan,
         IReadOnlyDictionary<string, string> characterTexturePathByName,
         CombinedSpringBoneExport combinedSpringBone,
@@ -178,12 +209,7 @@ public sealed class PjskSekaiRuntimeExtensionBuilder
                 LayerPipeline: plan.SekaiVrmProfile.SekaiRuntimeMaterialProfile.LayerPipeline,
                 PreserveGltfMaterialsAsFallback: false
             ),
-            Notes: new[]
-            {
-                "Unity runtime JSON is the authoritative container for Transform, mesh, material, motion, and SpringBone data.",
-                "GLB and VRM containers are not emitted by the pure Unity runtime export path.",
-                "Face expressions are still driven by PJSK morph hash/channel bindings until VRM expression mapping is implemented.",
-            }
+            Notes: RuntimeAuthorityNotes
         );
 
         var report = new PjskSekaiRuntimeResolveReport(
@@ -244,7 +270,7 @@ public sealed class PjskSekaiRuntimeExtensionBuilder
         };
     }
 
-    private static IReadOnlyDictionary<uint, List<PjskBodyMotionTarget>> BuildPrefabMotionTargetLookup(
+    private static Dictionary<uint, List<PjskBodyMotionTarget>> BuildPrefabMotionTargetLookup(
         PjskSpringBoneRuntimeUnitySetup runtimeUnitySetup
     )
     {
@@ -440,12 +466,7 @@ public sealed class PjskSekaiRuntimeExtensionBuilder
                 PositionConversion: "viewer_mirror_x",
                 RotationConversion: "viewer_negate_quaternion_yz",
                 ScaleConversion: "identity",
-                Notes: new[]
-                {
-                    "Prefab graph transforms and runtime SpringBone metadata are stored in Unity source space.",
-                    "Three.js viewers must convert source transforms before rendering or simulation in viewer space.",
-                    "Native mesh geometry, bind matrices, morph deltas, and ImportedFrame rest transforms are already converted by AssetStudio and must not be mirrored again.",
-                }
+                Notes: UnityCoordinateNotes
             ),
             PrefabGraphs: prefabGraphs,
             BodyHeadAssembly: BuildBodyHeadAssembly(defaultBodyRoot, prefabGraphs),
@@ -608,11 +629,8 @@ public sealed class PjskSekaiRuntimeExtensionBuilder
             $"{defaultBodyRoot}/Position/PositionOffset/Hip/Waist/Spine/Chest/Neck",
             $"{defaultBodyRoot}/Position/Hip/Waist/Spine/Chest/Neck",
         });
-        var childRootPath = ResolveFirstExistingPath(transformPaths, new[] { "face" });
-        var childOriginPath = ResolveFirstExistingPath(transformPaths, new[]
-        {
-            "face/Position/Hip/Waist/Spine/Chest/Neck",
-        });
+        var childRootPath = ResolveFirstExistingPath(transformPaths, FaceRootCandidates);
+        var childOriginPath = ResolveFirstExistingPath(transformPaths, FaceOriginCandidates);
         var parentHeadPath = parentAttachPath is null ? null : $"{parentAttachPath}/Head";
         var childHeadPath = childOriginPath is null ? null : $"{childOriginPath}/Head";
 
@@ -625,12 +643,7 @@ public sealed class PjskSekaiRuntimeExtensionBuilder
             ChildOriginPath: childOriginPath,
             ParentingMode: "model_combine_setup",
             CoordinateSpace: "unity-left-handed",
-            Notes: new[]
-            {
-                "Body and head prefab roots are stored as separate Unity prefab graphs.",
-                "Runtime must reproduce Sekai.Live.ModelUtility.ModelCombineSetup: graft face Neck/Head into body bones.",
-                "Body Head children are drained to face Head; body renderer Neck/Head slots resolve to face Neck/Head.",
-            },
+            Notes: BodyHeadAssemblyNotes,
             FaceRendererName: "Face",
             CombineNodeAName: "Neck",
             CombineNodeBName: "Head",
@@ -643,7 +656,7 @@ public sealed class PjskSekaiRuntimeExtensionBuilder
     }
 
     private static string? ResolveFirstExistingPath(
-        IReadOnlySet<string> transformPaths,
+        HashSet<string> transformPaths,
         IEnumerable<string> candidates
     )
     {
@@ -745,17 +758,7 @@ public sealed class PjskSekaiRuntimeExtensionBuilder
             DiscoveryMode: "Unity prefab transform hierarchy; SpringManager.FindSpringBones(true) ownership is authoritative",
             RootPolicy: "managerColliderCaches are the collider binding anchor; viewer/runtime must constrain colliderFlag candidates by manager cache before selecting one body/sit_body/guitar_body root",
             ManagerPathIds: managers.Select(manager => manager.PathId).OrderBy(pathId => pathId).ToList(),
-            OrderedSteps: new[]
-            {
-                "ModelUtility.ModelCombineSetup",
-                "ModelUtility.SpringBoneSetup",
-                "ModelUtility.ConstraintSetup",
-                "CharacterModel.Setup",
-                "CharacterModel.SetupSpringBone",
-                "SpringManager.FindSpringBones(true)",
-                "SpringManager.SetupCollider",
-                "SpringBone.Initialize",
-            },
+            OrderedSteps: RuntimeSetupSteps,
             DirectBindingCount: bindings.Count(binding => binding.SourceKind == "direct"),
             ColliderFlagBindingCount: bindings.Count(binding => binding.SourceKind == "colliderFlag")
         );
@@ -798,7 +801,7 @@ public sealed class PjskSekaiRuntimeExtensionBuilder
             .ToList();
     }
 
-    private static IReadOnlyList<PjskSpringBoneRuntimeManagerColliderCache> BuildManagerColliderCaches(
+    private static List<PjskSpringBoneRuntimeManagerColliderCache> BuildManagerColliderCaches(
         IReadOnlyList<PjskSpringBoneRuntimeManager> managers,
         IReadOnlyList<PjskSpringBoneRuntimeCollider> colliders
     )
@@ -839,7 +842,7 @@ public sealed class PjskSekaiRuntimeExtensionBuilder
             .ToList();
     }
 
-    private static IReadOnlyList<PjskSpringBoneRuntimeCollider> SelectRuntimeManagerCacheColliders(
+    private static List<PjskSpringBoneRuntimeCollider> SelectRuntimeManagerCacheColliders(
         PjskSpringBoneRuntimeManager manager,
         IReadOnlyList<PjskSpringBoneRuntimeCollider> colliders
     )

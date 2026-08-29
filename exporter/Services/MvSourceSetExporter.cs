@@ -12,12 +12,16 @@ public sealed class MvSourceSetExporter
         PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
         WriteIndented = true,
     };
+    private static readonly JsonSerializerOptions ReadJsonOptions = new()
+    {
+        PropertyNameCaseInsensitive = true,
+    };
 
-    public MvSourceSetExportResult Export(string manifestPath, string assetRoot, string outputDirectory)
+    public static MvSourceSetExportResult Export(string manifestPath, string assetRoot, string outputDirectory)
     {
         var manifest = JsonSerializer.Deserialize<MvSourceManifest>(
             File.ReadAllText(manifestPath),
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+            ReadJsonOptions
         ) ?? throw new InvalidOperationException("MV manifest JSON is empty.");
 
         if (manifest.MusicId <= 0)
@@ -128,7 +132,7 @@ public sealed class MvSourceSetExporter
     {
         var name = value?.Trim().Replace('\\', '/') ?? string.Empty;
         if (string.IsNullOrWhiteSpace(name)
-            || name.StartsWith("/", StringComparison.Ordinal)
+            || name.StartsWith('/')
             || name.EndsWith(".bundle", StringComparison.OrdinalIgnoreCase)
             || name.Split('/').Any(segment => segment is "" or "." or ".."))
         {

@@ -10,7 +10,7 @@ public sealed class Character3dCostumeResolver
         PropertyNameCaseInsensitive = true,
     };
 
-    public ResolvedCharacter3dCostume Resolve(
+    public static ResolvedCharacter3dCostume Resolve(
         int character3dId,
         string masterDirectory,
         string assetRoot
@@ -146,7 +146,7 @@ public sealed class Character3dCostumeResolver
     }
 
     private static Costume3dModelMaster ResolveCostume(
-        IReadOnlyDictionary<int, IReadOnlyList<Costume3dModelMaster>> costumesById,
+        Dictionary<int, IReadOnlyList<Costume3dModelMaster>> costumesById,
         int costume3dId,
         string? unit,
         string label
@@ -157,10 +157,10 @@ public sealed class Character3dCostumeResolver
             throw new InvalidOperationException($"{label} costume3dId {costume3dId} was not found.");
         }
         return string.IsNullOrWhiteSpace(unit)
-            ? costumes.First()
+            ? costumes[0]
             : costumes.FirstOrDefault(entry =>
                 string.Equals(entry.Unit, unit, StringComparison.OrdinalIgnoreCase)
-            ) ?? costumes.First();
+            ) ?? costumes[0];
     }
 
     private static string ResolveBodyBundlePath(
@@ -536,7 +536,7 @@ public sealed class Character3dCostumeResolver
         return raw.ToLowerInvariant();
     }
 
-    private static IReadOnlyList<string> BuildAssetBundleNames(
+    private static List<string> BuildAssetBundleNames(
         string faceAssetbundleName,
         string? accessoryAssetbundleName,
         string? accessoryColorAssetbundleName,
@@ -561,7 +561,7 @@ public sealed class Character3dCostumeResolver
         return names;
     }
 
-    private static IReadOnlyList<string> BuildAssetBundlePaths(params string?[] paths)
+    private static List<string> BuildAssetBundlePaths(params string?[] paths)
     {
         return paths
             .Where(path => !string.IsNullOrWhiteSpace(path))

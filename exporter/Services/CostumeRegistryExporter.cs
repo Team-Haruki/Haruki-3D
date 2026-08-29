@@ -8,6 +8,7 @@ namespace PjskBundle2Parts.Services;
 
 public sealed class CostumeRegistryExporter
 {
+    private static readonly string[] MissingCostumeModelWarnings = ["missing costume3dModels row"];
     private const int ScopedRegistryMaxDegreeOfParallelism = 16;
     private const int CompactRegistrySchemaVersion = 1;
 
@@ -167,7 +168,7 @@ public sealed class CostumeRegistryExporter
         };
     }
 
-    public CostumeRegistryExport ExportInMemory(
+    public static CostumeRegistryExport ExportInMemory(
         string masterDirectory,
         string assetRoot
     )
@@ -233,7 +234,7 @@ public sealed class CostumeRegistryExporter
     private static PartRegistry BuildPartRegistry(
         IReadOnlyList<Costume3dMaster> costume3ds,
         IReadOnlyList<Character3dMaster> character3ds,
-        IReadOnlyDictionary<int, IReadOnlyList<Costume3dModelMaster>> modelsByCostumeId,
+        Dictionary<int, IReadOnlyList<Costume3dModelMaster>> modelsByCostumeId,
         IReadOnlyDictionary<int, GameCharacterMaster> characterById,
         string assetRoot,
         IReadOnlyDictionary<string, string> source
@@ -244,7 +245,7 @@ public sealed class CostumeRegistryExporter
         {
             if (!modelsByCostumeId.TryGetValue(costume.Id, out var models) || models.Count == 0)
             {
-                entries.Add(BuildPartEntry(costume, null, null, null, null, null, null, "missing", new[] { "missing costume3dModels row" }));
+                entries.Add(BuildPartEntry(costume, null, null, null, null, null, null, "missing", MissingCostumeModelWarnings));
                 continue;
             }
 
@@ -596,8 +597,8 @@ public sealed class CostumeRegistryExporter
 
     private static CardCostumeUnlockRegistry BuildCardCostumeUnlocks(
         IReadOnlyList<CardCostume3dMaster> cardCostumes,
-        IReadOnlyDictionary<int, CardMaster> cardsById,
-        IReadOnlyDictionary<int, Costume3dMaster> costumeById,
+        Dictionary<int, CardMaster> cardsById,
+        Dictionary<int, Costume3dMaster> costumeById,
         IReadOnlyDictionary<string, string> source
     )
     {

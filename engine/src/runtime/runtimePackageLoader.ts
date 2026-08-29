@@ -424,15 +424,8 @@ function isRuntimeSkinColors(value: RuntimeRoleCatalogEntry["skinColors"]) {
 export function expectedRuntimeRoleIdentity(roleId: number): { characterId: number; unit: string } | null {
   if (!Number.isInteger(roleId) || roleId < 1 || roleId > 31) return null;
   if (roleId <= 20) {
-    const unit = roleId <= 4
-      ? "light_sound"
-      : roleId <= 8
-        ? "idol"
-        : roleId <= 12
-          ? "street"
-          : roleId <= 16
-            ? "theme_park"
-            : "school_refusal";
+    const units = ["light_sound", "idol", "street", "theme_park", "school_refusal"];
+    const unit = units[Math.floor((roleId - 1) / 4)]!;
     return { characterId: roleId, unit };
   }
   if (roleId <= 26) {

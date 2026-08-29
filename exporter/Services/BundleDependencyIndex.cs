@@ -41,7 +41,7 @@ public sealed class BundleDependencyIndex
             .ToList();
     }
 
-    private static IReadOnlyDictionary<string, IReadOnlyList<string>> Load(string? path)
+    private static Dictionary<string, IReadOnlyList<string>> Load(string? path)
     {
         if (string.IsNullOrWhiteSpace(path) || !File.Exists(path))
         {

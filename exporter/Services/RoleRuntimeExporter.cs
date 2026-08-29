@@ -25,15 +25,9 @@ public sealed class RoleRuntimeExporter
         WriteIndented = true,
     };
 
-    private readonly BundleInputResolver resolver = new();
-    private readonly Character3dCostumeResolver character3dCostumeResolver = new();
-    private readonly AssetStudioBundleParser parser = new();
     private readonly ConversionPlanner planner = new();
-    private readonly SpringBoneExporter springBoneExporter = new();
-    private readonly VrmSpringBoneCandidateBuilder vrmSpringBoneCandidateBuilder = new();
+    private readonly AssetStudioBundleParser parser = new();
     private readonly AssetStudioImportedModelFactory modelFactory;
-    private readonly MotionPackageExporter motionPackageExporter = new();
-    private readonly PjskSekaiRuntimeExtensionBuilder runtimeExtensionBuilder = new();
 
     public RoleRuntimeExporter(bool convertModelTextures = false)
     {
@@ -66,7 +60,7 @@ public sealed class RoleRuntimeExporter
                 .ToList();
     }
 
-    private static IReadOnlyList<int> LoadRepresentativeRoleCharacter3dIds(string masterDirectory)
+    private static List<int> LoadRepresentativeRoleCharacter3dIds(string masterDirectory)
     {
         var roleKeys = LoadCanonicalRoleKeys(masterDirectory);
         var character3dsByRole = LoadAllCharacter3ds(masterDirectory)
@@ -83,7 +77,7 @@ public sealed class RoleRuntimeExporter
             .ToList();
     }
 
-    private static IReadOnlyList<string> LoadCanonicalRoleKeys(string masterDirectory)
+    private static List<string> LoadCanonicalRoleKeys(string masterDirectory)
     {
         var path = Path.Combine(Path.GetFullPath(masterDirectory), "gameCharacters.json");
         if (!File.Exists(path))
@@ -148,7 +142,7 @@ public sealed class RoleRuntimeExporter
             );
         }
 
-        var resolvedCostume = character3dCostumeResolver.Resolve(
+        var resolvedCostume = Character3dCostumeResolver.Resolve(
             character3dId,
             masterDirectory,
             assetRoot
@@ -156,9 +150,9 @@ public sealed class RoleRuntimeExporter
         var motionDirectory = Path.Combine(roleDirectory, "motion");
         Directory.CreateDirectory(roleDirectory);
 
-        var bodyInput = resolver.ResolveBody(resolvedCostume.BodyPath)
+        var bodyInput = BundleInputResolver.ResolveBody(resolvedCostume.BodyPath)
             with { CharacterId = resolvedCostume.CharacterId.ToString("00") };
-        var headInput = resolver.ResolveHead(resolvedCostume.MainHeadPath)
+        var headInput = BundleInputResolver.ResolveHead(resolvedCostume.MainHeadPath)
             with { CharacterId = resolvedCostume.CharacterId.ToString("00") };
         var bodyInventory = parser.Parse(bodyInput);
         var headInventory = parser.Parse(headInput);
@@ -170,22 +164,22 @@ public sealed class RoleRuntimeExporter
             headInventory,
             headRootOverride: null
         );
-        var bodySpringBone = springBoneExporter.Export(bodyInput);
-        var headSpringBone = springBoneExporter.Export(headInput);
+        var bodySpringBone = SpringBoneExporter.Export(bodyInput);
+        var headSpringBone = SpringBoneExporter.Export(headInput);
         var combinedSpringBone = new CombinedSpringBoneExport(
             Version: 1,
             Body: bodySpringBone,
             Head: headSpringBone
         );
-        var vrmSpringBoneCandidate = vrmSpringBoneCandidateBuilder.Build(combinedSpringBone);
+        var vrmSpringBoneCandidate = VrmSpringBoneCandidateBuilder.Build(combinedSpringBone);
         var importedBody = modelFactory.CreateImportedModel(bodyInput);
         var resolvedMotionPath = motionPath ?? ResolveDefaultCostumeSettingMotionPath(assetRoot, resolvedCostume);
-        var motionExport = motionPackageExporter.Export(
+        var motionExport = MotionPackageExporter.Export(
             resolvedMotionPath,
             motionDirectory,
             importedBody
         );
-        var runtimeBuild = runtimeExtensionBuilder.Build(
+        var runtimeBuild = PjskSekaiRuntimeExtensionBuilder.Build(
             plan,
             new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase),
             combinedSpringBone,
@@ -288,7 +282,7 @@ public sealed class RoleRuntimeExporter
         };
     }
 
-    private static IReadOnlyList<int> LoadAllCharacter3dIds(string masterDirectory)
+    private static List<int> LoadAllCharacter3dIds(string masterDirectory)
     {
         return LoadAllCharacter3ds(masterDirectory).Select(entry => entry.Id).ToList();
     }

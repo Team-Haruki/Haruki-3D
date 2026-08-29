@@ -80,5 +80,9 @@ function requireDirectoryUrl(value: string, name: string) {
 
 function trimTrailingSlash(value: string) {
   const trimmed = value.trim();
-  return trimmed === "/" ? trimmed : trimmed.replace(/\/+$/, "");
+  let end = trimmed.length;
+  while (end > 1 && trimmed[end - 1] === "/") {
+    end -= 1;
+  }
+  return trimmed.slice(0, end);
 }
