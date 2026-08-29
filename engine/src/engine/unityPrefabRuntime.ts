@@ -103,6 +103,12 @@ export type NativeMeshSkinBindingDiagnostics = {
   restMatrixSpreadBonePath: string | null;
 };
 
+type NativeMeshInstallOutcome = {
+  installed: boolean;
+  skinned: boolean;
+  skinBinding?: NativeMeshSkinBindingDiagnostics;
+};
+
 export function applyUnityCharacterModelScale(
   graph: UnityPrefabSourceGraph,
   characterModelScale: number
@@ -570,72 +576,16 @@ export function buildUnityPrefabSourceGraph(
   const sourceScaleCorrection = resolveUnityPrefabSourceScaleCorrection(extension);
   root.scale.setScalar(sourceScaleCorrection.scale);
   root.userData.pjskSourceScaleCorrection = sourceScaleCorrection;
-  const nodeByPathId = new Map<number, THREE.Object3D>();
-  const sourceByPathId = new Map<number, RuntimePrefabTransformSource>();
-  const nodeByPath = new Map<string, THREE.Object3D>();
-  const pathCounts = new Map<string, number>();
-
-  for (const graph of setup.prefabGraphs) {
-    for (const transform of graph.transforms ?? []) {
-      if (typeof transform.pathId !== "number" || !transform.transformPath) {
-        continue;
-      }
-      sourceByPathId.set(transform.pathId, transform);
-      pathCounts.set(
-        transform.transformPath,
-        (pathCounts.get(transform.transformPath) ?? 0) + 1
-      );
-    }
-  }
+  const { sourceByPathId, pathCounts } = indexPrefabTransformSources(setup);
   const ambiguousPaths = new Set(
     [...pathCounts.entries()]
       .filter(([, count]) => count > 1)
       .map(([path]) => path)
   );
   const preferredRootByKey = resolvePreferredPrefabRoots(extension, sourceByPathId);
-
-  for (const graph of setup.prefabGraphs) {
-    for (const transform of graph.transforms ?? []) {
-      if (typeof transform.pathId !== "number" || !transform.transformPath) {
-        continue;
-      }
-      const node = new THREE.Object3D();
-      node.name = transform.name ?? transform.transformPath.split("/").pop() ?? `path_${transform.pathId}`;
-      node.userData.pjskTransformPath = transform.transformPath;
-      node.userData.pjskRuntimePartIndex = transform.runtimePartIndex;
-      node.userData.pjskPoseRoot = transform.poseRoot ?? null;
-      node.position.copy(convertUnityPositionToThree(
-        readUnityVector3(transform.localPosition, new THREE.Vector3())
-      ));
-      node.quaternion.copy(convertUnityQuaternionToThree(
-        readUnityQuaternion(transform.localRotation)
-      ));
-      node.scale.copy(readUnityVector3(
-        transform.localScale,
-        new THREE.Vector3(1, 1, 1)
-      ));
-      node.updateMatrix();
-      nodeByPathId.set(transform.pathId, node);
-      const rootSource = resolvePrefabInstanceRoot(transform, sourceByPathId);
-      const preferredRoot = preferredRootByKey.get(prefabInstanceKey(transform) ?? "");
-      if (
-        preferredRoot === undefined ||
-        preferredRoot === rootSource.pathId ||
-        !nodeByPath.has(transform.transformPath)
-      ) {
-        nodeByPath.set(transform.transformPath, node);
-      }
-    }
-  }
-
-  for (const [pathId, node] of nodeByPathId.entries()) {
-    const source = sourceByPathId.get(pathId);
-    const parentPathId = source?.parentPathId;
-    const parent = typeof parentPathId === "number"
-      ? nodeByPathId.get(parentPathId)
-      : null;
-    (parent ?? root).add(node);
-  }
+  const { nodeByPathId, nodeByPath } = buildPrefabTransformNodes(
+    setup, sourceByPathId, preferredRootByKey);
+  attachPrefabTransformNodes(root, nodeByPathId, sourceByPathId);
 
   root.updateMatrixWorld(true);
   const inputTransformCount = countRuntimeTransforms(root);
@@ -667,16 +617,7 @@ export function buildUnityPrefabSourceGraph(
   const retainedTransformCount = countRuntimeTransforms(root);
   const removedTransformCount = inputTransformCount - retainedTransformCount;
 
-  const meshCarrierBindings: UnityPrefabSourceGraph["meshCarrierBindings"] = [];
-  if (meshCarrierRoot) {
-    const carrierNodeByPath = buildPrefabNodePathLookup(meshCarrierRoot);
-    for (const [path, source] of nodeByPath.entries()) {
-      const target = carrierNodeByPath.get(path);
-      if (target) {
-        meshCarrierBindings.push({ source, target });
-      }
-    }
-  }
+  const meshCarrierBindings = buildMeshCarrierBindings(nodeByPath, meshCarrierRoot);
 
   const debug: PrefabHeadFollowDebug = {
     active: true,
@@ -722,6 +663,95 @@ export function buildUnityPrefabSourceGraph(
     headRendererPaths,
     debug,
   };
+}
+
+function indexPrefabTransformSources(setup: RuntimeUnitySetupSource) {
+  const sourceByPathId = new Map<number, RuntimePrefabTransformSource>();
+  const pathCounts = new Map<string, number>();
+  for (const graph of setup.prefabGraphs ?? []) {
+    for (const transform of graph.transforms ?? []) {
+      if (typeof transform.pathId !== "number" || !transform.transformPath) {
+        continue;
+      }
+      sourceByPathId.set(transform.pathId, transform);
+      pathCounts.set(transform.transformPath, (pathCounts.get(transform.transformPath) ?? 0) + 1);
+    }
+  }
+  return { sourceByPathId, pathCounts };
+}
+
+function buildPrefabTransformNodes(
+  setup: RuntimeUnitySetupSource,
+  sourceByPathId: ReadonlyMap<number, RuntimePrefabTransformSource>,
+  preferredRootByKey: ReadonlyMap<string, number>
+) {
+  const nodeByPathId = new Map<number, THREE.Object3D>();
+  const nodeByPath = new Map<string, THREE.Object3D>();
+  for (const graph of setup.prefabGraphs ?? []) {
+    for (const transform of graph.transforms ?? []) {
+      addPrefabTransformNode(
+        transform, sourceByPathId, preferredRootByKey, nodeByPathId, nodeByPath);
+    }
+  }
+  return { nodeByPathId, nodeByPath };
+}
+
+function addPrefabTransformNode(
+  transform: RuntimePrefabTransformSource,
+  sourceByPathId: ReadonlyMap<number, RuntimePrefabTransformSource>,
+  preferredRootByKey: ReadonlyMap<string, number>,
+  nodeByPathId: Map<number, THREE.Object3D>,
+  nodeByPath: Map<string, THREE.Object3D>
+) {
+  if (typeof transform.pathId !== "number" || !transform.transformPath) {
+    return;
+  }
+  const node = new THREE.Object3D();
+  node.name = transform.name ?? transform.transformPath.split("/").pop() ?? `path_${transform.pathId}`;
+  node.userData.pjskTransformPath = transform.transformPath;
+  node.userData.pjskRuntimePartIndex = transform.runtimePartIndex;
+  node.userData.pjskPoseRoot = transform.poseRoot ?? null;
+  node.position.copy(convertUnityPositionToThree(
+    readUnityVector3(transform.localPosition, new THREE.Vector3())));
+  node.quaternion.copy(convertUnityQuaternionToThree(readUnityQuaternion(transform.localRotation)));
+  node.scale.copy(readUnityVector3(transform.localScale, new THREE.Vector3(1, 1, 1)));
+  node.updateMatrix();
+  nodeByPathId.set(transform.pathId, node);
+  const rootSource = resolvePrefabInstanceRoot(transform, sourceByPathId);
+  const preferredRoot = preferredRootByKey.get(prefabInstanceKey(transform) ?? "");
+  if (preferredRoot === undefined || preferredRoot === rootSource.pathId || !nodeByPath.has(transform.transformPath)) {
+    nodeByPath.set(transform.transformPath, node);
+  }
+}
+
+function attachPrefabTransformNodes(
+  root: THREE.Object3D,
+  nodeByPathId: ReadonlyMap<number, THREE.Object3D>,
+  sourceByPathId: ReadonlyMap<number, RuntimePrefabTransformSource>
+) {
+  for (const [pathId, node] of nodeByPathId.entries()) {
+    const parentPathId = sourceByPathId.get(pathId)?.parentPathId;
+    const parent = typeof parentPathId === "number" ? nodeByPathId.get(parentPathId) : null;
+    (parent ?? root).add(node);
+  }
+}
+
+function buildMeshCarrierBindings(
+  nodeByPath: ReadonlyMap<string, THREE.Object3D>,
+  meshCarrierRoot?: THREE.Object3D | null
+): UnityPrefabSourceGraph["meshCarrierBindings"] {
+  if (!meshCarrierRoot) {
+    return [];
+  }
+  const bindings: UnityPrefabSourceGraph["meshCarrierBindings"] = [];
+  const carrierNodeByPath = buildPrefabNodePathLookup(meshCarrierRoot);
+  for (const [path, source] of nodeByPath.entries()) {
+    const target = carrierNodeByPath.get(path);
+    if (target) {
+      bindings.push({ source, target });
+    }
+  }
+  return bindings;
 }
 
 function countRuntimeTransforms(root: THREE.Object3D) {
@@ -779,160 +809,13 @@ export function installUnityRuntimeNativeMeshes(
     if (isDestroyedStaticFaceRenderer(extension, source)) {
       continue;
     }
-    const targetPath = source.rendererTransformPath;
-    const bonePaths = source.bonePaths ?? [];
-    const bonePathIds = source.bonePathIds ?? [];
-    const ambiguousLegacyPaths = [
-      ...(typeof source.rendererTransformPathId !== "number" ? [targetPath] : []),
-      ...(bonePathIds.length === 0 ? bonePaths : []),
-      ...(typeof source.rootBonePathId !== "number" ? [source.rootBonePath] : []),
-    ].filter((path): path is string => Boolean(path && graph.ambiguousPaths.has(path)));
-    if (ambiguousLegacyPaths.length > 0) {
-      const error = `Native mesh '${source.meshPath ?? source.meshName ?? "<unnamed>"}' has an ambiguous legacy PathID-less skin binding (${[...new Set(ambiguousLegacyPaths)].join(", ")}); regenerate it with a current Haruki-3D-Exporter.`;
-      warnings.push(error);
-      fatalErrors.push(error);
-      continue;
+    const outcome = installUnityRuntimeNativeMeshSource(
+      graph, source, warnings, fatalErrors);
+    meshCount += outcome.installed ? 1 : 0;
+    skinnedMeshCount += outcome.skinned ? 1 : 0;
+    if (outcome.skinBinding) {
+      skinBindings.push(outcome.skinBinding);
     }
-    if (bonePathIds.length > 0 && bonePathIds.length !== bonePaths.length) {
-      const error = `Native mesh '${source.meshPath ?? source.meshName ?? "<unnamed>"}' has ${bonePaths.length} bone paths but ${bonePathIds.length} bone PathIDs; regenerate it with a current Haruki-3D-Exporter.`;
-      warnings.push(error);
-      fatalErrors.push(error);
-      continue;
-    }
-    const parent = typeof source.rendererTransformPathId === "number"
-      ? graph.nodeByPathId.get(source.rendererTransformPathId)
-      : targetPath
-        ? graph.nodeByPath.get(targetPath)
-        : null;
-    if (!parent) {
-      const error = `Native mesh '${source.meshPath ?? source.meshName ?? "<unnamed>"}' skipped: renderer transform '${targetPath ?? "<null>"}' was not found.`;
-      warnings.push(error);
-      if (typeof source.rendererTransformPathId === "number") {
-        fatalErrors.push(error);
-      }
-      continue;
-    }
-
-    const geometry = buildUnityRuntimeNativeGeometry(source);
-    if (!geometry) {
-      warnings.push(`Native mesh '${source.meshPath ?? source.meshName ?? "<unnamed>"}' skipped: invalid geometry payload.`);
-      continue;
-    }
-
-    const materials = (source.submeshes ?? []).map((submesh) => {
-      if (!submesh.materialKey || typeof submesh.slotIndex !== "number") {
-        throw new Error(
-          `Native mesh '${source.meshPath ?? source.meshName ?? "<unnamed>"}' has a submesh without material identity; regenerate it with Haruki-3D-Exporter materialKey runtime support.`
-        );
-      }
-      const material = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        vertexColors: geometry.hasAttribute("color"),
-      });
-      material.name = submesh.materialName ?? source.meshName ?? source.meshPath ?? "native_material";
-      material.userData.pjskMaterialKey = submesh.materialKey;
-      material.userData.pjskMaterialSlotIndex = submesh.slotIndex;
-      return material;
-    });
-    const meshMaterials = materials.length > 0
-      ? materials
-      : [new THREE.MeshBasicMaterial({ color: 0xffffff })];
-    const meshName = source.meshName ?? source.meshPath?.split("/").pop() ?? "UnityNativeMesh";
-    const bones = bonePaths
-      .map((path, index) => bonePathIds.length > 0
-        ? graph.nodeByPathId.get(bonePathIds[index]!)
-        : graph.nodeByPath.get(path))
-      .filter((node): node is THREE.Object3D => Boolean(node));
-
-    let mesh: THREE.Mesh | THREE.SkinnedMesh;
-    let skinnedMeshForBind: THREE.SkinnedMesh | null = null;
-    let skeletonBones: THREE.Object3D[] = [];
-    if (bonePaths.length > 0) {
-      if (bones.length !== bonePaths.length) {
-        const error = `Native mesh '${source.meshPath ?? meshName}' skipped: ${bonePaths.length - bones.length} skin bones were unresolved.`;
-        warnings.push(error);
-        fatalErrors.push(error);
-        geometry.dispose();
-        continue;
-      }
-      const skinned = new THREE.SkinnedMesh(geometry, meshMaterials);
-      mesh = skinned;
-      skinnedMeshForBind = skinned;
-      skeletonBones = bones;
-      skinnedMeshCount += 1;
-    } else {
-      mesh = new THREE.Mesh(geometry, meshMaterials);
-    }
-
-    mesh.name = meshName;
-    mesh.userData.pjskNativeUnityMesh = true;
-    mesh.userData.pjskPartKind = source.partKind ?? null;
-    mesh.userData.pjskRendererPathId = source.rendererPathId ?? null;
-    mesh.frustumCulled = false;
-    parent.add(mesh);
-    if (skinnedMeshForBind) {
-      graph.root.updateMatrixWorld(true);
-      skinnedMeshForBind.updateMatrixWorld(true);
-      const inverseBindMatrices = buildUnityRuntimeBoneInverseBindMatrices(
-        source,
-        skeletonBones.length,
-        warnings
-      );
-      const rendererBindMatrix = skinnedMeshForBind.matrixWorld.clone();
-      if (inverseBindMatrices.length > 0) {
-        // Unity stores bind poses in mesh-local space:
-        //   world = boneWorld * unityBindPose * vertex.
-        // Three.js also applies the SkinnedMesh bind matrix around skinning, so
-        // using the Unity matrix directly would apply a non-identity renderer
-        // transform twice. Convert it to Three's bone-inverse space:
-        //   threeBoneInverse = unityBindPose * inverse(rendererBindMatrix).
-        const rendererBindMatrixInverse = rendererBindMatrix.clone().invert();
-        for (const inverseBindMatrix of inverseBindMatrices) {
-          inverseBindMatrix.multiply(rendererBindMatrixInverse);
-        }
-      }
-      const skeleton = new THREE.Skeleton(
-        skeletonBones as unknown as THREE.Bone[],
-        inverseBindMatrices.length > 0 ? inverseBindMatrices : undefined
-      );
-      if (inverseBindMatrices.length === 0) {
-        skeleton.calculateInverses();
-      }
-      skinnedMeshForBind.bind(skeleton, rendererBindMatrix);
-      const restTransform = makeSkinRestTransform(
-        skeletonBones[0]!,
-        skeleton.boneInverses[0]!
-      );
-      const restMatrixSpread = measureSkinRestMatrixSpread(
-        skeletonBones,
-        skeleton.boneInverses
-      );
-      skinBindings.push({
-        meshName,
-        partKind: source.partKind ?? null,
-        rendererTransformPath: targetPath ?? null,
-        rootBonePath: source.rootBonePath ?? null,
-        rootBoneResolved: typeof source.rootBonePathId === "number"
-          ? graph.nodeByPathId.has(source.rootBonePathId)
-          : source.rootBonePath
-            ? graph.nodeByPath.has(source.rootBonePath)
-            : false,
-        effectiveRootBonePath: targetPath && graph.headRendererPaths.includes(targetPath)
-          ? graph.bodyRootBonePath
-          : source.rootBonePath ?? null,
-        effectiveRootBoneResolved: targetPath && graph.headRendererPaths.includes(targetPath)
-          ? Boolean(graph.bodyRootBone)
-          : typeof source.rootBonePathId === "number"
-            ? graph.nodeByPathId.has(source.rootBonePathId)
-            : source.rootBonePath
-              ? graph.nodeByPath.has(source.rootBonePath)
-              : false,
-        boneCount: skeletonBones.length,
-        ...restTransform,
-        ...restMatrixSpread,
-      });
-    }
-    meshCount += 1;
   }
 
   graph.root.updateMatrixWorld(true);
@@ -948,6 +831,219 @@ export function installUnityRuntimeNativeMeshes(
         : "Unity runtime nativeMeshes did not produce any renderable mesh.",
     warnings,
   };
+}
+
+function installUnityRuntimeNativeMeshSource(
+  graph: UnityPrefabSourceGraph,
+  source: RuntimeNativeMeshSource,
+  warnings: string[],
+  fatalErrors: string[]
+): NativeMeshInstallOutcome {
+  const bonePaths = source.bonePaths ?? [];
+  const bonePathIds = source.bonePathIds ?? [];
+  if (!validateNativeMeshBindingSource(graph, source, bonePaths, bonePathIds, warnings, fatalErrors)) {
+    return { installed: false, skinned: false };
+  }
+  const parent = resolveNativeMeshParent(graph, source, warnings, fatalErrors);
+  if (!parent) {
+    return { installed: false, skinned: false };
+  }
+  const geometry = buildUnityRuntimeNativeGeometry(source);
+  if (!geometry) {
+    warnings.push(`Native mesh '${nativeMeshLabel(source)}' skipped: invalid geometry payload.`);
+    return { installed: false, skinned: false };
+  }
+  const meshMaterials = buildNativeMeshMaterials(source, geometry);
+  const meshName = source.meshName ?? source.meshPath?.split("/").pop() ?? "UnityNativeMesh";
+  const bones = resolveNativeMeshBones(graph, bonePaths, bonePathIds);
+  if (bonePaths.length > 0 && bones.length !== bonePaths.length) {
+    const error = `Native mesh '${source.meshPath ?? meshName}' skipped: ${bonePaths.length - bones.length} skin bones were unresolved.`;
+    warnings.push(error);
+    fatalErrors.push(error);
+    geometry.dispose();
+    return { installed: false, skinned: false };
+  }
+  const mesh = bonePaths.length > 0
+    ? new THREE.SkinnedMesh(geometry, meshMaterials)
+    : new THREE.Mesh(geometry, meshMaterials);
+  prepareAndMountNativeMesh(mesh, meshName, source, parent);
+  const skinBinding = mesh instanceof THREE.SkinnedMesh
+    ? bindUnityRuntimeNativeSkin(graph, source, mesh, bones, meshName, warnings)
+    : undefined;
+  return { installed: true, skinned: mesh instanceof THREE.SkinnedMesh, skinBinding };
+}
+
+function nativeMeshLabel(source: RuntimeNativeMeshSource) {
+  return source.meshPath ?? source.meshName ?? "<unnamed>";
+}
+
+function validateNativeMeshBindingSource(
+  graph: UnityPrefabSourceGraph,
+  source: RuntimeNativeMeshSource,
+  bonePaths: string[],
+  bonePathIds: number[],
+  warnings: string[],
+  fatalErrors: string[]
+) {
+  const ambiguousLegacyPaths = [
+    ...(typeof source.rendererTransformPathId !== "number" ? [source.rendererTransformPath] : []),
+    ...(bonePathIds.length === 0 ? bonePaths : []),
+    ...(typeof source.rootBonePathId !== "number" ? [source.rootBonePath] : []),
+  ].filter((path): path is string => Boolean(path && graph.ambiguousPaths.has(path)));
+  if (ambiguousLegacyPaths.length > 0) {
+    const error = `Native mesh '${nativeMeshLabel(source)}' has an ambiguous legacy PathID-less skin binding (${[...new Set(ambiguousLegacyPaths)].join(", ")}); regenerate it with a current Haruki-3D-Exporter.`;
+    warnings.push(error);
+    fatalErrors.push(error);
+    return false;
+  }
+  if (bonePathIds.length > 0 && bonePathIds.length !== bonePaths.length) {
+    const error = `Native mesh '${nativeMeshLabel(source)}' has ${bonePaths.length} bone paths but ${bonePathIds.length} bone PathIDs; regenerate it with a current Haruki-3D-Exporter.`;
+    warnings.push(error);
+    fatalErrors.push(error);
+    return false;
+  }
+  return true;
+}
+
+function resolveNativeMeshParent(
+  graph: UnityPrefabSourceGraph,
+  source: RuntimeNativeMeshSource,
+  warnings: string[],
+  fatalErrors: string[]
+) {
+  const targetPath = source.rendererTransformPath;
+  const parent = typeof source.rendererTransformPathId === "number"
+    ? graph.nodeByPathId.get(source.rendererTransformPathId)
+    : targetPath ? graph.nodeByPath.get(targetPath) : null;
+  if (parent) {
+    return parent;
+  }
+  const error = `Native mesh '${nativeMeshLabel(source)}' skipped: renderer transform '${targetPath ?? "<null>"}' was not found.`;
+  warnings.push(error);
+  if (typeof source.rendererTransformPathId === "number") {
+    fatalErrors.push(error);
+  }
+  return null;
+}
+
+function buildNativeMeshMaterials(
+  source: RuntimeNativeMeshSource,
+  geometry: THREE.BufferGeometry
+): THREE.Material[] {
+  const materials = (source.submeshes ?? []).map((submesh) => {
+    if (!submesh.materialKey || typeof submesh.slotIndex !== "number") {
+      throw new Error(
+        `Native mesh '${nativeMeshLabel(source)}' has a submesh without material identity; regenerate it with Haruki-3D-Exporter materialKey runtime support.`
+      );
+    }
+    const material = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: geometry.hasAttribute("color") });
+    material.name = submesh.materialName ?? source.meshName ?? source.meshPath ?? "native_material";
+    material.userData.pjskMaterialKey = submesh.materialKey;
+    material.userData.pjskMaterialSlotIndex = submesh.slotIndex;
+    return material;
+  });
+  return materials.length > 0 ? materials : [new THREE.MeshBasicMaterial({ color: 0xffffff })];
+}
+
+function resolveNativeMeshBones(
+  graph: UnityPrefabSourceGraph,
+  bonePaths: string[],
+  bonePathIds: number[]
+) {
+  return bonePaths
+    .map((path, index) => bonePathIds.length > 0
+      ? graph.nodeByPathId.get(bonePathIds[index]!)
+      : graph.nodeByPath.get(path))
+    .filter((node): node is THREE.Object3D => Boolean(node));
+}
+
+function prepareAndMountNativeMesh(
+  mesh: THREE.Mesh | THREE.SkinnedMesh,
+  meshName: string,
+  source: RuntimeNativeMeshSource,
+  parent: THREE.Object3D
+) {
+  mesh.name = meshName;
+  mesh.userData.pjskNativeUnityMesh = true;
+  mesh.userData.pjskPartKind = source.partKind ?? null;
+  mesh.userData.pjskRendererPathId = source.rendererPathId ?? null;
+  mesh.frustumCulled = false;
+  parent.add(mesh);
+}
+
+function bindUnityRuntimeNativeSkin(
+  graph: UnityPrefabSourceGraph,
+  source: RuntimeNativeMeshSource,
+  mesh: THREE.SkinnedMesh,
+  skeletonBones: THREE.Object3D[],
+  meshName: string,
+  warnings: string[]
+): NativeMeshSkinBindingDiagnostics {
+  graph.root.updateMatrixWorld(true);
+  mesh.updateMatrixWorld(true);
+  const inverseBindMatrices = buildUnityRuntimeBoneInverseBindMatrices(
+    source,
+    skeletonBones.length,
+    warnings
+  );
+  const rendererBindMatrix = mesh.matrixWorld.clone();
+  convertUnityBindMatricesToThree(inverseBindMatrices, rendererBindMatrix);
+  const skeleton = new THREE.Skeleton(
+    skeletonBones as unknown as THREE.Bone[],
+    inverseBindMatrices.length > 0 ? inverseBindMatrices : undefined
+  );
+  if (inverseBindMatrices.length === 0) {
+    skeleton.calculateInverses();
+  }
+  mesh.bind(skeleton, rendererBindMatrix);
+  return buildNativeSkinBindingDiagnostics(graph, source, meshName, skeletonBones, skeleton);
+}
+
+function convertUnityBindMatricesToThree(
+  inverseBindMatrices: THREE.Matrix4[],
+  rendererBindMatrix: THREE.Matrix4
+) {
+  if (inverseBindMatrices.length === 0) {
+    return;
+  }
+  const rendererBindMatrixInverse = rendererBindMatrix.clone().invert();
+  for (const inverseBindMatrix of inverseBindMatrices) {
+    inverseBindMatrix.multiply(rendererBindMatrixInverse);
+  }
+}
+
+function buildNativeSkinBindingDiagnostics(
+  graph: UnityPrefabSourceGraph,
+  source: RuntimeNativeMeshSource,
+  meshName: string,
+  skeletonBones: THREE.Object3D[],
+  skeleton: THREE.Skeleton
+): NativeMeshSkinBindingDiagnostics {
+  const targetPath = source.rendererTransformPath;
+  const isHeadRenderer = Boolean(targetPath && graph.headRendererPaths.includes(targetPath));
+  const rootBoneResolved = resolveNativeRootBoneStatus(graph, source);
+  return {
+    meshName,
+    partKind: source.partKind ?? null,
+    rendererTransformPath: targetPath ?? null,
+    rootBonePath: source.rootBonePath ?? null,
+    rootBoneResolved,
+    effectiveRootBonePath: isHeadRenderer ? graph.bodyRootBonePath : source.rootBonePath ?? null,
+    effectiveRootBoneResolved: isHeadRenderer ? Boolean(graph.bodyRootBone) : rootBoneResolved,
+    boneCount: skeletonBones.length,
+    ...makeSkinRestTransform(skeletonBones[0]!, skeleton.boneInverses[0]!),
+    ...measureSkinRestMatrixSpread(skeletonBones, skeleton.boneInverses),
+  };
+}
+
+function resolveNativeRootBoneStatus(
+  graph: UnityPrefabSourceGraph,
+  source: RuntimeNativeMeshSource
+) {
+  if (typeof source.rootBonePathId === "number") {
+    return graph.nodeByPathId.has(source.rootBonePathId);
+  }
+  return source.rootBonePath ? graph.nodeByPath.has(source.rootBonePath) : false;
 }
 
 function makeSkinRestTransform(
@@ -1032,33 +1128,63 @@ function buildUnityRuntimeNativeGeometry(source: RuntimeNativeMeshSource) {
   const vertexCount = positions.length / 3;
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
-  if ((source.normals?.length ?? 0) === vertexCount * 3) {
-    geometry.setAttribute("normal", new THREE.Float32BufferAttribute(source.normals!, 3));
-  }
-  if ((source.tangents?.length ?? 0) === vertexCount * 4) {
-    geometry.setAttribute("tangent", new THREE.Float32BufferAttribute(source.tangents!, 4));
-  }
-  if ((source.uv0?.length ?? 0) === vertexCount * 2) {
-    geometry.setAttribute("uv", new THREE.Float32BufferAttribute(source.uv0!, 2));
-  }
-  if ((source.uv1?.length ?? 0) === vertexCount * 2) {
-    geometry.setAttribute("uv1", new THREE.Float32BufferAttribute(source.uv1!, 2));
-  }
-  if ((source.uv2?.length ?? 0) === vertexCount * 2) {
-    geometry.setAttribute("uv2", new THREE.Float32BufferAttribute(source.uv2!, 2));
-  }
-  if ((source.colors?.length ?? 0) === vertexCount * 4) {
-    geometry.setAttribute("color", new THREE.Float32BufferAttribute(source.colors!, 4));
-  }
-  if ((source.skinIndices?.length ?? 0) === vertexCount * 4) {
-    geometry.setAttribute("skinIndex", new THREE.Uint16BufferAttribute(source.skinIndices!, 4));
-  }
-  if ((source.skinWeights?.length ?? 0) === vertexCount * 4) {
-    geometry.setAttribute("skinWeight", new THREE.Float32BufferAttribute(source.skinWeights!, 4));
-  }
+  addNativeGeometryAttributes(geometry, source, vertexCount);
+  addNativeGeometryIndices(geometry, source.submeshes ?? []);
+  addNativeGeometryMorphTargets(geometry, source.morphTargets ?? [], vertexCount);
 
+  geometry.computeBoundingSphere();
+  return geometry;
+}
+
+function addNativeGeometryAttributes(
+  geometry: THREE.BufferGeometry,
+  source: RuntimeNativeMeshSource,
+  vertexCount: number
+) {
+  addFloatGeometryAttribute(geometry, "normal", source.normals, 3, vertexCount);
+  if (source.tangents?.length === vertexCount * 4) {
+    geometry.setAttribute("tangent", new THREE.Float32BufferAttribute(source.tangents, 4));
+  }
+  addFloatGeometryAttribute(geometry, "uv", source.uv0, 2, vertexCount);
+  addFloatGeometryAttribute(geometry, "uv1", source.uv1, 2, vertexCount);
+  if (source.uv2?.length === vertexCount * 2) {
+    geometry.setAttribute("uv2", new THREE.Float32BufferAttribute(source.uv2, 2));
+  }
+  addFloatGeometryAttribute(geometry, "color", source.colors, 4, vertexCount);
+  addUint16GeometryAttribute(geometry, "skinIndex", source.skinIndices, 4, vertexCount);
+  addFloatGeometryAttribute(geometry, "skinWeight", source.skinWeights, 4, vertexCount);
+}
+
+function addFloatGeometryAttribute(
+  geometry: THREE.BufferGeometry,
+  name: string,
+  values: RuntimeNumericArray | undefined,
+  itemSize: number,
+  vertexCount: number
+) {
+  if (values?.length === vertexCount * itemSize) {
+    geometry.setAttribute(name, new THREE.Float32BufferAttribute(values, itemSize));
+  }
+}
+
+function addUint16GeometryAttribute(
+  geometry: THREE.BufferGeometry,
+  name: string,
+  values: RuntimeNumericArray | undefined,
+  itemSize: number,
+  vertexCount: number
+) {
+  if (values?.length === vertexCount * itemSize) {
+    geometry.setAttribute(name, new THREE.Uint16BufferAttribute(values, itemSize));
+  }
+}
+
+function addNativeGeometryIndices(
+  geometry: THREE.BufferGeometry,
+  submeshes: RuntimeNativeSubmeshSource[]
+) {
   const allIndices: number[] = [];
-  for (const submesh of source.submeshes ?? []) {
+  for (const submesh of submeshes) {
     const start = allIndices.length;
     const indices = submesh.indices ?? [];
     allIndices.push(...indices);
@@ -1067,52 +1193,71 @@ function buildUnityRuntimeNativeGeometry(source: RuntimeNativeMeshSource) {
   if (allIndices.length > 0) {
     geometry.setIndex(allIndices);
   }
+}
 
-  const morphPositions: THREE.BufferAttribute[] = [];
-  const morphNormals: THREE.BufferAttribute[] = [];
-  for (const target of source.morphTargets ?? []) {
-    const indices = target.indices ?? [];
-    const positionDeltas = target.positionDeltas ?? [];
-    if (indices.length === 0 || positionDeltas.length !== indices.length * 3) {
-      continue;
-    }
-    const positionArray = new Float32Array(vertexCount * 3);
-    const normalArray = target.normalDeltas?.length === indices.length * 3
-      ? new Float32Array(vertexCount * 3)
-      : null;
-    for (let index = 0; index < indices.length; index += 1) {
-      const vertexIndex = indices[index];
-      if (!Number.isInteger(vertexIndex) || vertexIndex < 0 || vertexIndex >= vertexCount) {
-        continue;
-      }
-      positionArray[vertexIndex * 3] = positionDeltas[index * 3] ?? 0;
-      positionArray[vertexIndex * 3 + 1] = positionDeltas[index * 3 + 1] ?? 0;
-      positionArray[vertexIndex * 3 + 2] = positionDeltas[index * 3 + 2] ?? 0;
-      if (normalArray && target.normalDeltas) {
-        normalArray[vertexIndex * 3] = target.normalDeltas[index * 3] ?? 0;
-        normalArray[vertexIndex * 3 + 1] = target.normalDeltas[index * 3 + 1] ?? 0;
-        normalArray[vertexIndex * 3 + 2] = target.normalDeltas[index * 3 + 2] ?? 0;
-      }
-    }
-    const positionAttribute = new THREE.BufferAttribute(positionArray, 3);
-    positionAttribute.name = target.name ?? `morph_${morphPositions.length}`;
-    morphPositions.push(positionAttribute);
-    if (normalArray) {
-      const normalAttribute = new THREE.BufferAttribute(normalArray, 3);
-      normalAttribute.name = positionAttribute.name;
-      morphNormals.push(normalAttribute);
-    }
+function addNativeGeometryMorphTargets(
+  geometry: THREE.BufferGeometry,
+  targets: RuntimeNativeMorphTargetSource[],
+  vertexCount: number
+) {
+  const positions: THREE.BufferAttribute[] = [];
+  const normals: THREE.BufferAttribute[] = [];
+  for (const target of targets) {
+    addNativeGeometryMorphTarget(target, vertexCount, positions, normals);
   }
-  if (morphPositions.length > 0) {
-    geometry.morphAttributes.position = morphPositions;
+  if (positions.length > 0) {
+    geometry.morphAttributes.position = positions;
     geometry.morphTargetsRelative = true;
   }
-  if (morphNormals.length === morphPositions.length && morphNormals.length > 0) {
-    geometry.morphAttributes.normal = morphNormals;
+  if (normals.length === positions.length && normals.length > 0) {
+    geometry.morphAttributes.normal = normals;
   }
+}
 
-  geometry.computeBoundingSphere();
-  return geometry;
+function addNativeGeometryMorphTarget(
+  target: RuntimeNativeMorphTargetSource,
+  vertexCount: number,
+  positions: THREE.BufferAttribute[],
+  normals: THREE.BufferAttribute[]
+) {
+  const indices = target.indices ?? [];
+  const positionDeltas = target.positionDeltas ?? [];
+  if (indices.length === 0 || positionDeltas.length !== indices.length * 3) {
+    return;
+  }
+  const positionArray = new Float32Array(vertexCount * 3);
+  const normalArray = target.normalDeltas?.length === indices.length * 3
+    ? new Float32Array(vertexCount * 3)
+    : null;
+  for (let index = 0; index < indices.length; index += 1) {
+    copyNativeMorphDelta(indices[index], index, vertexCount, positionDeltas, positionArray);
+    if (normalArray && target.normalDeltas) {
+      copyNativeMorphDelta(indices[index], index, vertexCount, target.normalDeltas, normalArray);
+    }
+  }
+  const positionAttribute = new THREE.BufferAttribute(positionArray, 3);
+  positionAttribute.name = target.name ?? `morph_${positions.length}`;
+  positions.push(positionAttribute);
+  if (normalArray) {
+    const normalAttribute = new THREE.BufferAttribute(normalArray, 3);
+    normalAttribute.name = positionAttribute.name;
+    normals.push(normalAttribute);
+  }
+}
+
+function copyNativeMorphDelta(
+  vertexIndex: number | undefined,
+  deltaIndex: number,
+  vertexCount: number,
+  deltas: RuntimeNumericArray,
+  output: Float32Array
+) {
+  if (!Number.isInteger(vertexIndex) || vertexIndex! < 0 || vertexIndex! >= vertexCount) {
+    return;
+  }
+  output[vertexIndex! * 3] = deltas[deltaIndex * 3] ?? 0;
+  output[vertexIndex! * 3 + 1] = deltas[deltaIndex * 3 + 1] ?? 0;
+  output[vertexIndex! * 3 + 2] = deltas[deltaIndex * 3 + 2] ?? 0;
 }
 
 export function syncUnityPrefabSourceGraph(

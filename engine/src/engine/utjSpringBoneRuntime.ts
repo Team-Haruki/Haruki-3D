@@ -512,61 +512,12 @@ export function checkPanelCollisionAndReact(
 
   const localHead = headPosition.clone().applyMatrix4(collider.worldToLocalMatrix);
   const localLength = springLength * collider.worldToLocalLengthScale;
-  let status = UtjColliderStatus.NoCollision;
   const localResult = localTail.clone();
-
-  if (localTail.z > 0 || localHead.z > 0) {
-    if (Math.abs(localTail.y) <= halfHeight && Math.abs(localTail.x) <= halfWidth) {
-      status = checkCollisionWithAlignedPlaneAndReact(
-        localHead,
-        localLength,
-        localResult,
-        localTailRadius,
-        2
-      );
-      if (status === UtjColliderStatus.NoCollision) {
-        return noCollision(tailPosition);
-      }
-    } else if (Math.abs(localTail.y) > halfHeight) {
-      const edgeY = localTail.y >= 0 ? halfHeight : -halfHeight;
-      const normal = new THREE.Vector3(0, localTail.y - edgeY, localTail.z);
-      if (normal.lengthSq() <= EPSILON * EPSILON) {
-        normal.set(0, 0, 0);
-      } else {
-        normal.normalize();
-      }
-      localResult.set(
-        localTail.x + normal.x * localTailRadius,
-        edgeY + normal.y * localTailRadius,
-        normal.z * localTailRadius
-      );
-      status = UtjColliderStatus.TailCollision;
-    } else {
-      const edgeX = localTail.x >= 0 ? halfWidth : -halfWidth;
-      const normal = new THREE.Vector3(localTail.x - edgeX, 0, localTail.z);
-      if (normal.lengthSq() <= EPSILON * EPSILON) {
-        normal.set(0, 0, 0);
-      } else {
-        normal.normalize();
-      }
-      localResult.set(
-        edgeX + normal.x * localTailRadius,
-        localTail.y + normal.y * localTailRadius,
-        normal.z * localTailRadius
-      );
-      status = UtjColliderStatus.TailCollision;
-    }
-  } else if (Math.abs(localHead.y) <= halfHeight) {
-    if (Math.abs(localHead.x) <= halfWidth) {
-      status = UtjColliderStatus.HeadIsEmbedded;
-      localResult.set(localHead.x, localHead.y, localTailRadius);
-    } else {
-      status = UtjColliderStatus.TailCollision;
-      localResult.set(localTail.x < 0 ? -halfWidth : halfWidth, localTail.y, localTail.z);
-    }
-  } else {
-    status = UtjColliderStatus.TailCollision;
-    localResult.set(localTail.x, localTail.y >= 0 ? halfHeight : -halfHeight, localTail.z);
+  const status = localTail.z > 0 || localHead.z > 0
+    ? reactToPanelFront(localHead, localTail, localResult, localLength, localTailRadius, halfWidth, halfHeight)
+    : reactToPanelBack(localHead, localTail, localResult, localTailRadius, halfWidth, halfHeight);
+  if (status === UtjColliderStatus.NoCollision) {
+    return noCollision(tailPosition);
   }
 
   return {
@@ -574,6 +525,63 @@ export function checkPanelCollisionAndReact(
     tailPosition: localResult.applyMatrix4(collider.localToWorldMatrix),
     hitNormal: transformDirection(new THREE.Vector3(0, 0, 1), collider.localToWorldMatrix),
   };
+}
+
+function reactToPanelFront(
+  localHead: THREE.Vector3,
+  localTail: THREE.Vector3,
+  localResult: THREE.Vector3,
+  localLength: number,
+  localTailRadius: number,
+  halfWidth: number,
+  halfHeight: number
+): UtjColliderStatus {
+  if (Math.abs(localTail.y) <= halfHeight && Math.abs(localTail.x) <= halfWidth) {
+    return checkCollisionWithAlignedPlaneAndReact(
+      localHead, localLength, localResult, localTailRadius, 2);
+  }
+  if (Math.abs(localTail.y) > halfHeight) {
+    const edgeY = localTail.y >= 0 ? halfHeight : -halfHeight;
+    const normal = normalizedPanelEdge(new THREE.Vector3(0, localTail.y - edgeY, localTail.z));
+    localResult.set(
+      localTail.x + normal.x * localTailRadius,
+      edgeY + normal.y * localTailRadius,
+      normal.z * localTailRadius
+    );
+    return UtjColliderStatus.TailCollision;
+  }
+  const edgeX = localTail.x >= 0 ? halfWidth : -halfWidth;
+  const normal = normalizedPanelEdge(new THREE.Vector3(localTail.x - edgeX, 0, localTail.z));
+  localResult.set(
+    edgeX + normal.x * localTailRadius,
+    localTail.y + normal.y * localTailRadius,
+    normal.z * localTailRadius
+  );
+  return UtjColliderStatus.TailCollision;
+}
+
+function normalizedPanelEdge(normal: THREE.Vector3): THREE.Vector3 {
+  return normal.lengthSq() <= EPSILON * EPSILON ? normal.set(0, 0, 0) : normal.normalize();
+}
+
+function reactToPanelBack(
+  localHead: THREE.Vector3,
+  localTail: THREE.Vector3,
+  localResult: THREE.Vector3,
+  localTailRadius: number,
+  halfWidth: number,
+  halfHeight: number
+): UtjColliderStatus {
+  if (Math.abs(localHead.y) > halfHeight) {
+    localResult.set(localTail.x, localTail.y >= 0 ? halfHeight : -halfHeight, localTail.z);
+    return UtjColliderStatus.TailCollision;
+  }
+  if (Math.abs(localHead.x) <= halfWidth) {
+    localResult.set(localHead.x, localHead.y, localTailRadius);
+    return UtjColliderStatus.HeadIsEmbedded;
+  }
+  localResult.set(localTail.x < 0 ? -halfWidth : halfWidth, localTail.y, localTail.z);
+  return UtjColliderStatus.TailCollision;
 }
 
 export function checkCollisionWithAlignedPlaneAndReact(

@@ -638,6 +638,14 @@ export function updateSekaiBodyMaterial(
   material: THREE.ShaderMaterial,
   next: BodyMaterialUniforms
 ) {
+  updateSekaiBodyColors(material, next);
+  updateSekaiBodyController(material, next);
+  updateSekaiBodyTextures(material, next);
+  updateSekaiBodyLighting(material, next);
+  updateSekaiBodyColorAdjustments(material, next);
+}
+
+function updateSekaiBodyColors(material: THREE.ShaderMaterial, next: BodyMaterialUniforms) {
   setSekaiGammaColor(material.uniforms.uBaseColor.value, next.baseColor);
   setSekaiGammaColor(material.uniforms.uShadowColor.value, next.shadowColor);
   setSekaiGammaColor(material.uniforms.uSkinColorDefault.value, next.skinColorDefault ?? next.baseColor);
@@ -650,6 +658,9 @@ export function updateSekaiBodyMaterial(
   setSekaiGammaColor(material.uniforms.uGlobalShadowColor.value, next.globalShadowColor ?? "#ffffff");
   material.uniforms.uGlobalShadowAlpha.value =
     next.globalShadowAlpha ?? material.uniforms.uGlobalShadowAlpha.value;
+}
+
+function updateSekaiBodyController(material: THREE.ShaderMaterial, next: BodyMaterialUniforms) {
   if (next.controllerAmbientColor !== undefined) {
     setSekaiGammaColor(material.uniforms.uControllerAmbientColor.value, next.controllerAmbientColor);
   }
@@ -691,6 +702,9 @@ export function updateSekaiBodyMaterial(
   if (next.bodyDebugMode !== undefined && material.uniforms.uBodyDebugMode) {
     material.uniforms.uBodyDebugMode.value = next.bodyDebugMode;
   }
+}
+
+function updateSekaiBodyTextures(material: THREE.ShaderMaterial, next: BodyMaterialUniforms) {
   material.uniforms.uMainTex.value = next.mainTex ?? null;
   material.uniforms.uShadowTex.value = next.shadowTex ?? null;
   material.uniforms.uValueTex.value = next.valueTex ?? null;
@@ -702,6 +716,9 @@ export function updateSekaiBodyMaterial(
   if (material.uniforms.uAlphaCutoff) {
     material.uniforms.uAlphaCutoff.value = next.alphaCutoff ?? 0.0;
   }
+}
+
+function updateSekaiBodyLighting(material: THREE.ShaderMaterial, next: BodyMaterialUniforms) {
   material.uniforms.uLightDirection.value.copy(
     next.lightDirection.clone().normalize()
   );
@@ -731,6 +748,12 @@ export function updateSekaiBodyMaterial(
   if (next.headNormalBlend !== undefined && material.uniforms.uHeadNormalBlend) {
     material.uniforms.uHeadNormalBlend.value = next.headNormalBlend;
   }
+}
+
+function updateSekaiBodyColorAdjustments(
+  material: THREE.ShaderMaterial,
+  next: BodyMaterialUniforms
+) {
   material.uniforms.uCharacterAmbientIntensity.value = next.characterAmbientIntensity ?? 0.3;
   material.uniforms.uRimColorAlpha.value =
     next.rimColorAlpha ?? material.uniforms.uRimColorAlpha.value;

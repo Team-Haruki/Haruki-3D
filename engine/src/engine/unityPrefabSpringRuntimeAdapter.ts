@@ -255,6 +255,23 @@ type RuntimeColliderBinding = {
 
 type RuntimeSetupDiagnostics = NonNullable<UtjSpringBoneRuntimeSnapshot["setupDiagnostics"]>;
 
+type RuntimeBoneBuildContext = {
+  setup: RuntimeUnitySetup0414;
+  resolution: NodeResolution;
+  graphIndex: PrefabGraphIndex;
+  activeRoots: ReadonlySet<string>;
+  colliderByIndex: ReadonlyMap<number, RuntimeCollider>;
+  bindingByBonePathId: ReadonlyMap<number, RuntimeColliderBindingSource>;
+  decisionByBonePathId: ReadonlyMap<number, RuntimeBindingDecisionSource>;
+  managerCacheByPathId: ReadonlyMap<number, RuntimeManagerColliderCacheBinding>;
+  boneByPathId: ReadonlyMap<number, RuntimeBoneSource>;
+  springComponents: RuntimeSpringComponentIndex;
+  setupDiagnostics: RuntimeSetupDiagnostics;
+  missingNodes: string[];
+  controlledNodes: Set<THREE.Object3D>;
+  forceProviderCache: Map<string, RuntimeForceProvider>;
+};
+
 type RuntimeSpringComponentIndex = {
   hasComponentMetadata: boolean;
   pathIds: ReadonlySet<number>;
@@ -458,54 +475,13 @@ export class UnityPrefabSpringRuntime {
     const forceProviderCache = new Map<string, RuntimeForceProvider>();
     const bones: RuntimeBone[] = [];
 
+    const buildContext: RuntimeBoneBuildContext = {
+      setup, resolution, graphIndex, activeRoots, colliderByIndex, bindingByBonePathId,
+      decisionByBonePathId, managerCacheByPathId, boneByPathId, springComponents,
+      setupDiagnostics, missingNodes, controlledNodes, forceProviderCache,
+    };
     for (const manager of setup.managers ?? []) {
-      if (!isRuntimePathActive(manager.nodePath ?? manager.poseRoot, activeRoots)) {
-        continue;
-      }
-      const forceProviders = resolveForceProviders(resolution, manager, forceProviderCache);
-      for (const bonePathId of manager.bonePathIds ?? []) {
-        const sourceBone = boneByPathId.get(bonePathId);
-        if (!sourceBone || !isRuntimePathActive(sourceBone.nodePath, activeRoots)) {
-          continue;
-        }
-        if (!isVerifiedRuntimeSpringBone(sourceBone, springComponents)) {
-          setupDiagnostics.rejectedUnverifiedBoneSourceCount += 1;
-          continue;
-        }
-        const node = resolveNodeForPart(resolution, sourceBone.nodePath, sourceBone.runtimePartIndex);
-        if (!node) {
-          missingNodes.push(sourceBone.nodePath ?? sourceBone.nodeName ?? `bone:${bonePathId}`);
-          continue;
-        }
-        if (controlledNodes.has(node)) {
-          continue;
-        }
-        const tailBinding = computeUnityPrefabChildPosition(sourceBone, node, graphIndex, resolution);
-        const pivotNode = resolveNodeForPart(resolution, sourceBone.pivotNodePath, sourceBone.runtimePartIndex);
-        const colliderBinding = resolveColliderBinding(
-          setup,
-          manager,
-          sourceBone,
-          bindingByBonePathId.get(bonePathId),
-          decisionByBonePathId.get(bonePathId),
-          manager.pathId !== undefined ? managerCacheByPathId.get(manager.pathId) : undefined,
-          colliderByIndex
-        );
-        const runtimeBone = createRuntimeBone(
-          manager,
-          sourceBone,
-          node,
-          tailBinding,
-          pivotNode,
-          resolveLengthLimitTargets(resolution, sourceBone),
-          forceProviders,
-          colliderBinding
-        );
-        if (runtimeBone) {
-          bones.push(runtimeBone);
-          controlledNodes.add(node);
-        }
-      }
+      addRuntimeManagerBones(manager, buildContext, bones);
     }
 
     bones.sort((a, b) => getObjectDepth(a.node) - getObjectDepth(b.node));
@@ -952,6 +928,37 @@ export class UnityPrefabSpringRuntime {
     const traceEvent = this.shouldTraceBone(bone)
       ? this.createTraceEvent(bone, deltaTime, externalForce, dynamicRatio)
       : null;
+    this.advanceBoneSpring(bone, deltaTime, externalForce, traceEvent);
+    this.applyLengthLimits(bone, deltaTime);
+    if (traceEvent) {
+      traceEvent.stateAfterLengthLimits = stateSnapshot(bone.state);
+    }
+
+    // Official SpringBone passes TransformDirection(radius,0,0).magnitude —
+    // the WORLD tail radius. The rig carries the character-height scale, so
+    // the serialized radius must be scaled here (each collider converts it
+    // back into its own local units).
+    const tailRadius = Math.abs(bone.radius) * matrixWorldXScale(bone.node);
+    if (traceEvent) {
+      traceEvent.tailRadius = tailRadius;
+    }
+    const groundHit = this.checkBoneGround(bone, tailRadius, traceEvent);
+    this.checkBoneCollisions(bone, tailRadius, groundHit, traceEvent);
+    this.applyBoneAngleLimitsWithTrace(bone, deltaTime, traceEvent);
+    this.resetInvalidTipPosition(bone);
+    this.applyBoneRotation(bone, dynamicRatio);
+    if (traceEvent) {
+      traceEvent.finalLocalRotation = quaternionSnapshot(bone.node.quaternion);
+      this.pushTraceEvent(traceEvent);
+    }
+  }
+
+  private advanceBoneSpring(
+    bone: RuntimeBone,
+    deltaTime: number,
+    externalForce: THREE.Vector3,
+    traceEvent: RuntimeTraceEvent | null
+  ): void {
     this.captureSkinAnimationLocalRotation(bone);
     if (traceEvent) {
       traceEvent.skinAnimationLocalRotation = quaternionSnapshot(bone.skinAnimationLocalRotation);
@@ -966,8 +973,7 @@ export class UnityPrefabSpringRuntime {
       initialLocalRotation: bone.initialLocalRotation,
       boneAxis: bone.boneAxis,
       lengthFallbackDirection: bone.boneAxis.clone().applyQuaternion(
-        bone.node.getWorldQuaternion(new THREE.Quaternion())
-      ),
+        bone.node.getWorldQuaternion(new THREE.Quaternion())),
       springLength: bone.springLength,
       stiffnessForce: bone.stiffnessForce,
       dragForce: bone.dragForce,
@@ -978,19 +984,13 @@ export class UnityPrefabSpringRuntime {
     if (traceEvent) {
       traceEvent.stateAfterUpdateSpring = stateSnapshot(bone.state);
     }
-    this.applyLengthLimits(bone, deltaTime);
-    if (traceEvent) {
-      traceEvent.stateAfterLengthLimits = stateSnapshot(bone.state);
-    }
+  }
 
-    // Official SpringBone passes TransformDirection(radius,0,0).magnitude —
-    // the WORLD tail radius. The rig carries the character-height scale, so
-    // the serialized radius must be scaled here (each collider converts it
-    // back into its own local units).
-    const tailRadius = Math.abs(bone.radius) * matrixWorldXScale(bone.node);
-    if (traceEvent) {
-      traceEvent.tailRadius = tailRadius;
-    }
+  private checkBoneGround(
+    bone: RuntimeBone,
+    tailRadius: number,
+    traceEvent: RuntimeTraceEvent | null
+  ): boolean {
     const groundHit = bone.collideWithGround
       ? checkUtjGroundCollision(bone.state, {
         headPosition: this.headPosition,
@@ -998,8 +998,7 @@ export class UnityPrefabSpringRuntime {
         tailRadius,
         groundHeight: bone.groundHeight,
         lengthFallbackDirection: bone.boneAxis.clone().applyQuaternion(
-          bone.node.getWorldQuaternion(new THREE.Quaternion())
-        ),
+          bone.node.getWorldQuaternion(new THREE.Quaternion())),
         bounce: bone.bounce,
         friction: bone.friction,
       })
@@ -1008,7 +1007,15 @@ export class UnityPrefabSpringRuntime {
       traceEvent.groundHit = groundHit;
       traceEvent.stateAfterGround = stateSnapshot(bone.state);
     }
+    return groundHit;
+  }
 
+  private checkBoneCollisions(
+    bone: RuntimeBone,
+    tailRadius: number,
+    groundHit: boolean,
+    traceEvent: RuntimeTraceEvent | null
+  ): void {
     bone.lastCollisionInfo = null;
     const collisionChecks: RuntimeColliderTraceSnapshot[] = [];
     const worldColliders = bone.enableCollision ? this.buildWorldColliders(bone.colliders) : [];
@@ -1021,9 +1028,7 @@ export class UnityPrefabSpringRuntime {
         bounce: bone.bounce,
         friction: bone.friction,
         onColliderCheck: traceEvent
-          ? (collider, trace) => {
-            collisionChecks.push(colliderTraceSnapshot(collider, trace));
-          }
+          ? (collider, trace) => collisionChecks.push(colliderTraceSnapshot(collider, trace))
           : undefined,
         onCollision: (collider, result) => {
           bone.lastCollisionInfo = {
@@ -1041,7 +1046,13 @@ export class UnityPrefabSpringRuntime {
       traceEvent.collisionStatus = bone.lastCollisionStatus;
       traceEvent.stateAfterCollisions = stateSnapshot(bone.state);
     }
+  }
 
+  private applyBoneAngleLimitsWithTrace(
+    bone: RuntimeBone,
+    deltaTime: number,
+    traceEvent: RuntimeTraceEvent | null
+  ): void {
     const angleLimitTrace = traceEvent ? createEmptyAngleLimitTrace(bone) : undefined;
     bone.lastAngleLimitApplied = bone.enableAngleLimits
       ? this.applyAngleLimits(bone, deltaTime, angleLimitTrace)
@@ -1049,12 +1060,6 @@ export class UnityPrefabSpringRuntime {
     if (traceEvent && angleLimitTrace) {
       traceEvent.angleLimit = angleLimitTrace;
       traceEvent.stateAfterAngleLimits = stateSnapshot(bone.state);
-    }
-    this.resetInvalidTipPosition(bone);
-    this.applyBoneRotation(bone, dynamicRatio);
-    if (traceEvent) {
-      traceEvent.finalLocalRotation = quaternionSnapshot(bone.node.quaternion);
-      this.pushTraceEvent(traceEvent);
     }
   }
 
@@ -1382,6 +1387,69 @@ export class UnityPrefabSpringRuntime {
 
     return null;
   }
+}
+
+function addRuntimeManagerBones(
+  manager: RuntimeManagerSource,
+  context: RuntimeBoneBuildContext,
+  bones: RuntimeBone[]
+) {
+  if (!isRuntimePathActive(manager.nodePath ?? manager.poseRoot, context.activeRoots)) {
+    return;
+  }
+  const forceProviders = resolveForceProviders(
+    context.resolution, manager, context.forceProviderCache);
+  for (const bonePathId of manager.bonePathIds ?? []) {
+    const runtimeBone = tryCreateManagedRuntimeBone(manager, bonePathId, forceProviders, context);
+    if (runtimeBone) {
+      bones.push(runtimeBone);
+      context.controlledNodes.add(runtimeBone.node);
+    }
+  }
+}
+
+function tryCreateManagedRuntimeBone(
+  manager: RuntimeManagerSource,
+  bonePathId: number,
+  forceProviders: RuntimeForceProvider[],
+  context: RuntimeBoneBuildContext
+): RuntimeBone | null {
+  const { resolution } = context;
+  const sourceBone = context.boneByPathId.get(bonePathId);
+  if (!sourceBone || !isRuntimePathActive(sourceBone.nodePath, context.activeRoots)) {
+    return null;
+  }
+  if (!isVerifiedRuntimeSpringBone(sourceBone, context.springComponents)) {
+    context.setupDiagnostics.rejectedUnverifiedBoneSourceCount += 1;
+    return null;
+  }
+  const node = resolveNodeForPart(resolution, sourceBone.nodePath, sourceBone.runtimePartIndex);
+  if (!node) {
+    context.missingNodes.push(sourceBone.nodePath ?? sourceBone.nodeName ?? `bone:${bonePathId}`);
+    return null;
+  }
+  if (context.controlledNodes.has(node)) {
+    return null;
+  }
+  const colliderBinding = resolveColliderBinding(
+    context.setup,
+    manager,
+    sourceBone,
+    context.bindingByBonePathId.get(bonePathId),
+    context.decisionByBonePathId.get(bonePathId),
+    manager.pathId !== undefined ? context.managerCacheByPathId.get(manager.pathId) : undefined,
+    context.colliderByIndex
+  );
+  return createRuntimeBone(
+    manager,
+    sourceBone,
+    node,
+    computeUnityPrefabChildPosition(sourceBone, node, context.graphIndex, context.resolution),
+    resolveNodeForPart(resolution, sourceBone.pivotNodePath, sourceBone.runtimePartIndex),
+    resolveLengthLimitTargets(context.resolution, sourceBone),
+    forceProviders,
+    colliderBinding
+  );
 }
 
 function buildControlledPartDiagnostics(
@@ -1925,34 +1993,8 @@ function buildPrefabGraphIndex(setup: RuntimeUnitySetup0414): PrefabGraphIndex {
   const pivotTransformPathIds = new Set<number>();
   const pivotTransformPaths = new Set<string>();
 
-  for (const graph of setup.prefabGraphs ?? []) {
-    for (const transform of graph.transforms ?? []) {
-      if (typeof transform.pathId === "number") {
-        transformByPathId.set(transform.pathId, transform);
-      }
-      if (transform.transformPath) {
-        transformByPath.set(transform.transformPath, transform);
-        if (typeof transform.runtimePartIndex === "number") {
-          transformByPartPath.set(partPathKey(transform.runtimePartIndex, transform.transformPath), transform);
-        }
-      }
-    }
-  }
-
-  for (const graph of setup.prefabGraphs ?? []) {
-    for (const monoBehaviour of graph.monoBehaviours ?? []) {
-      if (monoBehaviour.scriptName?.toLowerCase() !== "springbonepivot") {
-        continue;
-      }
-      if (monoBehaviour.transformPath) {
-        pivotTransformPaths.add(monoBehaviour.transformPath);
-        const transform = transformByPath.get(monoBehaviour.transformPath);
-        if (typeof transform?.pathId === "number") {
-          pivotTransformPathIds.add(transform.pathId);
-        }
-      }
-    }
-  }
+  indexPrefabTransforms(setup, transformByPathId, transformByPath, transformByPartPath);
+  indexPrefabSpringPivots(setup, transformByPath, pivotTransformPathIds, pivotTransformPaths);
 
   return {
     transformByPathId,
@@ -1961,6 +2003,48 @@ function buildPrefabGraphIndex(setup: RuntimeUnitySetup0414): PrefabGraphIndex {
     pivotTransformPathIds,
     pivotTransformPaths,
   };
+}
+
+function indexPrefabTransforms(
+  setup: RuntimeUnitySetup0414,
+  transformByPathId: Map<number, RuntimePrefabTransform>,
+  transformByPath: Map<string, RuntimePrefabTransform>,
+  transformByPartPath: Map<string, RuntimePrefabTransform>
+) {
+  for (const graph of setup.prefabGraphs ?? []) {
+    for (const transform of graph.transforms ?? []) {
+      if (typeof transform.pathId === "number") {
+        transformByPathId.set(transform.pathId, transform);
+      }
+      if (!transform.transformPath) {
+        continue;
+      }
+      transformByPath.set(transform.transformPath, transform);
+      if (typeof transform.runtimePartIndex === "number") {
+        transformByPartPath.set(partPathKey(transform.runtimePartIndex, transform.transformPath), transform);
+      }
+    }
+  }
+}
+
+function indexPrefabSpringPivots(
+  setup: RuntimeUnitySetup0414,
+  transformByPath: ReadonlyMap<string, RuntimePrefabTransform>,
+  pivotTransformPathIds: Set<number>,
+  pivotTransformPaths: Set<string>
+) {
+  for (const graph of setup.prefabGraphs ?? []) {
+    for (const monoBehaviour of graph.monoBehaviours ?? []) {
+      if (monoBehaviour.scriptName?.toLowerCase() !== "springbonepivot" || !monoBehaviour.transformPath) {
+        continue;
+      }
+      pivotTransformPaths.add(monoBehaviour.transformPath);
+      const transform = transformByPath.get(monoBehaviour.transformPath);
+      if (typeof transform?.pathId === "number") {
+        pivotTransformPathIds.add(transform.pathId);
+      }
+    }
+  }
 }
 
 function buildNodeResolution(root: THREE.Object3D): NodeResolution {
