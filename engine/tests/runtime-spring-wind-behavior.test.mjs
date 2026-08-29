@@ -203,6 +203,85 @@ test("wind phase evaluates the original Unity local X coordinate", () => {
   assert.ok(trace.externalForce.y > 0.3);
 });
 
+test("spring runtime traces skirt constraints and all official collider shapes", () => {
+  const root = new THREE.Group();
+  addNode(root, "wind");
+  const skirt = addNode(root, "skirtBone");
+  skirt.position.set(0, 0.2, 0);
+  const pivot = addNode(root, "pivot");
+  const target = addNode(root, "target");
+  target.position.set(0.2, 0.2, 0);
+  for (const name of ["sphere", "capsule", "panel"]) {
+    addNode(root, name);
+  }
+
+  const extension = makeWindRuntimeExtension();
+  const setup = extension.pjskSpringBone.runtimeUnitySetup;
+  setup.prefabGraphs[0].transforms = [transform(1, "skirtBone")];
+  setup.managers[0].bonePathIds = [10];
+  setup.managers[0].forceProviders = [];
+  setup.managers[0].collideWithGround = true;
+  setup.managers[0].groundHeight = 0;
+  setup.managers[0].enableLengthLimits = true;
+  setup.managers[0].enableAngleLimits = true;
+  setup.managers[0].enableCollision = true;
+  setup.bones = [{
+    ...springBone(10, "skirtBone"),
+    runtimePartIndex: 4,
+    runtimePartType: "hair",
+    pivotNodeName: "pivot",
+    pivotNodePath: "pivot",
+    lengthLimitTargets: [{ nodePath: "target" }],
+    hitRadius: 0.05,
+    rawAngleLimits: {
+      y: { active: true, min: -5, max: 5 },
+      z: { active: true, min: -5, max: 5 },
+    },
+  }];
+  setup.colliders = [
+    { index: 1, pathId: 101, nodePath: "sphere", nodeName: "sphere", shape: {
+      sphere: { radius: 0.1, offset: { x: 0, y: 0, z: 0 } },
+    } },
+    { index: 2, pathId: 102, nodePath: "capsule", nodeName: "capsule", shape: {
+      capsule: { radius: 0.1, offset: { x: 0, y: 0, z: 0 }, tail: { x: 0, y: 0.3, z: 0 } },
+    } },
+    { index: 3, pathId: 103, nodePath: "panel", nodeName: "panel", shape: {
+      panel: { width: 0.4, height: 0.4 },
+    } },
+  ];
+  setup.colliderBindings = [{
+    sourceSpringBonePathId: 10,
+    sourceKind: "direct",
+    colliders: [1, 2, 3],
+  }];
+
+  const runtime = UnityPrefabSpringRuntime.fromPjskRuntimeExtension(extension, root);
+  assert.ok(runtime);
+  assert.deepEqual([...runtime.getControlledTrackNodeNames()], ["skirtBone"]);
+  runtime.setTraceBoneFilters(["  SKIRT  "], 1);
+  runtime.setTimelineControl({ paused: true });
+  runtime.update(1 / 60);
+  runtime.setTimelineControl({ paused: false, slowMotionScale: 0.5 });
+  skirt.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.1);
+  runtime.update(1 / 60);
+  runtime.settleCurrentPose(2, 1 / 120);
+  runtime.resetStateToCurrentPose();
+
+  const trace = runtime.getTraceSnapshot();
+  assert.equal(trace.filters[0], "skirt");
+  assert.equal(trace.eventCount, 1);
+  assert.equal(trace.events[0].colliderCount, 3);
+  assert.equal(trace.events[0].angleLimit.enabled, true);
+  const snapshot = runtime.getSnapshot(false, { springDebugAllOffsets: true });
+  assert.equal(snapshot.enabled, false);
+  assert.equal(snapshot.colliderCount, 3);
+  assert.equal(snapshot.skirtOffsets.length, 1);
+  assert.equal(snapshot.debugOffsets.length, 1);
+  assert.equal(snapshot.controlledPartCounts[0].runtimePartIndex, 4);
+  assert.equal(snapshot.controlledHairSamples[0].name, "skirtBone");
+  assert.equal(pivot.name, "pivot");
+});
+
 function makeWindRuntimeExtension() {
   return {
     pjskSpringBone: {

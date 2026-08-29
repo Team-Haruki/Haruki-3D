@@ -513,8 +513,11 @@ function resolvePrefabInstanceRoot(
   let current = source;
   const visited = new Set<number>();
   while (typeof current.parentPathId === "number") {
-    if (typeof current.pathId === "number" && !visited.add(current.pathId)) {
-      throw new Error(`Runtime prefab graph contains a parent cycle at PathID ${current.pathId}.`);
+    if (typeof current.pathId === "number") {
+      if (visited.has(current.pathId)) {
+        throw new Error(`Runtime prefab graph contains a parent cycle at PathID ${current.pathId}.`);
+      }
+      visited.add(current.pathId);
     }
     const parent = sourceByPathId.get(current.parentPathId);
     if (!parent) {
@@ -1476,3 +1479,58 @@ function collectPrefabPositionRootDebug(root: THREE.Object3D) {
   });
   return nodes;
 }
+
+/** Pure prefab helpers exposed only through the package's internal entry. */
+export const unityPrefabRuntimeInternals = {
+  asRecord,
+  readRuntimeNumber,
+  readRuntimeUnitySetup0414,
+  readRuntimeNativeMeshSet0414,
+  resolvePrefabGraphNode,
+  isModelCombineSetupAssembly,
+  setParentKeepingLocal,
+  drainChildrenKeepingLocal,
+  moveFaceRendererTransforms,
+  detachRuntimeSubtree,
+  replacePathIdNodeReferences,
+  collectOfficialHeadRendererPaths,
+  isDestroyedStaticFaceRenderer,
+  resolveOfficialBodyRootBone,
+  resolvePrefabInstanceRoot,
+  prefabInstanceKey,
+  resolvePreferredPrefabRoots,
+  indexPrefabTransformSources,
+  buildPrefabTransformNodes,
+  addPrefabTransformNode,
+  attachPrefabTransformNodes,
+  buildMeshCarrierBindings,
+  countRuntimeTransforms,
+  resolveUnityPrefabSourceScaleCorrection,
+  nativeMeshLabel,
+  validateNativeMeshBindingSource,
+  resolveNativeMeshParent,
+  buildNativeMeshMaterials,
+  resolveNativeMeshBones,
+  prepareAndMountNativeMesh,
+  convertUnityBindMatricesToThree,
+  resolveNativeRootBoneStatus,
+  makeSkinRestTransform,
+  measureSkinRestMatrixSpread,
+  buildUnityRuntimeBoneInverseBindMatrices,
+  buildUnityRuntimeNativeGeometry,
+  addNativeGeometryAttributes,
+  addFloatGeometryAttribute,
+  addUint16GeometryAttribute,
+  addNativeGeometryIndices,
+  addNativeGeometryMorphTargets,
+  addNativeGeometryMorphTarget,
+  copyNativeMorphDelta,
+  readRuntimeUnitySetupVersion,
+  resolvePrefabNodeCandidate,
+  stripThreeDuplicateSuffix,
+  buildObjectPath,
+  vectorDebugSnapshot,
+  quaternionDebugSnapshot,
+  makePrefabNodeDebug,
+  collectPrefabPositionRootDebug,
+};

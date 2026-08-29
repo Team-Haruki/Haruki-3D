@@ -881,3 +881,20 @@ export class CharacterLightingRuntime {
     );
   }
 }
+
+/** Pure lighting helpers exposed only through the package's internal entry. */
+export const characterLightingRuntimeInternals = {
+  applyRenderIsolationToNode,
+  applyEyeThroughHairIsolation,
+  applyOutlineIsolation,
+  applyBaseMeshIsolation,
+  inspectFaceLayers,
+  applySkinColors,
+  applyDebugEntrySkinColors,
+  normalizeHairShadowMode,
+  isFaceLayerMaterialKind,
+  isFaceOrFaceLayerMaterialKind,
+  isEyeThroughHairSourceAllowed,
+  isEyeThroughHairPassAllowed,
+  isOutlineHiddenByIsolation,
+};

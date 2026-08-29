@@ -856,3 +856,24 @@ export async function bindHeadRuntimeMaterials({
   }
   return debug;
 }
+
+/** Pure material helpers exposed only through the package's internal entry. */
+export const headMaterialRuntimeInternals = {
+  pushBoundMaterialDebug,
+  pushLayerMaterialDebug,
+  cloneFaceShaderMaterial,
+  disposeReplacedMaterials,
+  hasFaceSdfUv1Attribute,
+  createEyeLayerOptions,
+  createHighlightLayerOptions,
+  createHeadSlotMaterials,
+  createHeadFaceMaterial,
+  syncHeadSlotTextures,
+  applyOriginalHeadMap,
+  applyOriginalMapToShader,
+  updateHeadFaceSdfState,
+  collectHeadLayerPasses,
+  addHeadLayerPass,
+  queueThroughHairPasses,
+  queueTopLayerPasses,
+};

@@ -61,6 +61,7 @@ export {
 } from "./parts/customWardrobeController";
 export {
   officialColliderFlagPrefixes,
+  runtimePartComposerInternals,
   type CustomPartSelection,
   type HeadHairCompatibility,
   type PartPackageSet,
@@ -129,6 +130,7 @@ export {
 export {
   CharacterLightingRuntime,
   bodyDebugModeToUniform,
+  characterLightingRuntimeInternals,
   evaluateSekaiOutlineFovFactor,
   faceSdfDebugModeToUniform,
   sekaiCostumeShopOutlineSettings,
@@ -157,6 +159,7 @@ export {
   installUnityRuntimeNativeMeshes,
   makeUnityPrefabHeadFollowDebugSnapshot,
   syncUnityPrefabSourceGraph,
+  unityPrefabRuntimeInternals,
 } from "./engine/unityPrefabRuntime";
 export {
   resolveCostumeShopHeightRate,
@@ -165,32 +168,64 @@ export {
 export {
   UnityPrefabSpringRuntime,
   computeUtjAverageChildTailPosition,
+  unityPrefabSpringRuntimeInternals,
   type SpringTimelineControl,
 } from "./engine/unityPrefabSpringRuntimeAdapter";
 export { SekaiExtraBoneRuntime } from "./engine/sekaiExtraBoneRuntime";
 export {
   UtjColliderStatus,
+  applyUtjCollisionVelocityResponse,
   applyUtjLengthLimits,
+  cacheUtjSpringBonePosition,
+  checkCapsuleCollisionAndReact,
+  checkCollisionWithAlignedPlaneAndReact,
+  checkLocalCylinderCollisionAndReact,
   checkLocalCapsuleCollisionAndReact,
+  checkLocalYAxisCapsuleCollisionAndReact,
   checkLocalSphereCollisionAndReact,
   checkPanelCollisionAndReact,
+  checkSphereCollisionAndReact,
+  checkUtjCollisions,
+  checkUtjGroundCollision,
+  computeAnimatedTipPosition,
+  computeNewTailPosition,
+  computeSphereIntersectionCircle,
   computeUtjLocalRotation,
+  computeUtjWorldRotation,
   constrainUtjAngleLimit,
+  createUtjSpringBoneState,
+  enforceSpringLength,
+  fixBoneLength,
+  updateUtjSpring,
 } from "./engine/utjSpringBoneRuntime";
+export {
+  UnityConstraintRuntime,
+  applyUnityRuntimeConstraints,
+} from "./engine/unityConstraintRuntime";
 export {
   applyRawMaterialShaderUniforms,
   bindBodyRuntimeMaterials,
+  cloneBodyShaderMaterial,
   configureSekaiBaseStencilClear,
   configureSekaiEyelashPass,
   configureSekaiFaceLayerStencilPrepass,
   configureSekaiHairStencil,
+  createGroupedLayerMesh,
   createSekaiThroughHairOverlayMesh,
+  extractMaterialColorMap,
+  getHeadLayerRenderOrder,
+  getSekaiPreviewRimDirection,
+  loadRuntimeTexture,
+  normalizeMeshSlotName,
+  sortHeadMeshGroupsByMaterialKind,
+  syncReplacementTextureFromOriginal,
   tuneLightingForPreview,
   updateSekaiEyelashPassView,
   type RuntimeMaterialDebug,
 } from "./engine/characterMaterialRuntime";
 export {
   bindHeadRuntimeMaterials,
+  headMaterialRuntimeInternals,
   type CharacterEyeMaterialController,
 } from "./engine/headMaterialRuntime";
 export { createSekaiBodyMaterial } from "./materials/sekaiBodyMaterial";
