@@ -131,6 +131,108 @@ test("face basis reapplies the dynamic CostumeShop shadow limiter to loaded face
   }
 });
 
+test("render isolation applies face, outline, and through-hair policies", () => {
+  const bodySlot = new THREE.Group();
+  const headSlot = new THREE.Group();
+  const source = new THREE.Group();
+  source.layers.mask = 7;
+
+  const face = shaderMaterial("face_sdf", { uFaceSdfEnabled: { value: 0 } });
+  face.userData.pjskFaceSdfCapable = true;
+  const eyelight = shaderMaterial("eyelight", { uMode: { value: 2 } });
+  const body = shaderMaterial("body", {});
+  const faceMesh = new THREE.Mesh(new THREE.BufferGeometry(), [face, eyelight]);
+  const bodyMesh = new THREE.Mesh(new THREE.BufferGeometry(), body);
+  bodySlot.add(bodyMesh);
+  headSlot.add(faceMesh);
+
+  const overlays = new Map();
+  for (const sourceKind of ["eye", "eyebrow", "eyelash", "eyelight"]) {
+    for (const passKind of ["overlay", "stencil_prepass"]) {
+      const overlay = new THREE.Mesh(new THREE.BufferGeometry(), shaderMaterial(sourceKind, {}));
+      overlay.userData.pjskEyeThroughHairOverlay = passKind === "overlay";
+      overlay.userData.pjskEyeThroughHairStencilPrepass = passKind === "stencil_prepass";
+      overlay.userData.pjskEyeThroughHairSource = source;
+      overlay.userData.pjskEyeThroughHairSourceKind = sourceKind;
+      overlay.userData.pjskEyeThroughHairPassKind = passKind;
+      overlays.set(`${sourceKind}:${passKind}`, overlay);
+      headSlot.add(overlay);
+    }
+  }
+
+  const outlines = new Map();
+  for (const kind of ["body", "hair", "face_sdf", "eye"]) {
+    const outline = new THREE.Mesh(new THREE.BufferGeometry(), shaderMaterial(kind, {}));
+    outline.userData.pjskOutlineShell = true;
+    outline.userData.pjskSourceMaterialKind = kind;
+    outlines.set(kind, outline);
+    headSlot.add(outline);
+  }
+
+  const runtime = new CharacterLightingRuntime({
+    bodyMaterial: body,
+    hairMaterial: shaderMaterial("hair", {}),
+    faceMaterial: face,
+    bodySlot,
+    headSlot,
+    directionalLight: new THREE.DirectionalLight(),
+    fillLight: new THREE.AmbientLight(),
+    debug: { hairShadowMode: "off", body: [], head: [] },
+  });
+  runtime.setFaceSdfEnabled(true);
+
+  runtime.setRenderIsolationMode("normal");
+  assert.equal(face.uniforms.uFaceSdfEnabled.value, 1);
+  assert.equal(overlays.get("eye:overlay").visible, true);
+  assert.equal(overlays.get("eye:overlay").layers.mask, source.layers.mask);
+
+  runtime.setRenderIsolationMode("no_face_layers");
+  assert.equal(faceMesh.visible, false);
+  assert.equal(outlines.get("face_sdf").visible, false);
+
+  runtime.setRenderIsolationMode("eyelight_only");
+  assert.equal(faceMesh.visible, true);
+  assert.equal(bodyMesh.visible, false);
+  assert.equal(outlines.get("eye").visible, true);
+
+  runtime.setRenderIsolationMode("outline_only");
+  assert.equal(faceMesh.visible, false);
+  assert.equal(outlines.get("body").visible, true);
+
+  runtime.setRenderIsolationMode("eye_through_hair_eye_only");
+  assert.equal(overlays.get("eye:overlay").visible, true);
+  assert.equal(overlays.get("eyebrow:overlay").visible, false);
+
+  runtime.setRenderIsolationMode("no_eye_through_hair_eyelash_overlay");
+  assert.equal(overlays.get("eyelash:overlay").visible, false);
+  assert.equal(overlays.get("eyelash:stencil_prepass").visible, true);
+
+  runtime.setRenderIsolationMode("no_eye_through_hair_eyelash_prepass");
+  assert.equal(overlays.get("eyelash:overlay").visible, true);
+  assert.equal(overlays.get("eyelash:stencil_prepass").visible, false);
+
+  for (const mode of [
+    "eye_through_hair_eyebrow_only",
+    "eye_through_hair_eyelash_only",
+    "no_eye_through_hair_eye",
+    "no_eye_through_hair_eyebrow",
+    "no_eye_through_hair_eyelash",
+    "no_body_outline",
+    "no_hair_outline",
+    "no_face_outline",
+    "no_outline",
+    "no_eyelight",
+    "no_eye_through_hair",
+    "eye_through_hair_only",
+    "face_sdf",
+    "no_face_sdf",
+  ]) {
+    runtime.setRenderIsolationMode(mode);
+  }
+  runtime.setRenderIsolationMode("no_outline");
+  assert.equal(outlines.get("eye").visible, false);
+});
+
 function bodyTemplate(baseColor) {
   return createSekaiBodyMaterial({
     baseColor,

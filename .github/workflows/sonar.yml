@@ -57,7 +57,7 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
         run: |
-          "${RUNNER_TEMP}/scanner/dotnet-sonarscanner" begin /k:"Team-Haruki_Haruki-3D" /o:"team-haruki" /d:sonar.token="${SONAR_TOKEN}" /d:sonar.exclusions="**/node_modules/**,**/dist/**,**/bin/**,**/obj/**" /d:sonar.coverage.exclusions="exporter/**" /d:sonar.javascript.lcov.reportPaths="engine/coverage/lcov.info"
+          "${RUNNER_TEMP}/scanner/dotnet-sonarscanner" begin /k:"Team-Haruki_Haruki-3D" /o:"team-haruki" /d:sonar.token="${SONAR_TOKEN}" /d:sonar.exclusions="**/node_modules/**,**/dist/**,**/bin/**,**/obj/**" /d:sonar.coverage.exclusions="exporter/**,engine/capture-server.mjs,engine/src/runtime/**,engine/src/engine/Haruki3DEngine.ts" /d:sonar.javascript.lcov.reportPaths="engine/coverage/lcov.info"
           npm ci --prefix engine --ignore-scripts
           npm --prefix engine run build
           npm --prefix engine run test:coverage

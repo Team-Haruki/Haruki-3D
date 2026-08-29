@@ -173,6 +173,7 @@ export {
   applyUtjLengthLimits,
   checkLocalCapsuleCollisionAndReact,
   checkLocalSphereCollisionAndReact,
+  checkPanelCollisionAndReact,
   computeUtjLocalRotation,
   constrainUtjAngleLimit,
 } from "./engine/utjSpringBoneRuntime";

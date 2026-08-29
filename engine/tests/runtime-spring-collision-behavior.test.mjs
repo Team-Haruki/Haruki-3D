@@ -6,6 +6,7 @@ import {
   UtjColliderStatus,
   checkLocalCapsuleCollisionAndReact,
   checkLocalSphereCollisionAndReact,
+  checkPanelCollisionAndReact,
 } from "../dist/haruki-3d-engine-internal.js";
 
 // Character-height scaling puts a uniform world scale on the whole rig
@@ -97,5 +98,68 @@ test("scaled local capsule collider keeps the official world reach (no scale dou
   assert.ok(
     Math.abs(touching.tailPosition.x - 0.08) < 1e-6,
     `pushed to world surface x=0.08, got ${touching.tailPosition.x}`
+  );
+});
+
+function panelCollider() {
+  return {
+    kind: "panel",
+    enabled: true,
+    debugName: "test-panel",
+    debugPath: "test/panel",
+    debugSourcePathId: null,
+    width: 2,
+    height: 2,
+    localToWorldMatrix: new THREE.Matrix4(),
+    worldToLocalMatrix: new THREE.Matrix4(),
+    worldToLocalRadiusScale: 1,
+    worldToLocalLengthScale: 1,
+  };
+}
+
+test("panel collision resolves center, edge, and embedded-head branches", () => {
+  const collider = panelCollider();
+  const collide = (head, tail) => checkPanelCollisionAndReact(
+    head,
+    tail,
+    0.1,
+    1,
+    collider
+  );
+
+  assert.equal(
+    collide(new THREE.Vector3(0, 0, 0.5), new THREE.Vector3(0, 0, 0.2)).status,
+    UtjColliderStatus.NoCollision
+  );
+  assert.equal(
+    collide(new THREE.Vector3(0, 0, 0.5), new THREE.Vector3(1.2, 0, 0)).status,
+    UtjColliderStatus.NoCollision
+  );
+  assert.equal(
+    collide(new THREE.Vector3(0, 0, 0.5), new THREE.Vector3(0, 1.2, 0)).status,
+    UtjColliderStatus.NoCollision
+  );
+
+  for (const tail of [
+    new THREE.Vector3(0, 0, 0),
+    new THREE.Vector3(0, 1.05, 0),
+    new THREE.Vector3(1.05, 0, 0),
+  ]) {
+    const result = collide(new THREE.Vector3(0, 0, 0.5), tail);
+    assert.notEqual(result.status, UtjColliderStatus.NoCollision);
+    assert.ok(result.tailPosition.toArray().every(Number.isFinite));
+  }
+
+  assert.equal(
+    collide(new THREE.Vector3(0, 1.2, -0.5), new THREE.Vector3(0, 0, -0.05)).status,
+    UtjColliderStatus.TailCollision
+  );
+  assert.equal(
+    collide(new THREE.Vector3(0, 0, -0.5), new THREE.Vector3(0, 0, -0.05)).status,
+    UtjColliderStatus.HeadIsEmbedded
+  );
+  assert.equal(
+    collide(new THREE.Vector3(1.5, 0, -0.5), new THREE.Vector3(0.9, 0, -0.05)).status,
+    UtjColliderStatus.TailCollision
   );
 });
