@@ -1472,15 +1472,15 @@ public sealed class PartPackageExporter
         {
             return false;
         }
-        var relativePath = corePathNode.GetString();
-        if (string.IsNullOrWhiteSpace(relativePath) ||
-            !relativePath.EndsWith(".msgpack.br", StringComparison.OrdinalIgnoreCase) ||
-            Path.IsPathRooted(relativePath) ||
-            relativePath.Split('/', '\\').Any(segment => segment is "." or ".."))
+        var coreRelativePath = corePathNode.GetString();
+        if (string.IsNullOrWhiteSpace(coreRelativePath) ||
+            !coreRelativePath.EndsWith(".msgpack.br", StringComparison.OrdinalIgnoreCase) ||
+            Path.IsPathRooted(coreRelativePath) ||
+            coreRelativePath.Split('/', '\\').Any(segment => segment is "." or ".."))
         {
             return false;
         }
-        corePath = Path.Combine(outputDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        corePath = Path.Combine(outputDirectory, coreRelativePath.Replace('/', Path.DirectorySeparatorChar));
         return RuntimeJsonWriter.OutputsExist(corePath);
     }
 
@@ -1586,7 +1586,11 @@ public sealed class PartPackageExporter
                 return false;
             }
         }
-        return resolvedMask;
+        if (!resolvedMask)
+        {
+            return false;
+        }
+        return true;
     }
 
     private static bool IsEyelashMaskTexture(JsonElement texture)
