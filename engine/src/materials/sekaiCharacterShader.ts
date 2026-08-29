@@ -734,6 +734,14 @@ function updateSekaiBodyOptionalLighting(
   material: THREE.ShaderMaterial,
   next: BodyMaterialUniforms
 ) {
+  updateSekaiBodyShadowControls(material, next);
+  updateSekaiBodyViewLighting(material, next);
+}
+
+function updateSekaiBodyShadowControls(
+  material: THREE.ShaderMaterial,
+  next: BodyMaterialUniforms
+) {
   if (next.shadowFade !== undefined && material.uniforms.uShadowFade) {
     material.uniforms.uShadowFade.value = next.shadowFade;
   }
@@ -743,6 +751,12 @@ function updateSekaiBodyOptionalLighting(
   if (next.valueShadowInfluence !== undefined && material.uniforms.uValueShadowInfluence) {
     material.uniforms.uValueShadowInfluence.value = next.valueShadowInfluence;
   }
+}
+
+function updateSekaiBodyViewLighting(
+  material: THREE.ShaderMaterial,
+  next: BodyMaterialUniforms
+) {
   if (next.hairShadowEnabled !== undefined && material.uniforms.uHairShadowEnabled) {
     material.uniforms.uHairShadowEnabled.value = next.hairShadowEnabled ? 1.0 : 0.0;
   }
