@@ -1013,74 +1013,18 @@ public sealed class PartPackageExporter
         {
             foreach (var slot in mesh.MaterialSlots)
             {
-                MaterialInventory material;
-                RuntimeMaterialIdentity identity;
-                if (slot.MaterialPathId == 0)
+                var builtSlot = BuildMaterialSlot(
+                    partType, mesh, slot, textures, imported, nativeMeshes, materialLookup, warnings);
+                if (builtSlot is not null)
                 {
-                    var resolvedMaterialName = ResolveNativeSubmeshMaterialName(nativeMeshes, mesh, slot)
-                        ?? ResolveImportedSubmeshMaterialName(imported, mesh, slot);
-                    if (string.IsNullOrWhiteSpace(resolvedMaterialName))
-                    {
-                        warnings.Add($"Skipped empty material slot {mesh.MeshName}[{slot.SlotIndex}]: no native/imported material was present.");
-                        continue;
-                    }
-                    material = BuildSyntheticMaterialInventory(partType, imported, slot, resolvedMaterialName);
-                    identity = RuntimeMaterialIdentityResolver.Resolve(partType, slot.SlotIndex, slot.MaterialFileId, slot.MaterialPathId, material.Name);
+                    slots.Add(builtSlot);
                 }
-                else
-                {
-                    material = materialLookup.Require(slot);
-                    identity = new RuntimeMaterialIdentity(slot.MaterialKey, slot.MaterialFileId, slot.MaterialPathId);
-                }
-
-                var materialName = slot.MaterialName ?? material.Name;
-                var mainTex = FindTextureSlot(material, "_MainTex");
-                var shadowTex = FindTextureSlot(material, "_ShadowTex");
-                var valueTex = FindTextureSlot(material, "_ValueTex");
-                var faceShadowTex = FindTextureSlot(material, "_FaceShadowTex");
-                var materialKind = partType == "body"
-                    ? ClassifyBodyMaterialKind(materialName)
-                    : partType == "head_optional" ? "accessory" : ClassifyHeadMaterialKind(materialName, faceShadowTex is not null);
-                slots.Add(new PjskSekaiRuntimeMaterialSlot(
-                    Part: partType,
-                    MeshName: mesh.MeshName,
-                    SlotIndex: slot.SlotIndex,
-                    MaterialKey: identity.MaterialKey,
-                    MaterialFileId: identity.MaterialFileId,
-                    MaterialPathId: identity.MaterialPathId,
-                    MaterialName: materialName,
-                    MaterialKind: materialKind,
-                    MainTex: RewriteTexturePath(mainTex, textures),
-                    ShadowTex: RewriteTexturePath(shadowTex, textures),
-                    ValueTex: RewriteTexturePath(valueTex, textures),
-                    FaceShadowTex: RewriteTexturePath(faceShadowTex, textures),
-                    RenderOrder: ResolveRenderOrder(materialKind),
-                    ShaderPipeline: partType == "body" ? "sekai_csh_toon" : "character_tint_with_weak_sdf",
-                    IsAccessory: partType == "head_optional",
-                    Lighting: SekaiMaterialMetadata.BuildLightingSettings(material),
-                    RawMaterial: SekaiMaterialMetadata.BuildRawMaterialProperties(material, textures)
-                ));
             }
         }
         var distinctSlots = slots
             .DistinctBy(slot => $"{slot.MeshName}::{slot.SlotIndex}::{slot.MaterialKey}", StringComparer.Ordinal)
             .ToList();
-        foreach (var slot in distinctSlots.Where(slot =>
-            slot.MaterialKind is "eye" or "eyelash" or "eyebrow"
-        ))
-        {
-            var mask = slot.RawMaterial?.TextureProperties.FirstOrDefault(texture =>
-                texture.Name.Equals("_EyelashMaskTex", StringComparison.OrdinalIgnoreCase)
-            );
-            if (mask is not { TexturePathId: not 0 } || string.IsNullOrWhiteSpace(mask.Uri))
-            {
-                warnings.Add(
-                    $"Unresolved _EyelashMaskTex dependency for {slot.MeshName}[{slot.SlotIndex}] " +
-                    $"{slot.MaterialName ?? slot.MaterialKey} " +
-                    $"({mask?.TextureFileId ?? 0}:{mask?.TexturePathId ?? 0})."
-                );
-            }
-        }
+        AddUnresolvedEyelashMaskWarnings(distinctSlots, warnings);
         AddNativeMaterialSlotAliases(distinctSlots, nativeMeshes, warnings);
         return new BuiltMaterialSlots(
             Slots: distinctSlots
@@ -1091,6 +1035,108 @@ public sealed class PartPackageExporter
                 .OrderBy(warning => warning, StringComparer.Ordinal)
                 .ToList()
         );
+    }
+
+    private static PjskSekaiRuntimeMaterialSlot? BuildMaterialSlot(
+        string partType,
+        RenderMeshInventory mesh,
+        RenderMaterialSlotInventory slot,
+        IReadOnlyDictionary<string, string> textures,
+        IImported imported,
+        PjskUnityRuntimeNativeMeshSet nativeMeshes,
+        MaterialIdentityLookup materialLookup,
+        List<string> warnings
+    )
+    {
+        if (!TryResolveMaterial(
+                partType, mesh, slot, imported, nativeMeshes, materialLookup, warnings,
+                out var material, out var identity))
+        {
+            return null;
+        }
+
+        var materialName = slot.MaterialName ?? material.Name;
+        var mainTex = FindTextureSlot(material, "_MainTex");
+        var shadowTex = FindTextureSlot(material, "_ShadowTex");
+        var valueTex = FindTextureSlot(material, "_ValueTex");
+        var faceShadowTex = FindTextureSlot(material, "_FaceShadowTex");
+        var materialKind = partType == "body"
+            ? ClassifyBodyMaterialKind(materialName)
+            : partType == "head_optional" ? "accessory" : ClassifyHeadMaterialKind(materialName, faceShadowTex is not null);
+        return new PjskSekaiRuntimeMaterialSlot(
+            Part: partType,
+            MeshName: mesh.MeshName,
+            SlotIndex: slot.SlotIndex,
+            MaterialKey: identity.MaterialKey,
+            MaterialFileId: identity.MaterialFileId,
+            MaterialPathId: identity.MaterialPathId,
+            MaterialName: materialName,
+            MaterialKind: materialKind,
+            MainTex: RewriteTexturePath(mainTex, textures),
+            ShadowTex: RewriteTexturePath(shadowTex, textures),
+            ValueTex: RewriteTexturePath(valueTex, textures),
+            FaceShadowTex: RewriteTexturePath(faceShadowTex, textures),
+            RenderOrder: ResolveRenderOrder(materialKind),
+            ShaderPipeline: partType == "body" ? "sekai_csh_toon" : "character_tint_with_weak_sdf",
+            IsAccessory: partType == "head_optional",
+            Lighting: SekaiMaterialMetadata.BuildLightingSettings(material),
+            RawMaterial: SekaiMaterialMetadata.BuildRawMaterialProperties(material, textures)
+        );
+    }
+
+    private static bool TryResolveMaterial(
+        string partType,
+        RenderMeshInventory mesh,
+        RenderMaterialSlotInventory slot,
+        IImported imported,
+        PjskUnityRuntimeNativeMeshSet nativeMeshes,
+        MaterialIdentityLookup materialLookup,
+        List<string> warnings,
+        out MaterialInventory material,
+        out RuntimeMaterialIdentity identity
+    )
+    {
+        if (slot.MaterialPathId != 0)
+        {
+            material = materialLookup.Require(slot);
+            identity = new RuntimeMaterialIdentity(slot.MaterialKey, slot.MaterialFileId, slot.MaterialPathId);
+            return true;
+        }
+
+        var materialName = ResolveNativeSubmeshMaterialName(nativeMeshes, mesh, slot)
+            ?? ResolveImportedSubmeshMaterialName(imported, mesh, slot);
+        if (string.IsNullOrWhiteSpace(materialName))
+        {
+            warnings.Add($"Skipped empty material slot {mesh.MeshName}[{slot.SlotIndex}]: no native/imported material was present.");
+            material = null!;
+            identity = null!;
+            return false;
+        }
+        material = BuildSyntheticMaterialInventory(partType, imported, slot, materialName);
+        identity = RuntimeMaterialIdentityResolver.Resolve(
+            partType, slot.SlotIndex, slot.MaterialFileId, slot.MaterialPathId, material.Name);
+        return true;
+    }
+
+    private static void AddUnresolvedEyelashMaskWarnings(
+        IEnumerable<PjskSekaiRuntimeMaterialSlot> slots,
+        List<string> warnings
+    )
+    {
+        foreach (var slot in slots.Where(slot => slot.MaterialKind is "eye" or "eyelash" or "eyebrow"))
+        {
+            var mask = slot.RawMaterial?.TextureProperties.FirstOrDefault(texture =>
+                texture.Name.Equals("_EyelashMaskTex", StringComparison.OrdinalIgnoreCase));
+            if (mask is { TexturePathId: not 0 } && !string.IsNullOrWhiteSpace(mask.Uri))
+            {
+                continue;
+            }
+            warnings.Add(
+                $"Unresolved _EyelashMaskTex dependency for {slot.MeshName}[{slot.SlotIndex}] " +
+                $"{slot.MaterialName ?? slot.MaterialKey} " +
+                $"({mask?.TextureFileId ?? 0}:{mask?.TexturePathId ?? 0})."
+            );
+        }
     }
 
     private static void AddNativeMaterialSlotAliases(
@@ -1392,63 +1438,13 @@ public sealed class PartPackageExporter
         try
         {
             using var document = RuntimeJsonWriter.ReadJsonDocument(runtimePath);
-            if (!document.RootElement.TryGetProperty("version", out var version) ||
-                version.GetString() != "0415-part-delta-3" ||
-                !document.RootElement.TryGetProperty("corePath", out var corePathNode) ||
-                string.IsNullOrWhiteSpace(corePathNode.GetString()))
+            if (!TryReadSafeCorePath(document.RootElement, outputDirectory, out var corePath) ||
+                !HasValidRuntimeManifest(document.RootElement) ||
+                !TryReadRuntimePartType(document.RootElement, out var partType) ||
+                !HasValidRuntimeSource(document.RootElement))
             {
                 return false;
             }
-            var coreRelativePath = corePathNode.GetString()!;
-            if (!coreRelativePath.EndsWith(".msgpack.br", StringComparison.OrdinalIgnoreCase) ||
-                Path.IsPathRooted(coreRelativePath) ||
-                coreRelativePath.Split('/', '\\').Any(segment => segment is "." or ".."))
-            {
-                return false;
-            }
-            var corePath = Path.Combine(
-                outputDirectory,
-                coreRelativePath.Replace('/', Path.DirectorySeparatorChar)
-            );
-            if (!RuntimeJsonWriter.OutputsExist(corePath) ||
-                !document.RootElement.TryGetProperty("manifest", out var manifest) ||
-                !manifest.TryGetProperty("characterHeightMeters", out var height) ||
-                height.ValueKind != JsonValueKind.Number ||
-                height.GetSingle() <= 0f)
-            {
-                return false;
-            }
-            if (!document.RootElement.TryGetProperty("part", out var part) ||
-                !part.TryGetProperty("partType", out var partTypeNode))
-            {
-                return false;
-            }
-            if (!document.RootElement.TryGetProperty("source", out var source) ||
-                !source.TryGetProperty("logicalBundleName", out var logicalBundleName) ||
-                string.IsNullOrWhiteSpace(logicalBundleName.GetString()) ||
-                !source.TryGetProperty("physicalBundleSha256", out var physicalBundleSha256) ||
-                physicalBundleSha256.GetString()?.Length != 64 ||
-                !source.TryGetProperty("dependencyBundleNames", out var dependencies) ||
-                dependencies.ValueKind != JsonValueKind.Array ||
-                !source.TryGetProperty("unityResourceName", out var resourceName) ||
-                string.IsNullOrWhiteSpace(resourceName.GetString()) ||
-                !source.TryGetProperty("unityObjectType", out var objectType) ||
-                objectType.GetString() != "GameObject")
-            {
-                return false;
-            }
-            if (source.TryGetProperty("colorVariationBundlePath", out var colorVariationPath) &&
-                !string.IsNullOrWhiteSpace(colorVariationPath.GetString()) &&
-                (!source.TryGetProperty("colorVariationLogicalBundleName", out var colorLogicalName) ||
-                 string.IsNullOrWhiteSpace(colorLogicalName.GetString()) ||
-                 !source.TryGetProperty("colorVariationPhysicalBundleSha256", out var colorSha256) ||
-                 colorSha256.GetString()?.Length != 64 ||
-                 !source.TryGetProperty("colorVariationDependencyBundleNames", out var colorDependencies) ||
-                 colorDependencies.ValueKind != JsonValueKind.Array))
-            {
-                return false;
-            }
-            var partType = partTypeNode.GetString();
             if (partType is not ("head" or "hair"))
             {
                 return true;
@@ -1467,6 +1463,81 @@ public sealed class PartPackageExporter
         }
     }
 
+    private static bool TryReadSafeCorePath(JsonElement runtime, string outputDirectory, out string corePath)
+    {
+        corePath = string.Empty;
+        if (!runtime.TryGetProperty("version", out var version) ||
+            version.GetString() != "0415-part-delta-3" ||
+            !runtime.TryGetProperty("corePath", out var corePathNode))
+        {
+            return false;
+        }
+        var relativePath = corePathNode.GetString();
+        if (string.IsNullOrWhiteSpace(relativePath) ||
+            !relativePath.EndsWith(".msgpack.br", StringComparison.OrdinalIgnoreCase) ||
+            Path.IsPathRooted(relativePath) ||
+            relativePath.Split('/', '\\').Any(segment => segment is "." or ".."))
+        {
+            return false;
+        }
+        corePath = Path.Combine(outputDirectory, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        return RuntimeJsonWriter.OutputsExist(corePath);
+    }
+
+    private static bool HasValidRuntimeManifest(JsonElement runtime)
+    {
+        return runtime.TryGetProperty("manifest", out var manifest) &&
+            manifest.TryGetProperty("characterHeightMeters", out var height) &&
+            height.ValueKind == JsonValueKind.Number &&
+            height.GetSingle() > 0f;
+    }
+
+    private static bool TryReadRuntimePartType(JsonElement runtime, out string? partType)
+    {
+        partType = null;
+        if (!runtime.TryGetProperty("part", out var part) ||
+            !part.TryGetProperty("partType", out var partTypeNode))
+        {
+            return false;
+        }
+        partType = partTypeNode.GetString();
+        return true;
+    }
+
+    private static bool HasValidRuntimeSource(JsonElement runtime)
+    {
+        if (!runtime.TryGetProperty("source", out var source) ||
+            !source.TryGetProperty("logicalBundleName", out var logicalBundleName) ||
+            string.IsNullOrWhiteSpace(logicalBundleName.GetString()) ||
+            !source.TryGetProperty("physicalBundleSha256", out var physicalBundleSha256) ||
+            physicalBundleSha256.GetString()?.Length != 64 ||
+            !source.TryGetProperty("dependencyBundleNames", out var dependencies) ||
+            dependencies.ValueKind != JsonValueKind.Array ||
+            !source.TryGetProperty("unityResourceName", out var resourceName) ||
+            string.IsNullOrWhiteSpace(resourceName.GetString()) ||
+            !source.TryGetProperty("unityObjectType", out var objectType) ||
+            objectType.GetString() != "GameObject")
+        {
+            return false;
+        }
+        return HasValidColorVariationSource(source);
+    }
+
+    private static bool HasValidColorVariationSource(JsonElement source)
+    {
+        if (!source.TryGetProperty("colorVariationBundlePath", out var path) ||
+            string.IsNullOrWhiteSpace(path.GetString()))
+        {
+            return true;
+        }
+        return source.TryGetProperty("colorVariationLogicalBundleName", out var logicalName) &&
+            !string.IsNullOrWhiteSpace(logicalName.GetString()) &&
+            source.TryGetProperty("colorVariationPhysicalBundleSha256", out var sha256) &&
+            sha256.GetString()?.Length == 64 &&
+            source.TryGetProperty("colorVariationDependencyBundleNames", out var dependencies) &&
+            dependencies.ValueKind == JsonValueKind.Array;
+    }
+
     private static bool HasResolvedEyelashMasks(JsonElement runtime)
     {
         if (!runtime.TryGetProperty("materialSlots", out var slots) ||
@@ -1476,44 +1547,54 @@ public sealed class PartPackageExporter
         }
         foreach (var slot in slots.EnumerateArray())
         {
-            if (!slot.TryGetProperty("materialKind", out var kindNode) ||
-                kindNode.GetString() is not ("eye" or "eyelash" or "eyebrow"))
+            if (!IsEyelashMaskMaterial(slot))
             {
                 continue;
             }
-            if (!slot.TryGetProperty("rawMaterial", out var rawMaterial) ||
-                !rawMaterial.TryGetProperty("textureProperties", out var textures) ||
-                textures.ValueKind != JsonValueKind.Array)
-            {
-                return false;
-            }
-            var resolvedMask = false;
-            foreach (var texture in textures.EnumerateArray())
-            {
-                if (!texture.TryGetProperty("name", out var name) ||
-                    !string.Equals(
-                        name.GetString(),
-                        "_EyelashMaskTex",
-                        StringComparison.OrdinalIgnoreCase
-                    ) ||
-                    !texture.TryGetProperty("texturePathId", out var pathId) ||
-                    pathId.GetInt64() == 0)
-                {
-                    continue;
-                }
-                resolvedMask = true;
-                if (!texture.TryGetProperty("uri", out var uri) ||
-                    string.IsNullOrWhiteSpace(uri.GetString()))
-                {
-                    return false;
-                }
-            }
-            if (!resolvedMask)
+            if (!HasResolvedEyelashMask(slot))
             {
                 return false;
             }
         }
         return true;
+    }
+
+    private static bool IsEyelashMaskMaterial(JsonElement slot)
+    {
+        return slot.TryGetProperty("materialKind", out var kind) &&
+            kind.GetString() is "eye" or "eyelash" or "eyebrow";
+    }
+
+    private static bool HasResolvedEyelashMask(JsonElement slot)
+    {
+        if (!slot.TryGetProperty("rawMaterial", out var rawMaterial) ||
+            !rawMaterial.TryGetProperty("textureProperties", out var textures) ||
+            textures.ValueKind != JsonValueKind.Array)
+        {
+            return false;
+        }
+        var resolvedMask = false;
+        foreach (var texture in textures.EnumerateArray())
+        {
+            if (!IsEyelashMaskTexture(texture))
+            {
+                continue;
+            }
+            resolvedMask = true;
+            if (!texture.TryGetProperty("uri", out var uri) || string.IsNullOrWhiteSpace(uri.GetString()))
+            {
+                return false;
+            }
+        }
+        return resolvedMask;
+    }
+
+    private static bool IsEyelashMaskTexture(JsonElement texture)
+    {
+        return texture.TryGetProperty("name", out var name) &&
+            string.Equals(name.GetString(), "_EyelashMaskTex", StringComparison.OrdinalIgnoreCase) &&
+            texture.TryGetProperty("texturePathId", out var pathId) &&
+            pathId.GetInt64() != 0;
     }
 
     private static PartRuntimeMount BuildMount(

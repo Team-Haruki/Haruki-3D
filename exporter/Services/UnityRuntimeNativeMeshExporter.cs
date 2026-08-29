@@ -454,6 +454,18 @@ public sealed class UnityRuntimeNativeMeshExporter
         IReadOnlyList<float> BoneInverseBindMatrices
     );
 
+    private sealed record NativeVertexBuffers(
+        IReadOnlyList<float> Positions,
+        IReadOnlyList<float> Normals,
+        IReadOnlyList<float> Tangents,
+        IReadOnlyList<float> Uv0,
+        IReadOnlyList<float> Uv1,
+        IReadOnlyList<float> Uv2,
+        IReadOnlyList<float> Colors,
+        IReadOnlyList<ushort> SkinIndices,
+        IReadOnlyList<float> SkinWeights
+    );
+
     private static readonly NativeSkinBinding EmptySkinBinding = new(
         Array.Empty<string>(),
         Array.Empty<long>(),
@@ -509,27 +521,11 @@ public sealed class UnityRuntimeNativeMeshExporter
         out string failure
     )
     {
-        Dictionary<string, IReadOnlyList<long>>? rendererBonePathIdsByPath = null;
-        if (rendererBonePathIds is not null)
+        if (!TryBuildRendererBonePathIdLookup(
+                rendererBonePaths, rendererBonePathIds, out var rendererBonePathIdsByPath, out failure))
         {
-            if (rendererBonePathIds.Count != rendererBonePaths.Count)
-            {
-                binding = EmptySkinBinding;
-                failure = $"renderer has {rendererBonePaths.Count} bone paths but {rendererBonePathIds.Count} bone PathIDs.";
-                return false;
-            }
-
-            rendererBonePathIdsByPath = rendererBonePaths
-                .Select((path, index) => new { Path = path, PathId = rendererBonePathIds[index] })
-                .GroupBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
-                .ToDictionary(
-                    group => group.Key,
-                    group => (IReadOnlyList<long>)group
-                        .Select(item => item.PathId)
-                        .Distinct()
-                        .ToList(),
-                    StringComparer.OrdinalIgnoreCase
-                );
+            binding = EmptySkinBinding;
+            return false;
         }
 
         var importedBoneCount = mesh.BoneList?.Count ?? 0;
@@ -591,6 +587,58 @@ public sealed class UnityRuntimeNativeMeshExporter
             orderedBoneIndices.Add(0);
         }
 
+        return TryBuildResolvedSkinBinding(
+            mesh,
+            rendererBonePathIds,
+            rendererBonePathIdsByPath,
+            resolvedBonePathsByImportedIndex,
+            orderedBoneIndices,
+            hasExactOrderedBinding,
+            out binding,
+            out failure
+        );
+    }
+
+    private static bool TryBuildRendererBonePathIdLookup(
+        IReadOnlyList<string> rendererBonePaths,
+        IReadOnlyList<long>? rendererBonePathIds,
+        out Dictionary<string, IReadOnlyList<long>>? lookup,
+        out string failure
+    )
+    {
+        lookup = null;
+        failure = string.Empty;
+        if (rendererBonePathIds is null)
+        {
+            return true;
+        }
+        if (rendererBonePathIds.Count != rendererBonePaths.Count)
+        {
+            failure = $"renderer has {rendererBonePaths.Count} bone paths but {rendererBonePathIds.Count} bone PathIDs.";
+            return false;
+        }
+        lookup = rendererBonePaths
+            .Select((path, index) => new { Path = path, PathId = rendererBonePathIds[index] })
+            .GroupBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
+            .ToDictionary(
+                group => group.Key,
+                group => (IReadOnlyList<long>)group.Select(item => item.PathId).Distinct().ToList(),
+                StringComparer.OrdinalIgnoreCase
+            );
+        return true;
+    }
+
+    private static bool TryBuildResolvedSkinBinding(
+        ImportedMesh mesh,
+        IReadOnlyList<long>? rendererBonePathIds,
+        IReadOnlyDictionary<string, IReadOnlyList<long>>? rendererBonePathIdsByPath,
+        IReadOnlyDictionary<int, string> resolvedBonePathsByImportedIndex,
+        IReadOnlyList<int> orderedBoneIndices,
+        bool hasExactOrderedBinding,
+        out NativeSkinBinding binding,
+        out string failure
+    )
+    {
         var remap = new Dictionary<int, int>();
         var bonePaths = new List<string>(orderedBoneIndices.Count);
         var bonePathIds = new List<long>(orderedBoneIndices.Count);
@@ -601,36 +649,53 @@ public sealed class UnityRuntimeNativeMeshExporter
             remap[oldIndex] = newIndex;
             var bonePath = resolvedBonePathsByImportedIndex[oldIndex];
             bonePaths.Add(bonePath);
-            if (rendererBonePathIds is not null)
+            if (!TryAddResolvedBonePathId(
+                    rendererBonePathIds, rendererBonePathIdsByPath, hasExactOrderedBinding,
+                    oldIndex, bonePath, bonePathIds, out failure))
             {
-                if (hasExactOrderedBinding)
-                {
-                    bonePathIds.Add(rendererBonePathIds[oldIndex]);
-                }
-                else if (rendererBonePathIdsByPath is null ||
-                    !rendererBonePathIdsByPath.TryGetValue(bonePath, out var matchingPathIds) ||
-                    matchingPathIds.Count == 0)
-                {
-                    binding = EmptySkinBinding;
-                    failure = $"resolved bone '{bonePath}' has no matching renderer PathID.";
-                    return false;
-                }
-                else if (matchingPathIds.Count > 1)
-                {
-                    binding = EmptySkinBinding;
-                    failure = $"resolved bone '{bonePath}' has {matchingPathIds.Count} possible renderer PathIDs and no exact ordered binding.";
-                    return false;
-                }
-                else
-                {
-                    bonePathIds.Add(matchingPathIds[0]);
-                }
+                binding = EmptySkinBinding;
+                return false;
             }
             AddMatrix(inverseBindMatrices, mesh.BoneList![oldIndex].Matrix);
         }
-
         binding = new NativeSkinBinding(bonePaths, bonePathIds, remap, inverseBindMatrices);
         failure = string.Empty;
+        return true;
+    }
+
+    private static bool TryAddResolvedBonePathId(
+        IReadOnlyList<long>? rendererBonePathIds,
+        IReadOnlyDictionary<string, IReadOnlyList<long>>? rendererBonePathIdsByPath,
+        bool hasExactOrderedBinding,
+        int oldIndex,
+        string bonePath,
+        List<long> bonePathIds,
+        out string failure
+    )
+    {
+        failure = string.Empty;
+        if (rendererBonePathIds is null)
+        {
+            return true;
+        }
+        if (hasExactOrderedBinding)
+        {
+            bonePathIds.Add(rendererBonePathIds[oldIndex]);
+            return true;
+        }
+        if (rendererBonePathIdsByPath is null ||
+            !rendererBonePathIdsByPath.TryGetValue(bonePath, out var matchingPathIds) ||
+            matchingPathIds.Count == 0)
+        {
+            failure = $"resolved bone '{bonePath}' has no matching renderer PathID.";
+            return false;
+        }
+        if (matchingPathIds.Count > 1)
+        {
+            failure = $"resolved bone '{bonePath}' has {matchingPathIds.Count} possible renderer PathIDs and no exact ordered binding.";
+            return false;
+        }
+        bonePathIds.Add(matchingPathIds[0]);
         return true;
     }
 
@@ -813,6 +878,39 @@ public sealed class UnityRuntimeNativeMeshExporter
         IReadOnlyList<ImportedMorph> morphs
     )
     {
+        var buffers = BuildNativeVertexBuffers(mesh, skinBinding.BoneIndexRemap);
+        var submeshes = BuildNativeSubmeshes(partKind, mesh, renderer);
+        return new PjskUnityRuntimeNativeMesh(
+            PartKind: partKind,
+            MeshPath: mesh.Path,
+            MeshName: Path.GetFileName(mesh.Path),
+            RendererPathId: renderer.PathId,
+            RendererTransformPathId: renderer.TransformPathId,
+            RendererTransformPath: rendererTransformPath,
+            RootBonePathId: renderer.RootBonePathId,
+            RootBonePath: rootBonePath,
+            BonePathIds: skinBinding.BonePathIds,
+            BonePaths: skinBinding.BonePaths,
+            BoneInverseBindMatrices: skinBinding.BoneInverseBindMatrices,
+            Submeshes: submeshes,
+            Positions: buffers.Positions,
+            Normals: buffers.Normals,
+            Tangents: buffers.Tangents,
+            Uv0: buffers.Uv0,
+            Uv1: buffers.Uv1,
+            Uv2: buffers.Uv2,
+            Colors: buffers.Colors,
+            SkinIndices: buffers.SkinIndices,
+            SkinWeights: buffers.SkinWeights,
+            MorphTargets: BuildMorphTargets(mesh, morphs)
+        );
+    }
+
+    private static NativeVertexBuffers BuildNativeVertexBuffers(
+        ImportedMesh mesh,
+        IReadOnlyDictionary<int, int> boneIndexRemap
+    )
+    {
         var positions = new List<float>(mesh.VertexList.Count * 3);
         var normals = new List<float>(mesh.VertexList.Count * 3);
         var tangents = new List<float>(mesh.VertexList.Count * 4);
@@ -856,9 +954,18 @@ public sealed class UnityRuntimeNativeMeshExporter
                 colors.Add(1);
                 colors.Add(1);
             }
-            AddSkin(vertex, skinBinding.BoneIndexRemap, skinIndices, skinWeights);
+            AddSkin(vertex, boneIndexRemap, skinIndices, skinWeights);
         }
+        return new NativeVertexBuffers(
+            positions, normals, tangents, uv0, uv1, uv2, colors, skinIndices, skinWeights);
+    }
 
+    private static IReadOnlyList<PjskUnityRuntimeNativeSubmesh> BuildNativeSubmeshes(
+        string partKind,
+        ImportedMesh mesh,
+        SpringPrefabRenderer renderer
+    )
+    {
         var indexCursor = 0;
         var submeshes = new List<PjskUnityRuntimeNativeSubmesh>();
         foreach (var submesh in mesh.SubmeshList.Select((value, slotIndex) => new { value, slotIndex }))
@@ -899,31 +1006,7 @@ public sealed class UnityRuntimeNativeMeshExporter
             ));
             indexCursor += indices.Count;
         }
-
-        return new PjskUnityRuntimeNativeMesh(
-            PartKind: partKind,
-            MeshPath: mesh.Path,
-            MeshName: Path.GetFileName(mesh.Path),
-            RendererPathId: renderer.PathId,
-            RendererTransformPathId: renderer.TransformPathId,
-            RendererTransformPath: rendererTransformPath,
-            RootBonePathId: renderer.RootBonePathId,
-            RootBonePath: rootBonePath,
-            BonePathIds: skinBinding.BonePathIds,
-            BonePaths: skinBinding.BonePaths,
-            BoneInverseBindMatrices: skinBinding.BoneInverseBindMatrices,
-            Submeshes: submeshes,
-            Positions: positions,
-            Normals: normals,
-            Tangents: tangents,
-            Uv0: uv0,
-            Uv1: uv1,
-            Uv2: uv2,
-            Colors: colors,
-            SkinIndices: skinIndices,
-            SkinWeights: skinWeights,
-            MorphTargets: BuildMorphTargets(mesh, morphs)
-        );
+        return submeshes;
     }
 
     private static IReadOnlyList<float> BuildBoneInverseBindMatrices(ImportedMesh mesh)
@@ -977,60 +1060,77 @@ public sealed class UnityRuntimeNativeMeshExporter
         {
             foreach (var channel in morph.Channels)
             {
-                var positionDeltaByIndex = new Dictionary<int, Vector3>();
-                var normalDeltaByIndex = new Dictionary<int, Vector3>();
-                var hasNormals = false;
-                foreach (var keyframe in channel.KeyframeList)
-                {
-                    foreach (var morphVertex in keyframe.VertexList)
-                    {
-                        var index = (int)morphVertex.Index;
-                        if (index < 0 || index >= mesh.VertexList.Count)
-                        {
-                            continue;
-                        }
-
-                        var baseVertex = mesh.VertexList[index];
-                        var positionDelta = morphVertex.Vertex.Vertex - baseVertex.Vertex;
-                        positionDeltaByIndex[index] = positionDeltaByIndex.TryGetValue(index, out var existingPosition)
-                            ? existingPosition + positionDelta
-                            : positionDelta;
-
-                        if (keyframe.hasNormals)
-                        {
-                            hasNormals = true;
-                            var normalDelta = morphVertex.Vertex.Normal - baseVertex.Normal;
-                            normalDeltaByIndex[index] = normalDeltaByIndex.TryGetValue(index, out var existingNormal)
-                                ? existingNormal + normalDelta
-                                : normalDelta;
-                        }
-                    }
-                }
-
-                var indices = positionDeltaByIndex.Keys.OrderBy(index => index).ToList();
-                var positionDeltas = new List<float>(indices.Count * 3);
-                var normalDeltas = hasNormals ? new List<float>(indices.Count * 3) : null;
-                foreach (var index in indices)
-                {
-                    AddVector3(positionDeltas, positionDeltaByIndex[index]);
-                    if (normalDeltas is not null)
-                    {
-                        AddVector3(normalDeltas, normalDeltaByIndex.TryGetValue(index, out var normalDelta)
-                            ? normalDelta
-                            : new Vector3());
-                    }
-                }
-
-                result.Add(new PjskUnityRuntimeNativeMorphTarget(
-                    Name: channel.Name,
-                    Indices: indices,
-                    PositionDeltas: positionDeltas,
-                    NormalDeltas: normalDeltas
-                ));
+                result.Add(BuildMorphTarget(mesh, channel));
             }
         }
 
         return result;
+    }
+
+    private static PjskUnityRuntimeNativeMorphTarget BuildMorphTarget(
+        ImportedMesh mesh,
+        ImportedMorphChannel channel
+    )
+    {
+        var positionDeltaByIndex = new Dictionary<int, Vector3>();
+        var normalDeltaByIndex = new Dictionary<int, Vector3>();
+        var hasNormals = false;
+        foreach (var keyframe in channel.KeyframeList)
+        {
+            hasNormals |= AddMorphKeyframeDeltas(
+                mesh, keyframe, positionDeltaByIndex, normalDeltaByIndex);
+        }
+        var indices = positionDeltaByIndex.Keys.OrderBy(index => index).ToList();
+        var positionDeltas = BuildMorphDeltaBuffer(indices, positionDeltaByIndex);
+        var normalDeltas = hasNormals ? BuildMorphDeltaBuffer(indices, normalDeltaByIndex) : null;
+        return new PjskUnityRuntimeNativeMorphTarget(
+            Name: channel.Name,
+            Indices: indices,
+            PositionDeltas: positionDeltas,
+            NormalDeltas: normalDeltas
+        );
+    }
+
+    private static bool AddMorphKeyframeDeltas(
+        ImportedMesh mesh,
+        ImportedMorphKeyframe keyframe,
+        Dictionary<int, Vector3> positionDeltaByIndex,
+        Dictionary<int, Vector3> normalDeltaByIndex
+    )
+    {
+        foreach (var morphVertex in keyframe.VertexList)
+        {
+            var index = (int)morphVertex.Index;
+            if (index < 0 || index >= mesh.VertexList.Count)
+            {
+                continue;
+            }
+            var baseVertex = mesh.VertexList[index];
+            AddMorphDelta(positionDeltaByIndex, index, morphVertex.Vertex.Vertex - baseVertex.Vertex);
+            if (keyframe.hasNormals)
+            {
+                AddMorphDelta(normalDeltaByIndex, index, morphVertex.Vertex.Normal - baseVertex.Normal);
+            }
+        }
+        return keyframe.hasNormals;
+    }
+
+    private static void AddMorphDelta(Dictionary<int, Vector3> deltas, int index, Vector3 delta)
+    {
+        deltas[index] = deltas.TryGetValue(index, out var existing) ? existing + delta : delta;
+    }
+
+    private static List<float> BuildMorphDeltaBuffer(
+        IReadOnlyList<int> indices,
+        IReadOnlyDictionary<int, Vector3> deltas
+    )
+    {
+        var values = new List<float>(indices.Count * 3);
+        foreach (var index in indices)
+        {
+            AddVector3(values, deltas.TryGetValue(index, out var delta) ? delta : new Vector3());
+        }
+        return values;
     }
 
     private static Dictionary<string, ImportedMorph> BuildMorphMap(

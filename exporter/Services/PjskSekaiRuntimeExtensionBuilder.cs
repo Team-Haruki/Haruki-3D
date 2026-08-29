@@ -285,60 +285,94 @@ public sealed class PjskSekaiRuntimeExtensionBuilder
         {
             foreach (var transform in graph.Transforms)
             {
-                if (string.IsNullOrWhiteSpace(transform.TransformPath) ||
-                    string.IsNullOrWhiteSpace(transform.PoseRoot) ||
-                    !activeRoots.Contains(transform.PoseRoot))
-                {
-                    continue;
-                }
-
-                foreach (var candidatePath in BuildMotionBindingPathCandidates(transform.TransformPath, transform.PoseRoot))
-                {
-                    var path = candidatePath;
-                    while (!string.IsNullOrEmpty(path))
-                    {
-                        var pathCrc = CalculateCrc32(path);
-                        var key = $"{pathCrc}:{transform.PathId}";
-                        if (seen.Add(key))
-                        {
-                            if (!result.TryGetValue(pathCrc, out var targets))
-                            {
-                                targets = new List<PjskBodyMotionTarget>();
-                                result[pathCrc] = targets;
-                            }
-                            targets.Add(new PjskBodyMotionTarget(
-                                PoseRoot: transform.PoseRoot,
-                                TransformPath: transform.TransformPath,
-                                PathId: transform.PathId,
-                                Rest: BuildBodyMotionRest(transform)
-                            ));
-                        }
-
-                        var slash = path.IndexOf('/', StringComparison.Ordinal);
-                        if (slash < 0)
-                        {
-                            break;
-                        }
-                        path = path[(slash + 1)..];
-                    }
-                }
+                AddTransformMotionTargets(transform, activeRoots, result, seen);
             }
         }
 
         foreach (var pair in result)
         {
-            pair.Value.Sort((a, b) =>
-            {
-                var priorityA = rootPriority.TryGetValue(a.PoseRoot, out var pa) ? pa : int.MaxValue;
-                var priorityB = rootPriority.TryGetValue(b.PoseRoot, out var pb) ? pb : int.MaxValue;
-                var priorityCompare = priorityA.CompareTo(priorityB);
-                return priorityCompare != 0
-                    ? priorityCompare
-                    : string.CompareOrdinal(a.TransformPath, b.TransformPath);
-            });
+            pair.Value.Sort((a, b) => CompareMotionTargets(a, b, rootPriority));
         }
 
         return result;
+    }
+
+    private static void AddTransformMotionTargets(
+        SpringPrefabTransform transform,
+        IReadOnlySet<string> activeRoots,
+        Dictionary<uint, List<PjskBodyMotionTarget>> result,
+        HashSet<string> seen
+    )
+    {
+        if (string.IsNullOrWhiteSpace(transform.TransformPath) ||
+            string.IsNullOrWhiteSpace(transform.PoseRoot) ||
+            !activeRoots.Contains(transform.PoseRoot))
+        {
+            return;
+        }
+        foreach (var candidatePath in BuildMotionBindingPathCandidates(transform.TransformPath, transform.PoseRoot))
+        {
+            AddMotionPathSuffixTargets(candidatePath, transform, result, seen);
+        }
+    }
+
+    private static void AddMotionPathSuffixTargets(
+        string candidatePath,
+        SpringPrefabTransform transform,
+        Dictionary<uint, List<PjskBodyMotionTarget>> result,
+        HashSet<string> seen
+    )
+    {
+        var path = candidatePath;
+        while (!string.IsNullOrEmpty(path))
+        {
+            AddMotionTarget(path, transform, result, seen);
+            var slash = path.IndexOf('/', StringComparison.Ordinal);
+            if (slash < 0)
+            {
+                break;
+            }
+            path = path[(slash + 1)..];
+        }
+    }
+
+    private static void AddMotionTarget(
+        string path,
+        SpringPrefabTransform transform,
+        Dictionary<uint, List<PjskBodyMotionTarget>> result,
+        HashSet<string> seen
+    )
+    {
+        var pathCrc = CalculateCrc32(path);
+        if (!seen.Add($"{pathCrc}:{transform.PathId}"))
+        {
+            return;
+        }
+        if (!result.TryGetValue(pathCrc, out var targets))
+        {
+            targets = new List<PjskBodyMotionTarget>();
+            result[pathCrc] = targets;
+        }
+        targets.Add(new PjskBodyMotionTarget(
+            PoseRoot: transform.PoseRoot!,
+            TransformPath: transform.TransformPath!,
+            PathId: transform.PathId,
+            Rest: BuildBodyMotionRest(transform)
+        ));
+    }
+
+    private static int CompareMotionTargets(
+        PjskBodyMotionTarget a,
+        PjskBodyMotionTarget b,
+        IReadOnlyDictionary<string, int> rootPriority
+    )
+    {
+        var priorityA = rootPriority.TryGetValue(a.PoseRoot, out var pa) ? pa : int.MaxValue;
+        var priorityB = rootPriority.TryGetValue(b.PoseRoot, out var pb) ? pb : int.MaxValue;
+        var priorityCompare = priorityA.CompareTo(priorityB);
+        return priorityCompare != 0
+            ? priorityCompare
+            : string.CompareOrdinal(a.TransformPath, b.TransformPath);
     }
 
     private static IEnumerable<string> BuildMotionBindingPathCandidates(string transformPath, string poseRoot)
