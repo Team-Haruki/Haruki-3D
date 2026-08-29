@@ -727,6 +727,13 @@ function updateSekaiBodyLighting(material: THREE.ShaderMaterial, next: BodyMater
   material.uniforms.uShadowThreshold.value = next.shadowThreshold;
   material.uniforms.uShadowWeight.value = next.shadowWeight;
   material.uniforms.uShadowWidth.value = next.shadowWidth ?? material.uniforms.uShadowWidth.value;
+  updateSekaiBodyOptionalLighting(material, next);
+}
+
+function updateSekaiBodyOptionalLighting(
+  material: THREE.ShaderMaterial,
+  next: BodyMaterialUniforms
+) {
   if (next.shadowFade !== undefined && material.uniforms.uShadowFade) {
     material.uniforms.uShadowFade.value = next.shadowFade;
   }

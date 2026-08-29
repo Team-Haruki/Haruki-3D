@@ -600,7 +600,7 @@ public sealed class UnityRuntimeNativeMeshExporter
     }
 
     private static bool TryBuildRendererBonePathIdLookup(
-        IReadOnlyList<string> rendererBonePaths,
+        List<string> rendererBonePaths,
         IReadOnlyList<long>? rendererBonePathIds,
         out Dictionary<string, IReadOnlyList<long>>? lookup,
         out string failure
@@ -632,8 +632,8 @@ public sealed class UnityRuntimeNativeMeshExporter
         ImportedMesh mesh,
         IReadOnlyList<long>? rendererBonePathIds,
         IReadOnlyDictionary<string, IReadOnlyList<long>>? rendererBonePathIdsByPath,
-        IReadOnlyDictionary<int, string> resolvedBonePathsByImportedIndex,
-        IReadOnlyList<int> orderedBoneIndices,
+        Dictionary<int, string> resolvedBonePathsByImportedIndex,
+        List<int> orderedBoneIndices,
         bool hasExactOrderedBinding,
         out NativeSkinBinding binding,
         out string failure
@@ -960,7 +960,7 @@ public sealed class UnityRuntimeNativeMeshExporter
             positions, normals, tangents, uv0, uv1, uv2, colors, skinIndices, skinWeights);
     }
 
-    private static IReadOnlyList<PjskUnityRuntimeNativeSubmesh> BuildNativeSubmeshes(
+    private static List<PjskUnityRuntimeNativeSubmesh> BuildNativeSubmeshes(
         string partKind,
         ImportedMesh mesh,
         SpringPrefabRenderer renderer
@@ -1121,8 +1121,8 @@ public sealed class UnityRuntimeNativeMeshExporter
     }
 
     private static List<float> BuildMorphDeltaBuffer(
-        IReadOnlyList<int> indices,
-        IReadOnlyDictionary<int, Vector3> deltas
+        List<int> indices,
+        Dictionary<int, Vector3> deltas
     )
     {
         var values = new List<float>(indices.Count * 3);

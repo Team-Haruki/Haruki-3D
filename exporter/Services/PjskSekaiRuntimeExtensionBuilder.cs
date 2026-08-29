@@ -299,7 +299,7 @@ public sealed class PjskSekaiRuntimeExtensionBuilder
 
     private static void AddTransformMotionTargets(
         SpringPrefabTransform transform,
-        IReadOnlySet<string> activeRoots,
+        HashSet<string> activeRoots,
         Dictionary<uint, List<PjskBodyMotionTarget>> result,
         HashSet<string> seen
     )
@@ -364,7 +364,7 @@ public sealed class PjskSekaiRuntimeExtensionBuilder
     private static int CompareMotionTargets(
         PjskBodyMotionTarget a,
         PjskBodyMotionTarget b,
-        IReadOnlyDictionary<string, int> rootPriority
+        Dictionary<string, int> rootPriority
     )
     {
         var priorityA = rootPriority.TryGetValue(a.PoseRoot, out var pa) ? pa : int.MaxValue;
