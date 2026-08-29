@@ -47,481 +47,282 @@ public static class ConversionOptionsParser
 
     public static ParseResult Parse(string[] args)
     {
-        string? output = null;
-        string? motion = null;
-        string? masterDirectory = null;
-        string? assetRoot = null;
-        var emitCostumeRegistries = false;
-        var emitRuntimeRoleCatalog = false;
-        var emitPartPackages = false;
-        var emitRoleRuntimes = false;
-        var exportFaceMotion = false;
-        int? partCostume3dId = null;
-        string? partType = null;
-        string? partUnit = null;
-        var roleCharacter3dIds = new List<int>();
-        string? sourcePath = null;
-        string? manifestPath = null;
-        string? configPath = null;
-        var partPackageProcessConcurrency = 1;
-        var partPackageShardCount = 1;
-        var partPackageShardIndex = 0;
-        string? partPackageClaimDirectory = null;
-        var assetStudioLogLevel = "warning";
-        var compactTextures = false;
-        var optimizeTextureStore = false;
-        string? sharedContentStore = null;
-        string? compiledContentStore = null;
-        var pngOptimize = "oxipng";
-        var textureFormat = "png";
-        var textureCompactWorkers = 0;
-        var convertModelTextures = false;
-        string? partPackageWorkList = null;
-        string? bundleHashIndex = null;
-        string? bundleDependencyIndex = null;
-        var emitMvSourceSet = false;
-        string? mvManifestPath = null;
+        var state = new OptionState { ConfigPath = FindConfigPath(args) };
+        var configError = ApplyConfig(state);
+        if (configError is not null)
+        {
+            return Failure(configError);
+        }
+        if (args.Length == 0 && string.IsNullOrWhiteSpace(state.ConfigPath))
+        {
+            return Failure("Missing arguments.");
+        }
 
+        var argumentError = ApplyArguments(args, state);
+        if (argumentError is not null)
+        {
+            return Failure(argumentError);
+        }
+        var validationError = ValidateOperation(state) ?? ValidateGeneralOptions(state);
+        return validationError is null
+            ? new ParseResult(true, BuildOptions(state), string.Empty)
+            : Failure(validationError);
+    }
+
+    private static string? FindConfigPath(string[] args)
+    {
+        string? configPath = null;
         for (var i = 0; i < args.Length; i++)
         {
-            if (args[i] is "--config")
+            if (args[i] == "--config")
             {
                 configPath = ReadValue(args, ref i, args[i]);
             }
         }
+        return string.IsNullOrWhiteSpace(configPath) && File.Exists("haruki-3d-exporter.config.json")
+            ? "haruki-3d-exporter.config.json"
+            : configPath;
+    }
 
-        if (string.IsNullOrWhiteSpace(configPath) && File.Exists("haruki-3d-exporter.config.json"))
+    private static string? ApplyConfig(OptionState state)
+    {
+        if (string.IsNullOrWhiteSpace(state.ConfigPath))
         {
-            configPath = "haruki-3d-exporter.config.json";
+            return null;
         }
-
-        if (!string.IsNullOrWhiteSpace(configPath))
+        try
         {
-            try
-            {
-                var config = LoadConfig(configPath);
-                output = config.Output;
-                motion = config.Motion;
-                masterDirectory = config.Master;
-                assetRoot = config.AssetRoot;
-                emitCostumeRegistries = config.EmitCostumeRegistries ?? false;
-                emitRuntimeRoleCatalog = config.EmitRuntimeRoleCatalog ?? false;
-                emitPartPackages = config.EmitPartPackages ?? false;
-                emitRoleRuntimes = config.EmitRoleRuntimes ?? false;
-                exportFaceMotion = config.ExportFaceMotion ?? false;
-                partCostume3dId = config.PartCostume3dId;
-                partType = config.PartType;
-                partUnit = config.PartUnit;
-                roleCharacter3dIds = config.RoleCharacter3dIds?.Distinct().ToList() ?? new List<int>();
-                sourcePath = config.SourcePath;
-                manifestPath = config.Manifest;
-                partPackageProcessConcurrency =
-                    config.PartPackageProcessConcurrency ??
-                    config.PartPackageWorkers ??
-                    config.PartPackageCoreCount ??
-                    1;
-                partPackageShardCount = config.PartPackageShardCount ?? 1;
-                partPackageShardIndex = config.PartPackageShardIndex ?? 0;
-                partPackageClaimDirectory = config.PartPackageClaimDirectory;
-                assetStudioLogLevel = string.IsNullOrWhiteSpace(config.AssetStudioLogLevel)
-                    ? "warning"
-                    : config.AssetStudioLogLevel!;
-                compactTextures = config.CompactTextures ?? false;
-                optimizeTextureStore = config.OptimizeTextureStore ?? false;
-                sharedContentStore = config.SharedContentStore;
-                compiledContentStore = config.CompiledContentStore;
-                pngOptimize = string.IsNullOrWhiteSpace(config.PngOptimize)
-                    ? "oxipng"
-                    : config.PngOptimize!;
-                textureFormat = string.IsNullOrWhiteSpace(config.TextureFormat)
-                    ? "png"
-                    : config.TextureFormat!;
-                textureCompactWorkers = config.TextureCompactWorkers ?? 0;
-                convertModelTextures = config.ConvertModelTextures ?? false;
-                partPackageWorkList = config.PartPackageWorkList;
-                bundleHashIndex = config.BundleHashIndex;
-                bundleDependencyIndex = config.BundleDependencyIndex;
-                emitMvSourceSet = config.EmitMvSourceSet ?? false;
-                mvManifestPath = config.MvManifest;
-            }
-            catch (Exception ex)
-            {
-                return new ParseResult(false, null, $"Failed to read --config {configPath}: {ex.Message}");
-            }
+            CopyConfigValues(LoadConfig(state.ConfigPath), state);
+            return null;
         }
-
-        if (args.Length == 0 && string.IsNullOrWhiteSpace(configPath))
+        catch (Exception ex)
         {
-            return new ParseResult(false, null, "Missing arguments.");
+            return $"Failed to read --config {state.ConfigPath}: {ex.Message}";
         }
+    }
 
+    private static void CopyConfigValues(ExporterConfig config, OptionState state)
+    {
+        state.Output = config.Output;
+        state.Motion = config.Motion;
+        state.MasterDirectory = config.Master;
+        state.AssetRoot = config.AssetRoot;
+        state.EmitCostumeRegistries = config.EmitCostumeRegistries ?? false;
+        state.EmitRuntimeRoleCatalog = config.EmitRuntimeRoleCatalog ?? false;
+        state.EmitPartPackages = config.EmitPartPackages ?? false;
+        state.EmitRoleRuntimes = config.EmitRoleRuntimes ?? false;
+        state.ExportFaceMotion = config.ExportFaceMotion ?? false;
+        state.PartCostume3dId = config.PartCostume3dId;
+        state.PartType = config.PartType;
+        state.PartUnit = config.PartUnit;
+        state.RoleCharacter3dIds = config.RoleCharacter3dIds?.Distinct().ToList() ?? new List<int>();
+        state.SourcePath = config.SourcePath;
+        state.ManifestPath = config.Manifest;
+        state.PartPackageProcessConcurrency = config.PartPackageProcessConcurrency ??
+            config.PartPackageWorkers ?? config.PartPackageCoreCount ?? 1;
+        state.PartPackageShardCount = config.PartPackageShardCount ?? 1;
+        state.PartPackageShardIndex = config.PartPackageShardIndex ?? 0;
+        state.PartPackageClaimDirectory = config.PartPackageClaimDirectory;
+        state.AssetStudioLogLevel = DefaultWhenBlank(config.AssetStudioLogLevel, "warning");
+        state.CompactTextures = config.CompactTextures ?? false;
+        state.OptimizeTextureStore = config.OptimizeTextureStore ?? false;
+        state.SharedContentStore = config.SharedContentStore;
+        state.CompiledContentStore = config.CompiledContentStore;
+        state.PngOptimize = DefaultWhenBlank(config.PngOptimize, "oxipng");
+        state.TextureFormat = DefaultWhenBlank(config.TextureFormat, "png");
+        state.TextureCompactWorkers = config.TextureCompactWorkers ?? 0;
+        state.ConvertModelTextures = config.ConvertModelTextures ?? false;
+        state.PartPackageWorkList = config.PartPackageWorkList;
+        state.BundleHashIndex = config.BundleHashIndex;
+        state.BundleDependencyIndex = config.BundleDependencyIndex;
+        state.EmitMvSourceSet = config.EmitMvSourceSet ?? false;
+        state.MvManifestPath = config.MvManifest;
+    }
+
+    private static string DefaultWhenBlank(string? value, string fallback)
+    {
+        return string.IsNullOrWhiteSpace(value) ? fallback : value;
+    }
+
+    private static string? ApplyArguments(string[] args, OptionState state)
+    {
         for (var i = 0; i < args.Length; i++)
         {
-            var arg = args[i];
-            if (arg is "--config")
+            var error = ApplyArgument(args, ref i, state);
+            if (error is not null)
             {
-                _ = ReadValue(args, ref i, arg);
-                continue;
+                return error;
             }
-
-            if (arg is "--out" or "-o")
-            {
-                output = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--motion" or "-m")
-            {
-                motion = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--master")
-            {
-                masterDirectory = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--asset-root")
-            {
-                assetRoot = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--emit-costume-registries")
-            {
-                emitCostumeRegistries = true;
-                continue;
-            }
-
-            if (arg is "--emit-part-packages")
-            {
-                emitPartPackages = true;
-                continue;
-            }
-
-            if (arg is "--emit-role-runtimes")
-            {
-                emitRoleRuntimes = true;
-                continue;
-            }
-
-            if (arg is "--export-face-motion")
-            {
-                exportFaceMotion = true;
-                continue;
-            }
-
-            if (arg is "--part-costume3d-id")
-            {
-                var value = ReadValue(args, ref i, arg);
-                if (!int.TryParse(value, out var parsed))
-                {
-                    return new ParseResult(false, null, $"Option {arg} must be an integer.");
-                }
-                partCostume3dId = parsed;
-                continue;
-            }
-
-            if (arg is "--part-type")
-            {
-                partType = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--part-unit")
-            {
-                partUnit = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--role-character3d-id")
-            {
-                var value = ReadValue(args, ref i, arg);
-                if (!int.TryParse(value, out var parsed))
-                {
-                    return new ParseResult(false, null, $"Option {arg} must be an integer.");
-                }
-                roleCharacter3dIds.Add(parsed);
-                continue;
-            }
-
-            if (arg is "--source-path")
-            {
-                sourcePath = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--manifest")
-            {
-                manifestPath = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--emit-runtime-role-catalog")
-            {
-                emitRuntimeRoleCatalog = true;
-                continue;
-            }
-
-            if (arg is "--part-package-process-concurrency" or "--part-package-workers" or "--part-package-core-count")
-            {
-                partPackageProcessConcurrency = ReadIntValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--assetstudio-log-level")
-            {
-                assetStudioLogLevel = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--compact-textures")
-            {
-                compactTextures = true;
-                continue;
-            }
-
-            if (arg is "--optimize-texture-store")
-            {
-                optimizeTextureStore = true;
-                continue;
-            }
-
-            if (arg is "--shared-content-store")
-            {
-                sharedContentStore = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--compiled-content-store")
-            {
-                compiledContentStore = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--png-optimize")
-            {
-                pngOptimize = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--texture-format")
-            {
-                textureFormat = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--texture-compact-workers")
-            {
-                textureCompactWorkers = ReadIntValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--convert-model-textures")
-            {
-                convertModelTextures = ReadBoolValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--part-package-shard-count")
-            {
-                partPackageShardCount = ReadIntValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--part-package-shard-index")
-            {
-                partPackageShardIndex = ReadIntValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--part-package-claim-directory")
-            {
-                partPackageClaimDirectory = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--part-package-work-list")
-            {
-                partPackageWorkList = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--bundle-hash-index")
-            {
-                bundleHashIndex = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--bundle-dependency-index")
-            {
-                bundleDependencyIndex = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--emit-mv-source-set")
-            {
-                emitMvSourceSet = true;
-                continue;
-            }
-
-            if (arg is "--mv-manifest")
-            {
-                mvManifestPath = ReadValue(args, ref i, arg);
-                continue;
-            }
-
-            if (arg is "--help" or "-?")
-            {
-                return new ParseResult(false, null, "Help requested.");
-            }
-
-            return new ParseResult(false, null, $"Unknown argument: {arg}");
         }
+        return null;
+    }
 
-        if (exportFaceMotion)
+    private static string? ApplyArgument(string[] args, ref int index, OptionState state)
+    {
+        var arg = args[index];
+        switch (arg)
         {
-            if (string.IsNullOrWhiteSpace(motion))
-            {
-                return new ParseResult(false, null, "Missing --motion for --export-face-motion.");
-            }
+            case "--config": _ = ReadValue(args, ref index, arg); break;
+            case "--out": case "-o": state.Output = ReadValue(args, ref index, arg); break;
+            case "--motion": case "-m": state.Motion = ReadValue(args, ref index, arg); break;
+            case "--master": state.MasterDirectory = ReadValue(args, ref index, arg); break;
+            case "--asset-root": state.AssetRoot = ReadValue(args, ref index, arg); break;
+            case "--emit-costume-registries": state.EmitCostumeRegistries = true; break;
+            case "--emit-runtime-role-catalog": state.EmitRuntimeRoleCatalog = true; break;
+            case "--emit-part-packages": state.EmitPartPackages = true; break;
+            case "--emit-role-runtimes": state.EmitRoleRuntimes = true; break;
+            case "--export-face-motion": state.ExportFaceMotion = true; break;
+            case "--part-costume3d-id":
+                return TryAddInteger(args, ref index, arg, value => state.PartCostume3dId = value);
+            case "--part-type": state.PartType = ReadValue(args, ref index, arg); break;
+            case "--part-unit": state.PartUnit = ReadValue(args, ref index, arg); break;
+            case "--role-character3d-id":
+                return TryAddInteger(args, ref index, arg, value => state.RoleCharacter3dIds.Add(value));
+            case "--source-path": state.SourcePath = ReadValue(args, ref index, arg); break;
+            case "--manifest": state.ManifestPath = ReadValue(args, ref index, arg); break;
+            case "--part-package-process-concurrency":
+            case "--part-package-workers":
+            case "--part-package-core-count":
+                state.PartPackageProcessConcurrency = ReadIntValue(args, ref index, arg); break;
+            case "--assetstudio-log-level": state.AssetStudioLogLevel = ReadValue(args, ref index, arg); break;
+            case "--compact-textures": state.CompactTextures = true; break;
+            case "--optimize-texture-store": state.OptimizeTextureStore = true; break;
+            case "--shared-content-store": state.SharedContentStore = ReadValue(args, ref index, arg); break;
+            case "--compiled-content-store": state.CompiledContentStore = ReadValue(args, ref index, arg); break;
+            case "--png-optimize": state.PngOptimize = ReadValue(args, ref index, arg); break;
+            case "--texture-format": state.TextureFormat = ReadValue(args, ref index, arg); break;
+            case "--texture-compact-workers": state.TextureCompactWorkers = ReadIntValue(args, ref index, arg); break;
+            case "--convert-model-textures": state.ConvertModelTextures = ReadBoolValue(args, ref index, arg); break;
+            case "--part-package-shard-count": state.PartPackageShardCount = ReadIntValue(args, ref index, arg); break;
+            case "--part-package-shard-index": state.PartPackageShardIndex = ReadIntValue(args, ref index, arg); break;
+            case "--part-package-claim-directory": state.PartPackageClaimDirectory = ReadValue(args, ref index, arg); break;
+            case "--part-package-work-list": state.PartPackageWorkList = ReadValue(args, ref index, arg); break;
+            case "--bundle-hash-index": state.BundleHashIndex = ReadValue(args, ref index, arg); break;
+            case "--bundle-dependency-index": state.BundleDependencyIndex = ReadValue(args, ref index, arg); break;
+            case "--emit-mv-source-set": state.EmitMvSourceSet = true; break;
+            case "--mv-manifest": state.MvManifestPath = ReadValue(args, ref index, arg); break;
+            case "--help": case "-?": return "Help requested.";
+            default: return $"Unknown argument: {arg}";
         }
-        else if (optimizeTextureStore)
-        {
-        }
-        else if (emitRuntimeRoleCatalog)
-        {
-            if (string.IsNullOrWhiteSpace(masterDirectory))
-            {
-                return new ParseResult(false, null, "Missing --master for --emit-runtime-role-catalog.");
-            }
-        }
-        else if (emitMvSourceSet)
-        {
-            if (string.IsNullOrWhiteSpace(assetRoot))
-            {
-                return new ParseResult(false, null, "Missing --asset-root for --emit-mv-source-set.");
-            }
-            if (string.IsNullOrWhiteSpace(mvManifestPath))
-            {
-                return new ParseResult(false, null, "Missing --mv-manifest for --emit-mv-source-set.");
-            }
-        }
-        else if (emitCostumeRegistries || emitPartPackages || emitRoleRuntimes)
-        {
-            if (string.IsNullOrWhiteSpace(masterDirectory))
-            {
-                return new ParseResult(false, null, $"Missing --master for {ResolveRegistryModeName(emitPartPackages, emitRoleRuntimes)}.");
-            }
+        return null;
+    }
 
-            if (string.IsNullOrWhiteSpace(assetRoot))
-            {
-                return new ParseResult(false, null, $"Missing --asset-root for {ResolveRegistryModeName(emitPartPackages, emitRoleRuntimes)}.");
-            }
-
-            if (emitPartPackages && !emitCostumeRegistries && (partCostume3dId is null) != string.IsNullOrWhiteSpace(partType))
-            {
-                return new ParseResult(false, null, "--part-costume3d-id and --part-type must be used together.");
-            }
-
-        }
-        else
+    private static string? TryAddInteger(string[] args, ref int index, string arg, Action<int> assign)
+    {
+        var value = ReadValue(args, ref index, arg);
+        if (!int.TryParse(value, out var parsed))
         {
-            return new ParseResult(false, null, "Missing final pipeline operation.");
+            return $"Option {arg} must be an integer.";
         }
+        assign(parsed);
+        return null;
+    }
 
-        if (string.IsNullOrWhiteSpace(output))
+    private static string? ValidateOperation(OptionState state)
+    {
+        if (state.ExportFaceMotion)
         {
-            return new ParseResult(false, null, "Missing --out.");
+            return string.IsNullOrWhiteSpace(state.Motion)
+                ? "Missing --motion for --export-face-motion."
+                : null;
         }
-
-        if (partPackageProcessConcurrency < 0)
+        if (state.OptimizeTextureStore)
         {
-            return new ParseResult(false, null, "--part-package-process-concurrency must be 0 or greater.");
+            return null;
         }
-
-        if (partPackageShardCount < 1)
+        if (state.EmitRuntimeRoleCatalog)
         {
-            return new ParseResult(false, null, "--part-package-shard-count must be at least 1.");
+            return string.IsNullOrWhiteSpace(state.MasterDirectory)
+                ? "Missing --master for --emit-runtime-role-catalog."
+                : null;
         }
-
-        if (partPackageShardIndex < 0 || partPackageShardIndex >= partPackageShardCount)
+        if (state.EmitMvSourceSet)
         {
-            return new ParseResult(false, null, "--part-package-shard-index must be between 0 and shard-count - 1.");
+            return ValidateMvSourceSet(state);
         }
+        return state.EmitCostumeRegistries || state.EmitPartPackages || state.EmitRoleRuntimes
+            ? ValidateRegistryOperation(state)
+            : "Missing final pipeline operation.";
+    }
 
-        if (!IsValidAssetStudioLogLevel(assetStudioLogLevel))
+    private static string? ValidateMvSourceSet(OptionState state)
+    {
+        if (string.IsNullOrWhiteSpace(state.AssetRoot))
         {
-            return new ParseResult(false, null, "--assetstudio-log-level must be warning, info, or debug.");
+            return "Missing --asset-root for --emit-mv-source-set.";
         }
+        return string.IsNullOrWhiteSpace(state.MvManifestPath)
+            ? "Missing --mv-manifest for --emit-mv-source-set."
+            : null;
+    }
 
-        if (!IsValidPngOptimizeMode(pngOptimize))
+    private static string? ValidateRegistryOperation(OptionState state)
+    {
+        var mode = ResolveRegistryModeName(state.EmitPartPackages, state.EmitRoleRuntimes);
+        if (string.IsNullOrWhiteSpace(state.MasterDirectory))
         {
-            return new ParseResult(false, null, "--png-optimize must be oxipng or off.");
+            return $"Missing --master for {mode}.";
         }
-
-        if (!IsValidTextureFormat(textureFormat))
+        if (string.IsNullOrWhiteSpace(state.AssetRoot))
         {
-            return new ParseResult(false, null, "--texture-format must be png or ktx2.");
+            return $"Missing --asset-root for {mode}.";
         }
+        return state.EmitPartPackages && !state.EmitCostumeRegistries &&
+            (state.PartCostume3dId is null) != string.IsNullOrWhiteSpace(state.PartType)
+                ? "--part-costume3d-id and --part-type must be used together."
+                : null;
+    }
 
-        if (textureCompactWorkers < 0)
-        {
-            return new ParseResult(false, null, "--texture-compact-workers must be 0 or greater.");
-        }
+    private static string? ValidateGeneralOptions(OptionState state)
+    {
+        if (string.IsNullOrWhiteSpace(state.Output))
+            return "Missing --out.";
+        if (state.PartPackageProcessConcurrency < 0)
+            return "--part-package-process-concurrency must be 0 or greater.";
+        if (state.PartPackageShardCount < 1)
+            return "--part-package-shard-count must be at least 1.";
+        if (state.PartPackageShardIndex < 0 || state.PartPackageShardIndex >= state.PartPackageShardCount)
+            return "--part-package-shard-index must be between 0 and shard-count - 1.";
+        if (!IsValidAssetStudioLogLevel(state.AssetStudioLogLevel))
+            return "--assetstudio-log-level must be warning, info, or debug.";
+        if (!IsValidPngOptimizeMode(state.PngOptimize))
+            return "--png-optimize must be oxipng or off.";
+        if (!IsValidTextureFormat(state.TextureFormat))
+            return "--texture-format must be png or ktx2.";
+        if (state.TextureCompactWorkers < 0)
+            return "--texture-compact-workers must be 0 or greater.";
+        if (state.PartPackageProcessConcurrency != 1 && state.PartPackageShardCount > 1)
+            return "--part-package-process-concurrency cannot be combined with manual shard options.";
+        if (state.EmitPartPackages && state.PartCostume3dId is not null &&
+            (state.PartPackageProcessConcurrency != 1 || state.PartPackageShardCount > 1 || state.PartPackageShardIndex != 0))
+            return "Part package process concurrency and shards are only supported for full --emit-part-packages.";
+        return null;
+    }
 
-        if (partPackageProcessConcurrency != 1 && partPackageShardCount > 1)
-        {
-            return new ParseResult(false, null, "--part-package-process-concurrency cannot be combined with manual shard options.");
-        }
-
-        if (emitPartPackages && partCostume3dId is not null &&
-            (partPackageProcessConcurrency != 1 || partPackageShardCount > 1 || partPackageShardIndex != 0))
-        {
-            return new ParseResult(false, null, "Part package process concurrency and shards are only supported for full --emit-part-packages.");
-        }
-
-        return new ParseResult(
-            true,
-            new ConversionOptions(
-                output,
-                motion,
-                masterDirectory,
-                assetRoot,
-                emitCostumeRegistries,
-                emitRuntimeRoleCatalog,
-                emitPartPackages,
-                emitRoleRuntimes,
-                exportFaceMotion,
-                partCostume3dId,
-                NormalizePartType(partType),
-                string.IsNullOrWhiteSpace(partUnit) ? null : partUnit,
-                roleCharacter3dIds.Distinct().ToList(),
-                string.IsNullOrWhiteSpace(sourcePath) ? null : sourcePath,
-                string.IsNullOrWhiteSpace(manifestPath) ? null : manifestPath,
-                partPackageProcessConcurrency,
-                partPackageShardCount,
-                partPackageShardIndex,
-                string.IsNullOrWhiteSpace(partPackageClaimDirectory) ? null : partPackageClaimDirectory,
-                assetStudioLogLevel.Trim().ToLowerInvariant(),
-                compactTextures,
-                optimizeTextureStore,
-                string.IsNullOrWhiteSpace(sharedContentStore) ? null : sharedContentStore,
-                string.IsNullOrWhiteSpace(compiledContentStore) ? null : compiledContentStore,
-                NormalizePngOptimizeMode(pngOptimize),
-                NormalizeTextureFormat(textureFormat),
-                textureCompactWorkers,
-                convertModelTextures,
-                string.IsNullOrWhiteSpace(partPackageWorkList) ? null : partPackageWorkList,
-                string.IsNullOrWhiteSpace(bundleHashIndex) ? null : bundleHashIndex,
-                string.IsNullOrWhiteSpace(bundleDependencyIndex) ? null : bundleDependencyIndex,
-                emitMvSourceSet,
-                string.IsNullOrWhiteSpace(mvManifestPath) ? null : mvManifestPath
-            ),
-            string.Empty
+    private static ConversionOptions BuildOptions(OptionState state)
+    {
+        return new ConversionOptions(
+            state.Output!, state.Motion, state.MasterDirectory, state.AssetRoot,
+            state.EmitCostumeRegistries, state.EmitRuntimeRoleCatalog, state.EmitPartPackages,
+            state.EmitRoleRuntimes, state.ExportFaceMotion, state.PartCostume3dId,
+            NormalizePartType(state.PartType), BlankToNull(state.PartUnit),
+            state.RoleCharacter3dIds.Distinct().ToList(), BlankToNull(state.SourcePath),
+            BlankToNull(state.ManifestPath), state.PartPackageProcessConcurrency,
+            state.PartPackageShardCount, state.PartPackageShardIndex,
+            BlankToNull(state.PartPackageClaimDirectory),
+            state.AssetStudioLogLevel.Trim().ToLowerInvariant(), state.CompactTextures,
+            state.OptimizeTextureStore, BlankToNull(state.SharedContentStore),
+            BlankToNull(state.CompiledContentStore), NormalizePngOptimizeMode(state.PngOptimize),
+            NormalizeTextureFormat(state.TextureFormat), state.TextureCompactWorkers,
+            state.ConvertModelTextures, BlankToNull(state.PartPackageWorkList),
+            BlankToNull(state.BundleHashIndex), BlankToNull(state.BundleDependencyIndex),
+            state.EmitMvSourceSet, BlankToNull(state.MvManifestPath)
         );
     }
+
+    private static string? BlankToNull(string? value) => string.IsNullOrWhiteSpace(value) ? null : value;
+
+    private static ParseResult Failure(string error) => new(false, null, error);
 
     private static string? NormalizePartType(string? partType)
     {
@@ -611,5 +412,43 @@ public static class ConversionOptionsParser
             throw new ArgumentException($"Option {optionName} must be true or false.");
         }
         return parsed;
+    }
+
+    private sealed class OptionState
+    {
+        public string? Output { get; set; }
+        public string? Motion { get; set; }
+        public string? MasterDirectory { get; set; }
+        public string? AssetRoot { get; set; }
+        public bool EmitCostumeRegistries { get; set; }
+        public bool EmitRuntimeRoleCatalog { get; set; }
+        public bool EmitPartPackages { get; set; }
+        public bool EmitRoleRuntimes { get; set; }
+        public bool ExportFaceMotion { get; set; }
+        public int? PartCostume3dId { get; set; }
+        public string? PartType { get; set; }
+        public string? PartUnit { get; set; }
+        public List<int> RoleCharacter3dIds { get; set; } = new();
+        public string? SourcePath { get; set; }
+        public string? ManifestPath { get; set; }
+        public string? ConfigPath { get; set; }
+        public int PartPackageProcessConcurrency { get; set; } = 1;
+        public int PartPackageShardCount { get; set; } = 1;
+        public int PartPackageShardIndex { get; set; }
+        public string? PartPackageClaimDirectory { get; set; }
+        public string AssetStudioLogLevel { get; set; } = "warning";
+        public bool CompactTextures { get; set; }
+        public bool OptimizeTextureStore { get; set; }
+        public string? SharedContentStore { get; set; }
+        public string? CompiledContentStore { get; set; }
+        public string PngOptimize { get; set; } = "oxipng";
+        public string TextureFormat { get; set; } = "png";
+        public int TextureCompactWorkers { get; set; }
+        public bool ConvertModelTextures { get; set; }
+        public string? PartPackageWorkList { get; set; }
+        public string? BundleHashIndex { get; set; }
+        public string? BundleDependencyIndex { get; set; }
+        public bool EmitMvSourceSet { get; set; }
+        public string? MvManifestPath { get; set; }
     }
 }

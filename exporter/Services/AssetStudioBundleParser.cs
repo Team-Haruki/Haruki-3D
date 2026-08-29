@@ -117,38 +117,7 @@ public sealed class AssetStudioBundleParser
     {
         var shaderName = material.m_Shader.TryGet(out Shader shader) ? shader.m_Name : null;
         var slots = material.m_SavedProperties?.m_TexEnvs?
-            .Select(entry =>
-            {
-                var texturePointer = entry.Value.m_Texture;
-                var textureName = texturePointer.TryGet<Texture>(out var texture)
-                    ? texture.m_Name
-                    : null;
-                var texturePathId = texturePointer.m_PathID;
-                var textureFileId = texturePointer.m_FileID;
-                return new TextureSlotInventory(
-                    SlotName: entry.Key,
-                    TextureName: textureName,
-                    TextureFileId: textureFileId,
-                    TexturePathId: texturePathId,
-                    TextureKey: texturePathId == 0 ? null : BuildTextureKey(textureFileId, texturePathId),
-                    TextureData: texture is Texture2D texture2D ? ConvertTextureToPng(texture2D) : null,
-                    ScaleX: entry.Value.m_Scale.X,
-                    ScaleY: entry.Value.m_Scale.Y,
-                    OffsetX: entry.Value.m_Offset.X,
-                    OffsetY: entry.Value.m_Offset.Y,
-                    ColorSpace: texture is Texture2D sourceTexture ? sourceTexture.m_ColorSpace : 0,
-                    SourceWidth: texture is Texture2D sourceWidth ? sourceWidth.m_Width : 0,
-                    SourceHeight: texture is Texture2D sourceHeight ? sourceHeight.m_Height : 0,
-                    SourceMipCount: texture is Texture2D sourceMipCount ? sourceMipCount.m_MipCount : 0,
-                    SourceFormat: texture is Texture2D sourceFormat ? (int)sourceFormat.m_TextureFormat : 0,
-                    FilterMode: texture is Texture2D sourceFilter ? sourceFilter.m_TextureSettings?.m_FilterMode ?? 0 : 0,
-                    AnisoLevel: texture is Texture2D sourceAniso ? sourceAniso.m_TextureSettings?.m_Aniso ?? 0 : 0,
-                    MipBias: texture is Texture2D sourceMipBias ? sourceMipBias.m_TextureSettings?.m_MipBias ?? 0f : 0f,
-                    WrapU: texture is Texture2D sourceWrapU ? sourceWrapU.m_TextureSettings?.m_WrapU ?? 0 : 0,
-                    WrapV: texture is Texture2D sourceWrapV ? sourceWrapV.m_TextureSettings?.m_WrapV ?? 0 : 0,
-                    WrapW: texture is Texture2D sourceWrapW ? sourceWrapW.m_TextureSettings?.m_WrapW ?? 0 : 0
-                );
-            })
+            .Select(entry => BuildTextureSlotInventory(entry.Key, entry.Value))
             .OrderBy(slot => slot.SlotName, StringComparer.OrdinalIgnoreCase)
             .ToList()
             ?? new List<TextureSlotInventory>();
@@ -197,6 +166,39 @@ public sealed class AssetStudioBundleParser
             ShaderKey: material.m_Shader.m_PathID == 0
                 ? null
                 : $"ref:{material.m_Shader.m_FileID}:{material.m_Shader.m_PathID}"
+        );
+    }
+
+    private static TextureSlotInventory BuildTextureSlotInventory(string slotName, UnityTexEnv textureEnvironment)
+    {
+        var texturePointer = textureEnvironment.m_Texture;
+        var textureName = texturePointer.TryGet<Texture>(out var texture) ? texture.m_Name : null;
+        var texturePathId = texturePointer.m_PathID;
+        var textureFileId = texturePointer.m_FileID;
+        var texture2D = texture as Texture2D;
+        var settings = texture2D?.m_TextureSettings;
+        return new TextureSlotInventory(
+            SlotName: slotName,
+            TextureName: textureName,
+            TextureFileId: textureFileId,
+            TexturePathId: texturePathId,
+            TextureKey: texturePathId == 0 ? null : BuildTextureKey(textureFileId, texturePathId),
+            TextureData: texture2D is null ? null : ConvertTextureToPng(texture2D),
+            ScaleX: textureEnvironment.m_Scale.X,
+            ScaleY: textureEnvironment.m_Scale.Y,
+            OffsetX: textureEnvironment.m_Offset.X,
+            OffsetY: textureEnvironment.m_Offset.Y,
+            ColorSpace: texture2D?.m_ColorSpace ?? 0,
+            SourceWidth: texture2D?.m_Width ?? 0,
+            SourceHeight: texture2D?.m_Height ?? 0,
+            SourceMipCount: texture2D?.m_MipCount ?? 0,
+            SourceFormat: texture2D is null ? 0 : (int)texture2D.m_TextureFormat,
+            FilterMode: settings?.m_FilterMode ?? 0,
+            AnisoLevel: settings?.m_Aniso ?? 0,
+            MipBias: settings?.m_MipBias ?? 0f,
+            WrapU: settings?.m_WrapU ?? 0,
+            WrapV: settings?.m_WrapV ?? 0,
+            WrapW: settings?.m_WrapW ?? 0
         );
     }
 

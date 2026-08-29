@@ -254,148 +254,250 @@ public sealed class VrmSpringBoneCandidateBuilder
         foreach (var manager in part.Managers)
         {
             var managerBones = ResolveRuntimeManagerBones(part, manager, bonesByPathId, warnings);
-
             foreach (var chain in BuildChains(managerBones))
             {
-                var jointColliderGroups = new Dictionary<long, IReadOnlyList<int>>();
-                var jointColliderGroupsByNodePath = new Dictionary<string, IReadOnlyList<int>>(StringComparer.Ordinal);
-                var springColliderGroups = new SortedSet<int>();
-                var joints = new List<VrmSpringBoneJointCandidate>();
-
-                foreach (var bone in chain.Bones)
-                {
-                    var colliderPathIds = ReadColliderPathIds(bone.Raw).ToList();
-                    var colliderIndexes = new List<int>();
-
-                    foreach (var colliderPathId in colliderPathIds)
-                    {
-                        if (colliderIndexByKey.TryGetValue(
-                                new SpringColliderKey(part.PartKind, colliderPathId),
-                                out var colliderIndex))
-                        {
-                            colliderIndexes.Add(colliderIndex);
-                        }
-                        else
-                        {
-                            warnings.Add(
-                                $"{part.PartKind}: SpringBone {BuildObjectName(bone.GameObject, bone.ScriptName, bone.PathId)} references unsupported or missing collider PathID {colliderPathId}."
-                            );
-                        }
-                    }
-
-                    if (colliderIndexes.Count > 0)
-                    {
-                        var groupIndex = colliderGroups.Count;
-                        colliderGroups.Add(new VrmSpringBoneColliderGroupCandidate(
-                            Index: groupIndex,
-                            Name: $"{part.PartKind}:{BuildObjectName(bone.GameObject, bone.ScriptName, bone.PathId)}:colliders",
-                            PartKind: part.PartKind,
-                            SourceSpringBonePathId: bone.PathId,
-                            Colliders: colliderIndexes,
-                            SourceColliderPathIds: colliderPathIds,
-                            SourceKind: "direct",
-                            ColliderFlag: null,
-                            MatchedPrefixes: null,
-                            CollidersByRoot: null,
-                            DefaultRoot: ExtractPoseRoot(bone.GameObject?.TransformPath)
-                        ));
-                        springColliderGroups.Add(groupIndex);
-                        SetJointColliderGroups(
-                            jointColliderGroups,
-                            jointColliderGroupsByNodePath,
-                            bone,
-                            new[] { groupIndex }
-                        );
-                    }
-                    else
-                    {
-                        SetJointColliderGroups(
-                            jointColliderGroups,
-                            jointColliderGroupsByNodePath,
-                            bone,
-                            Array.Empty<int>()
-                        );
-                    }
-
-                    joints.Add(BuildJoint(bone));
-                }
-
-                if (joints.Count == 0)
-                {
-                    continue;
-                }
-
-                foreach (var bone in chain.Bones)
-                {
-                    var flag = ReadInt(bone.Raw, "colliderFlag") ?? 0;
-                    if (flag == 0)
-                    {
-                        continue;
-                    }
-
-                    var runtimeColliderFlagGroup = BuildRuntimeColliderFlagGroup(
-                        part,
-                        chain,
-                        bone,
-                        flag,
-                        bodyPartForInferredColliders,
-                        colliderIndexByKey,
-                        colliderGroups.Count,
-                        warnings
-                    );
-                    if (runtimeColliderFlagGroup is null)
-                    {
-                        continue;
-                    }
-
-                    colliderGroups.Add(runtimeColliderFlagGroup);
-                    springColliderGroups.Add(runtimeColliderFlagGroup.Index);
-                    var updatedJointGroups = jointColliderGroups[bone.PathId]
-                        .Concat(new[] { runtimeColliderFlagGroup.Index })
-                        .ToList();
-                    SetJointColliderGroups(
-                        jointColliderGroups,
-                        jointColliderGroupsByNodePath,
-                        bone,
-                        updatedJointGroups
-                    );
-                }
-
-                var springIndex = springs.Count;
-                springs.Add(new VrmSpringBoneSpringCandidate(
-                    Index: springIndex,
-                    Name: $"{part.PartKind}:{chain.RootName}",
-                    PartKind: part.PartKind,
-                    SourceManagerPathId: manager.PathId,
-                    Enabled: ReadBool(manager.Raw, "m_Enabled") ?? true,
-                    AutomaticUpdates: ReadBool(manager.Raw, "automaticUpdates") ?? true,
-                    EnableLengthLimits: ReadBool(manager.Raw, "enableLengthLimits") ?? true,
-                    EnableAngleLimits: ReadBool(manager.Raw, "enableAngleLimits") ?? true,
-                    EnableCollision: ReadBool(manager.Raw, "enableCollision") ?? true,
-                    CollideWithGround: ReadBool(manager.Raw, "collideWithGround") ?? true,
-                    GroundHeight: ReadFloat(manager.Raw, "groundHeight") ?? 0f,
-                    IsSumOfForcesOnBone: ReadBool(manager.Raw, "isSumOfForcesOnBone") ?? true,
-                    IsPaused: ReadBool(manager.Raw, "isPaused") ?? false,
-                    DynamicRatio: Clamp01(ReadFloat(manager.Raw, "dynamicRatio") ?? 0.5f),
-                    SimulationFrameRate: Math.Max(0, ReadInt(manager.Raw, "simulationFrameRate") ?? 60),
-                    SlowMotionScale: ReadFloat(manager.Raw, "slowMotionScale") ?? 1f,
-                    Bounce: ReadFloat(manager.Raw, "bounce") ?? 0f,
-                    Friction: ReadFloat(manager.Raw, "friction") ?? 1f,
-                    AnimatedBoneNames: ReadStringList(manager.Raw, "animatedBoneNames"),
-                    RawGravity: ReadVector3(manager.Raw, "gravity"),
-                    ForceProviders: BuildForceProviders(part, fallbackForceProviders, manager),
-                    Center: null,
-                    CenterName: manager.GameObject?.Name,
-                    CenterPath: manager.GameObject?.TransformPath,
-                    Joints: joints,
-                    ColliderGroups: springColliderGroups.ToList(),
-                    JointColliderGroups: jointColliderGroups,
-                    JointColliderGroupsByNodePath: jointColliderGroupsByNodePath
-                ));
+                AddSpringChain(
+                    part,
+                    manager,
+                    chain,
+                    colliderIndexByKey,
+                    bodyPartForInferredColliders,
+                    fallbackForceProviders,
+                    colliderGroups,
+                    springs,
+                    warnings
+                );
             }
         }
 
         return springs.Count - springCountBefore;
+    }
+
+    private static void AddSpringChain(
+        SpringBoneExport part,
+        SpringMonoBehaviourEntry manager,
+        SpringBoneChain chain,
+        IReadOnlyDictionary<SpringColliderKey, int> colliderIndexByKey,
+        SpringBoneExport? bodyPartForInferredColliders,
+        IReadOnlyList<SpringMonoBehaviourEntry> fallbackForceProviders,
+        List<VrmSpringBoneColliderGroupCandidate> colliderGroups,
+        List<VrmSpringBoneSpringCandidate> springs,
+        List<string> warnings
+    )
+    {
+        var jointColliderGroups = new Dictionary<long, IReadOnlyList<int>>();
+        var jointColliderGroupsByNodePath = new Dictionary<string, IReadOnlyList<int>>(StringComparer.Ordinal);
+        var springColliderGroups = new SortedSet<int>();
+        var joints = new List<VrmSpringBoneJointCandidate>();
+
+        foreach (var bone in chain.Bones)
+        {
+            AddDirectColliderGroup(
+                part,
+                bone,
+                colliderIndexByKey,
+                colliderGroups,
+                springColliderGroups,
+                jointColliderGroups,
+                jointColliderGroupsByNodePath,
+                warnings
+            );
+            joints.Add(BuildJoint(bone));
+        }
+
+        if (joints.Count == 0)
+        {
+            return;
+        }
+
+        AddRuntimeColliderFlagGroups(
+            part,
+            chain,
+            bodyPartForInferredColliders,
+            colliderIndexByKey,
+            colliderGroups,
+            springColliderGroups,
+            jointColliderGroups,
+            jointColliderGroupsByNodePath,
+            warnings
+        );
+        springs.Add(BuildSpringCandidate(
+            springs.Count,
+            part,
+            manager,
+            chain,
+            fallbackForceProviders,
+            joints,
+            springColliderGroups,
+            jointColliderGroups,
+            jointColliderGroupsByNodePath
+        ));
+    }
+
+    private static void AddDirectColliderGroup(
+        SpringBoneExport part,
+        SpringBoneEntry bone,
+        IReadOnlyDictionary<SpringColliderKey, int> colliderIndexByKey,
+        List<VrmSpringBoneColliderGroupCandidate> colliderGroups,
+        SortedSet<int> springColliderGroups,
+        Dictionary<long, IReadOnlyList<int>> jointColliderGroups,
+        Dictionary<string, IReadOnlyList<int>> jointColliderGroupsByNodePath,
+        List<string> warnings
+    )
+    {
+        var colliderPathIds = ReadColliderPathIds(bone.Raw).ToList();
+        var colliderIndexes = ResolveColliderIndexes(part, bone, colliderPathIds, colliderIndexByKey, warnings);
+        if (colliderIndexes.Count == 0)
+        {
+            SetJointColliderGroups(
+                jointColliderGroups,
+                jointColliderGroupsByNodePath,
+                bone,
+                Array.Empty<int>()
+            );
+            return;
+        }
+
+        var groupIndex = colliderGroups.Count;
+        colliderGroups.Add(new VrmSpringBoneColliderGroupCandidate(
+            Index: groupIndex,
+            Name: $"{part.PartKind}:{BuildObjectName(bone.GameObject, bone.ScriptName, bone.PathId)}:colliders",
+            PartKind: part.PartKind,
+            SourceSpringBonePathId: bone.PathId,
+            Colliders: colliderIndexes,
+            SourceColliderPathIds: colliderPathIds,
+            SourceKind: "direct",
+            ColliderFlag: null,
+            MatchedPrefixes: null,
+            CollidersByRoot: null,
+            DefaultRoot: ExtractPoseRoot(bone.GameObject?.TransformPath)
+        ));
+        springColliderGroups.Add(groupIndex);
+        SetJointColliderGroups(
+            jointColliderGroups,
+            jointColliderGroupsByNodePath,
+            bone,
+            new[] { groupIndex }
+        );
+    }
+
+    private static List<int> ResolveColliderIndexes(
+        SpringBoneExport part,
+        SpringBoneEntry bone,
+        IReadOnlyList<long> colliderPathIds,
+        IReadOnlyDictionary<SpringColliderKey, int> colliderIndexByKey,
+        List<string> warnings
+    )
+    {
+        var colliderIndexes = new List<int>();
+        foreach (var colliderPathId in colliderPathIds)
+        {
+            if (colliderIndexByKey.TryGetValue(
+                    new SpringColliderKey(part.PartKind, colliderPathId),
+                    out var colliderIndex))
+            {
+                colliderIndexes.Add(colliderIndex);
+                continue;
+            }
+
+            warnings.Add(
+                $"{part.PartKind}: SpringBone {BuildObjectName(bone.GameObject, bone.ScriptName, bone.PathId)} references unsupported or missing collider PathID {colliderPathId}."
+            );
+        }
+        return colliderIndexes;
+    }
+
+    private static void AddRuntimeColliderFlagGroups(
+        SpringBoneExport part,
+        SpringBoneChain chain,
+        SpringBoneExport? bodyPartForInferredColliders,
+        IReadOnlyDictionary<SpringColliderKey, int> colliderIndexByKey,
+        List<VrmSpringBoneColliderGroupCandidate> colliderGroups,
+        SortedSet<int> springColliderGroups,
+        Dictionary<long, IReadOnlyList<int>> jointColliderGroups,
+        Dictionary<string, IReadOnlyList<int>> jointColliderGroupsByNodePath,
+        List<string> warnings
+    )
+    {
+        foreach (var bone in chain.Bones)
+        {
+            var flag = ReadInt(bone.Raw, "colliderFlag") ?? 0;
+            if (flag == 0)
+            {
+                continue;
+            }
+
+            var group = BuildRuntimeColliderFlagGroup(
+                part,
+                chain,
+                bone,
+                flag,
+                bodyPartForInferredColliders,
+                colliderIndexByKey,
+                colliderGroups.Count,
+                warnings
+            );
+            if (group is null)
+            {
+                continue;
+            }
+
+            colliderGroups.Add(group);
+            springColliderGroups.Add(group.Index);
+            var updatedJointGroups = jointColliderGroups[bone.PathId]
+                .Concat(new[] { group.Index })
+                .ToList();
+            SetJointColliderGroups(
+                jointColliderGroups,
+                jointColliderGroupsByNodePath,
+                bone,
+                updatedJointGroups
+            );
+        }
+    }
+
+    private static VrmSpringBoneSpringCandidate BuildSpringCandidate(
+        int springIndex,
+        SpringBoneExport part,
+        SpringMonoBehaviourEntry manager,
+        SpringBoneChain chain,
+        IReadOnlyList<SpringMonoBehaviourEntry> fallbackForceProviders,
+        IReadOnlyList<VrmSpringBoneJointCandidate> joints,
+        SortedSet<int> springColliderGroups,
+        IReadOnlyDictionary<long, IReadOnlyList<int>> jointColliderGroups,
+        IReadOnlyDictionary<string, IReadOnlyList<int>> jointColliderGroupsByNodePath
+    )
+    {
+        return new VrmSpringBoneSpringCandidate(
+            Index: springIndex,
+            Name: $"{part.PartKind}:{chain.RootName}",
+            PartKind: part.PartKind,
+            SourceManagerPathId: manager.PathId,
+            Enabled: ReadBool(manager.Raw, "m_Enabled") ?? true,
+            AutomaticUpdates: ReadBool(manager.Raw, "automaticUpdates") ?? true,
+            EnableLengthLimits: ReadBool(manager.Raw, "enableLengthLimits") ?? true,
+            EnableAngleLimits: ReadBool(manager.Raw, "enableAngleLimits") ?? true,
+            EnableCollision: ReadBool(manager.Raw, "enableCollision") ?? true,
+            CollideWithGround: ReadBool(manager.Raw, "collideWithGround") ?? true,
+            GroundHeight: ReadFloat(manager.Raw, "groundHeight") ?? 0f,
+            IsSumOfForcesOnBone: ReadBool(manager.Raw, "isSumOfForcesOnBone") ?? true,
+            IsPaused: ReadBool(manager.Raw, "isPaused") ?? false,
+            DynamicRatio: Clamp01(ReadFloat(manager.Raw, "dynamicRatio") ?? 0.5f),
+            SimulationFrameRate: Math.Max(0, ReadInt(manager.Raw, "simulationFrameRate") ?? 60),
+            SlowMotionScale: ReadFloat(manager.Raw, "slowMotionScale") ?? 1f,
+            Bounce: ReadFloat(manager.Raw, "bounce") ?? 0f,
+            Friction: ReadFloat(manager.Raw, "friction") ?? 1f,
+            AnimatedBoneNames: ReadStringList(manager.Raw, "animatedBoneNames"),
+            RawGravity: ReadVector3(manager.Raw, "gravity"),
+            ForceProviders: BuildForceProviders(part, fallbackForceProviders, manager),
+            Center: null,
+            CenterName: manager.GameObject?.Name,
+            CenterPath: manager.GameObject?.TransformPath,
+            Joints: joints,
+            ColliderGroups: springColliderGroups.ToList(),
+            JointColliderGroups: jointColliderGroups,
+            JointColliderGroupsByNodePath: jointColliderGroupsByNodePath
+        );
     }
 
     private static void SetJointColliderGroups(

@@ -443,97 +443,23 @@ public sealed class MotionPackageExporter
 
         var ranges = BuildBindingRanges(bindings.genericBindings);
         var curves = new Dictionary<UnityBinding, UnityCurve>();
-
-        UnityCurve GetCurve(GenericBinding binding)
-        {
-            var key = new UnityBinding(binding.path, binding.attribute, binding.typeID);
-            if (!curves.TryGetValue(key, out var curve))
-            {
-                curve = new UnityCurve(key);
-                curves[key] = curve;
-            }
-            return curve;
-        }
-
         var streamedFrames = clip.m_StreamedClip.ReadData();
         RecomputeStreamedInSlopes(streamedFrames);
-        foreach (var frame in streamedFrames)
-        {
-            for (var curveIndex = 0; curveIndex < frame.keyList.Count;)
-            {
-                var binding = FindBinding(ranges, frame.keyList[curveIndex].index);
-                var dimension = BindingDimension(binding);
-                var values = new float[dimension];
-                var inSlopes = new float[dimension];
-                var outSlopes = new float[dimension];
-                for (var component = 0; component < dimension && curveIndex < frame.keyList.Count; component++)
-                {
-                    var key = frame.keyList[curveIndex++];
-                    values[component] = key.value;
-                    inSlopes[component] = key.inSlope;
-                    outSlopes[component] = key.outSlope;
-                }
-                GetCurve(binding).Keys.Add(new UnityCurveKey(
-                    frame.time,
-                    values,
-                    inSlopes,
-                    outSlopes,
-                    IsDense: false,
-                    IsConstant: false
-                ));
-            }
-        }
+        DecodeStreamedCurves(streamedFrames, ranges, curves);
 
         var denseClip = clip.m_DenseClip;
         var denseCurveOffset = (int)clip.m_StreamedClip.curveCount;
-        for (var frameIndex = 0; frameIndex < denseClip.m_FrameCount; frameIndex++)
-        {
-            var time = denseClip.m_BeginTime + frameIndex / denseClip.m_SampleRate;
-            var frameOffset = frameIndex * (int)denseClip.m_CurveCount;
-            for (var curveIndex = 0; curveIndex < denseClip.m_CurveCount;)
-            {
-                var binding = FindBinding(ranges, denseCurveOffset + (int)curveIndex);
-                var dimension = BindingDimension(binding);
-                var values = new float[dimension];
-                for (var component = 0; component < dimension; component++)
-                {
-                    values[component] = denseClip.m_SampleArray[frameOffset + curveIndex++];
-                }
-                GetCurve(binding).Keys.Add(new UnityCurveKey(
-                    time,
-                    values,
-                    ZeroSlopes(dimension),
-                    ZeroSlopes(dimension),
-                    IsDense: true,
-                    IsConstant: false
-                ));
-            }
-        }
+        DecodeDenseCurves(denseClip, denseCurveOffset, ranges, curves);
 
         if (clip.m_ConstantClip?.data is { Length: > 0 } constantValues)
         {
-            var constantCurveOffset = denseCurveOffset + (int)denseClip.m_CurveCount;
-            foreach (var time in new[] { 0f, source.m_MuscleClip.m_StopTime })
-            {
-                for (var curveIndex = 0; curveIndex < constantValues.Length;)
-                {
-                    var binding = FindBinding(ranges, constantCurveOffset + curveIndex);
-                    var dimension = BindingDimension(binding);
-                    var values = new float[dimension];
-                    for (var component = 0; component < dimension; component++)
-                    {
-                        values[component] = constantValues[curveIndex++];
-                    }
-                    GetCurve(binding).Keys.Add(new UnityCurveKey(
-                        time,
-                        values,
-                        ZeroSlopes(dimension),
-                        ZeroSlopes(dimension),
-                        IsDense: false,
-                        IsConstant: true
-                    ));
-                }
-            }
+            DecodeConstantCurves(
+                constantValues,
+                denseCurveOffset + (int)denseClip.m_CurveCount,
+                source.m_MuscleClip.m_StopTime,
+                ranges,
+                curves
+            );
         }
 
         foreach (var curve in curves.Values)
@@ -557,6 +483,92 @@ public sealed class MotionPackageExporter
             duration,
             curves.Values.ToList()
         );
+    }
+
+    private static UnityCurve GetOrCreateCurve(Dictionary<UnityBinding, UnityCurve> curves, GenericBinding binding)
+    {
+        var key = new UnityBinding(binding.path, binding.attribute, binding.typeID);
+        if (!curves.TryGetValue(key, out var curve))
+        {
+            curve = new UnityCurve(key);
+            curves[key] = curve;
+        }
+        return curve;
+    }
+
+    private static void DecodeStreamedCurves(
+        IReadOnlyList<StreamedClip.StreamedFrame> frames,
+        IReadOnlyList<BindingRange> ranges,
+        Dictionary<UnityBinding, UnityCurve> curves
+    )
+    {
+        foreach (var frame in frames)
+        {
+            for (var curveIndex = 0; curveIndex < frame.keyList.Count;)
+            {
+                var binding = FindBinding(ranges, frame.keyList[curveIndex].index);
+                var dimension = BindingDimension(binding);
+                var values = new float[dimension];
+                var inSlopes = new float[dimension];
+                var outSlopes = new float[dimension];
+                for (var component = 0; component < dimension && curveIndex < frame.keyList.Count; component++)
+                {
+                    var key = frame.keyList[curveIndex++];
+                    values[component] = key.value;
+                    inSlopes[component] = key.inSlope;
+                    outSlopes[component] = key.outSlope;
+                }
+                GetOrCreateCurve(curves, binding).Keys.Add(new UnityCurveKey(
+                    frame.time, values, inSlopes, outSlopes, IsDense: false, IsConstant: false));
+            }
+        }
+    }
+
+    private static void DecodeDenseCurves(
+        DenseClip denseClip,
+        int curveOffset,
+        IReadOnlyList<BindingRange> ranges,
+        Dictionary<UnityBinding, UnityCurve> curves
+    )
+    {
+        for (var frameIndex = 0; frameIndex < denseClip.m_FrameCount; frameIndex++)
+        {
+            var time = denseClip.m_BeginTime + frameIndex / denseClip.m_SampleRate;
+            var frameOffset = frameIndex * (int)denseClip.m_CurveCount;
+            for (var curveIndex = 0; curveIndex < denseClip.m_CurveCount;)
+            {
+                var binding = FindBinding(ranges, curveOffset + (int)curveIndex);
+                var dimension = BindingDimension(binding);
+                var values = new float[dimension];
+                for (var component = 0; component < dimension; component++)
+                    values[component] = denseClip.m_SampleArray[frameOffset + curveIndex++];
+                GetOrCreateCurve(curves, binding).Keys.Add(new UnityCurveKey(
+                    time, values, ZeroSlopes(dimension), ZeroSlopes(dimension), IsDense: true, IsConstant: false));
+            }
+        }
+    }
+
+    private static void DecodeConstantCurves(
+        float[] constantValues,
+        int curveOffset,
+        float stopTime,
+        IReadOnlyList<BindingRange> ranges,
+        Dictionary<UnityBinding, UnityCurve> curves
+    )
+    {
+        foreach (var time in new[] { 0f, stopTime })
+        {
+            for (var curveIndex = 0; curveIndex < constantValues.Length;)
+            {
+                var binding = FindBinding(ranges, curveOffset + curveIndex);
+                var dimension = BindingDimension(binding);
+                var values = new float[dimension];
+                for (var component = 0; component < dimension; component++)
+                    values[component] = constantValues[curveIndex++];
+                GetOrCreateCurve(curves, binding).Keys.Add(new UnityCurveKey(
+                    time, values, ZeroSlopes(dimension), ZeroSlopes(dimension), IsDense: false, IsConstant: true));
+            }
+        }
     }
 
     private static List<BindingRange> BuildBindingRanges(List<GenericBinding> bindings)

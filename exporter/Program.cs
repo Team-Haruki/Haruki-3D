@@ -19,19 +19,26 @@ if (!parseResult.IsSuccess || parseResult.Options is null)
 
 var options = parseResult.Options;
 Logger.Default = new AssetStudioConsoleLogger(options.AssetStudioLogLevel);
-if (options.EmitMvSourceSet)
+return await RunSelectedOperationAsync(options);
+
+static Task<int> RunSelectedOperationAsync(ConversionOptions options)
+{
+    if (options.EmitMvSourceSet) return RunMvSourceSetAsync(options);
+    if (options.EmitRuntimeRoleCatalog) return RunRuntimeRoleCatalogAsync(options);
+    if (options.OptimizeTextureStore) return RunTextureStoreOptimizationAsync(options);
+    if (options.ExportFaceMotion) return RunFaceMotionExportAsync(options);
+    if (options.EmitRoleRuntimes) return RunRoleRuntimeExportAsync(options);
+    if (options.EmitCostumeRegistries) return RunCostumeRegistryExportAsync(options);
+    if (options.EmitPartPackages) return RunPartPackageExportAsync(options);
+    return ReportMissingOperationAsync();
+}
+
+static async Task<int> RunMvSourceSetAsync(ConversionOptions options)
 {
     try
     {
-        var result = MvSourceSetExporter.Export(
-            options.MvManifestPath!,
-            options.AssetRoot!,
-            options.OutputDirectory
-        );
-        Console.WriteLine(
-            $"Wrote MV {result.MusicId} source set: {result.BundleCount} bundle(s), " +
-            $"{result.TotalBytes} byte(s)."
-        );
+        var result = MvSourceSetExporter.Export(options.MvManifestPath!, options.AssetRoot!, options.OutputDirectory);
+        Console.WriteLine($"Wrote MV {result.MusicId} source set: {result.BundleCount} bundle(s), {result.TotalBytes} byte(s).");
         Console.WriteLine("These are source-platform Unity bundles; rebuild them for WebGL before browser loading.");
         return 0;
     }
@@ -41,14 +48,12 @@ if (options.EmitMvSourceSet)
         return 2;
     }
 }
-if (options.EmitRuntimeRoleCatalog)
+
+static async Task<int> RunRuntimeRoleCatalogAsync(ConversionOptions options)
 {
     try
     {
-        var catalog = RuntimeRoleCatalogExporter.WriteFromMaster(
-            options.MasterDirectory!,
-            options.OutputDirectory
-        );
+        var catalog = RuntimeRoleCatalogExporter.WriteFromMaster(options.MasterDirectory!, options.OutputDirectory);
         Console.WriteLine($"Runtime role catalog is current with {catalog.Roles.Count} role(s).");
         return 0;
     }
@@ -58,19 +63,14 @@ if (options.EmitRuntimeRoleCatalog)
         return 2;
     }
 }
-if (options.OptimizeTextureStore)
+
+static async Task<int> RunTextureStoreOptimizationAsync(ConversionOptions options)
 {
     try
     {
         var report = TextureCompactor.OptimizeStore(
-            options.OutputDirectory,
-            options.PngOptimizeMode,
-            options.TextureCompactWorkers
-        );
-        Console.WriteLine(
-            $"Optimized texture store: {report.OptimizedFileCount}/{report.TextureFileCount} file(s), " +
-            $"saved {report.SavedBytes} byte(s)."
-        );
+            options.OutputDirectory, options.PngOptimizeMode, options.TextureCompactWorkers);
+        Console.WriteLine($"Optimized texture store: {report.OptimizedFileCount}/{report.TextureFileCount} file(s), saved {report.SavedBytes} byte(s).");
         RunOutputFinalization(options);
         return 0;
     }
@@ -80,15 +80,13 @@ if (options.OptimizeTextureStore)
         return 2;
     }
 }
-if (options.ExportFaceMotion)
+
+static async Task<int> RunFaceMotionExportAsync(ConversionOptions options)
 {
     try
     {
         var outputPath = MotionPackageExporter.ExportFaceMotion(
-            options.MotionPath!,
-            options.OutputDirectory,
-            options.FaceMotionSourcePath
-        );
+            options.MotionPath!, options.OutputDirectory, options.FaceMotionSourcePath);
         Console.WriteLine($"Wrote face motion: {outputPath}");
         return 0;
     }
@@ -99,7 +97,7 @@ if (options.ExportFaceMotion)
     }
 }
 
-if (options.EmitRoleRuntimes)
+static async Task<int> RunRoleRuntimeExportAsync(ConversionOptions options)
 {
     try
     {
@@ -107,15 +105,9 @@ if (options.EmitRoleRuntimes)
         {
             return RunRoleRuntimeWorkers(options);
         }
-
-        var roleRuntimeExporter = new RoleRuntimeExporter(options.ConvertModelTextures);
-        var results = roleRuntimeExporter.ExportMany(
-            options.MasterDirectory!,
-            options.AssetRoot!,
-            options.OutputDirectory,
-            options.RoleCharacter3dIds,
-            options.MotionPath
-        );
+        var results = new RoleRuntimeExporter(options.ConvertModelTextures).ExportMany(
+            options.MasterDirectory!, options.AssetRoot!, options.OutputDirectory,
+            options.RoleCharacter3dIds, options.MotionPath);
         Console.WriteLine($"Wrote {results.Count} role runtime package(s).");
         foreach (var result in results.Where(result => result.Warnings.Count > 0))
         {
@@ -130,15 +122,11 @@ if (options.EmitRoleRuntimes)
     }
 }
 
-if (options.EmitCostumeRegistries)
+static async Task<int> RunCostumeRegistryExportAsync(ConversionOptions options)
 {
     try
     {
-        CostumeRegistryExporter.Export(
-            options.MasterDirectory!,
-            options.AssetRoot!,
-            options.OutputDirectory
-        );
+        CostumeRegistryExporter.Export(options.MasterDirectory!, options.AssetRoot!, options.OutputDirectory);
         if (options.EmitPartPackages)
         {
             Console.WriteLine("Part package export is incremental; pass --part-costume3d-id and --part-type to build a specific runtime part package.");
@@ -152,82 +140,22 @@ if (options.EmitCostumeRegistries)
     }
 }
 
-if (options.EmitPartPackages)
+static async Task<int> RunPartPackageExportAsync(ConversionOptions options)
 {
     try
     {
-        var partCharacterHeightMetersById = !string.IsNullOrWhiteSpace(options.PartPackageWorkList)
-            ? PartPackageWorkPlanner.Load(options.PartPackageWorkList!).CharacterHeightMetersById
-            : !string.IsNullOrWhiteSpace(options.MasterDirectory)
-                ? LoadCharacterHeightMetersById(options.MasterDirectory!)
-                : null;
-        var partPackageExporter = new PartPackageExporter(
-            partCharacterHeightMetersById,
-            options.ConvertModelTextures
-        );
+        var characterHeights = ResolveCharacterHeightMeters(options);
+        var exporter = new PartPackageExporter(characterHeights, options.ConvertModelTextures);
         if (options.PartCostume3dId is not null && options.PartType is not null)
         {
-            var result = partPackageExporter.ExportOne(
-                options.MasterDirectory!,
-                options.AssetRoot!,
-                options.OutputDirectory,
-                options.PartCostume3dId.Value,
-                options.PartType,
-                options.PartUnit
-            );
-            Console.WriteLine($"Wrote part runtime package: {result.RuntimePath}");
-            if (result.Warnings.Count > 0)
-            {
-                Console.WriteLine($"Warnings: {result.Warnings.Count}");
-            }
-            RunOutputFinalization(options);
+            ExportOnePartPackage(options, exporter);
+            return 0;
         }
-        else
+        if (ResolvePartPackageProcessConcurrency(options) > 1)
         {
-            if (ResolvePartPackageProcessConcurrency(options) > 1)
-            {
-                return RunPartPackageWorkers(options, partCharacterHeightMetersById!);
-            }
-
-            var batch = partPackageExporter.ExportAll(
-                options.MasterDirectory!,
-                options.AssetRoot!,
-                options.OutputDirectory,
-                options.ManifestPath,
-                options.PartPackageShardCount,
-                options.PartPackageShardIndex,
-                options.PartPackageClaimDirectory,
-                options.CompiledContentStore,
-                options.SharedContentStore,
-                options.PartPackageWorkList,
-                options.BundleHashIndex,
-                options.BundleDependencyIndex,
-                options.TextureFormat == "ktx2"
-            );
-            var results = batch.Results;
-            var succeeded = results.Count(result => result.Succeeded);
-            var failed = results.Count - succeeded;
-            Console.WriteLine($"Wrote {succeeded} part runtime package(s).");
-            Console.WriteLine(
-                $"Part export metrics: built={batch.Built}, restored={batch.Restored}, " +
-                $"manifestSkipped={batch.ManifestSkipped}, bundleHashIndexHits={batch.BundleHashIndexHits}, " +
-                $"fileHashComputations={batch.FileHashComputations}, elapsedMs={batch.ElapsedMilliseconds}."
-            );
-            if (!string.IsNullOrWhiteSpace(options.PartPackageWorkList))
-            {
-                await File.WriteAllTextAsync(
-                    PartPackageWorkPlanner.SummaryPath(options.PartPackageWorkList),
-                    JsonSerializer.Serialize(PartPackageWorkerSummary.From(batch))
-                );
-            }
-            if (failed > 0)
-            {
-                await Console.Error.WriteLineAsync($"Skipped {failed} part runtime package(s); see part-export-error.json files in the output tree.");
-                return 2;
-            }
-            RunOutputFinalization(options);
+            return RunPartPackageWorkers(options, characterHeights!);
         }
-        return 0;
+        return await ExportAllPartPackagesAsync(options, exporter);
     }
     catch (Exception ex)
     {
@@ -236,8 +164,65 @@ if (options.EmitPartPackages)
     }
 }
 
-await Console.Error.WriteLineAsync("Choose one final pipeline operation: --emit-mv-source-set, --emit-costume-registries, --emit-runtime-role-catalog, --emit-part-packages, --emit-role-runtimes, --export-face-motion, or --optimize-texture-store.");
-return 1;
+static IReadOnlyDictionary<string, float>? ResolveCharacterHeightMeters(ConversionOptions options)
+{
+    if (!string.IsNullOrWhiteSpace(options.PartPackageWorkList))
+    {
+        return PartPackageWorkPlanner.Load(options.PartPackageWorkList!).CharacterHeightMetersById;
+    }
+    return string.IsNullOrWhiteSpace(options.MasterDirectory)
+        ? null
+        : LoadCharacterHeightMetersById(options.MasterDirectory!);
+}
+
+static void ExportOnePartPackage(ConversionOptions options, PartPackageExporter exporter)
+{
+    var result = exporter.ExportOne(
+        options.MasterDirectory!, options.AssetRoot!, options.OutputDirectory,
+        options.PartCostume3dId!.Value, options.PartType!, options.PartUnit);
+    Console.WriteLine($"Wrote part runtime package: {result.RuntimePath}");
+    if (result.Warnings.Count > 0)
+    {
+        Console.WriteLine($"Warnings: {result.Warnings.Count}");
+    }
+    RunOutputFinalization(options);
+}
+
+static async Task<int> ExportAllPartPackagesAsync(ConversionOptions options, PartPackageExporter exporter)
+{
+    var batch = exporter.ExportAll(
+        options.MasterDirectory!, options.AssetRoot!, options.OutputDirectory, options.ManifestPath,
+        options.PartPackageShardCount, options.PartPackageShardIndex, options.PartPackageClaimDirectory,
+        options.CompiledContentStore, options.SharedContentStore, options.PartPackageWorkList,
+        options.BundleHashIndex, options.BundleDependencyIndex, options.TextureFormat == "ktx2");
+    var succeeded = batch.Results.Count(result => result.Succeeded);
+    var failed = batch.Results.Count - succeeded;
+    Console.WriteLine($"Wrote {succeeded} part runtime package(s).");
+    Console.WriteLine(
+        $"Part export metrics: built={batch.Built}, restored={batch.Restored}, " +
+        $"manifestSkipped={batch.ManifestSkipped}, bundleHashIndexHits={batch.BundleHashIndexHits}, " +
+        $"fileHashComputations={batch.FileHashComputations}, elapsedMs={batch.ElapsedMilliseconds}."
+    );
+    if (!string.IsNullOrWhiteSpace(options.PartPackageWorkList))
+    {
+        await File.WriteAllTextAsync(
+            PartPackageWorkPlanner.SummaryPath(options.PartPackageWorkList),
+            JsonSerializer.Serialize(PartPackageWorkerSummary.From(batch)));
+    }
+    if (failed > 0)
+    {
+        await Console.Error.WriteLineAsync($"Skipped {failed} part runtime package(s); see part-export-error.json files in the output tree.");
+        return 2;
+    }
+    RunOutputFinalization(options);
+    return 0;
+}
+
+static async Task<int> ReportMissingOperationAsync()
+{
+    await Console.Error.WriteLineAsync("Choose one final pipeline operation: --emit-mv-source-set, --emit-costume-registries, --emit-runtime-role-catalog, --emit-part-packages, --emit-role-runtimes, --export-face-motion, or --optimize-texture-store.");
+    return 1;
+}
 
 static IReadOnlyDictionary<string, float> LoadCharacterHeightMetersById(string masterDirectory)
 {
@@ -272,75 +257,19 @@ static int RunPartPackageWorkers(
             sparseInput
         );
         var workers = partitions.Count;
-        var workListPaths = new List<string>(workers);
-        for (var index = 0; index < workers; index++)
-        {
-            var path = Path.Combine(workListDirectory, $"worker-{index:D3}.json");
-            File.WriteAllText(path, JsonSerializer.Serialize(new PartPackageWorkList(
-                characterHeightMetersById,
-                partitions[index]
-            )));
-            workListPaths.Add(path);
-        }
+        var workListPaths = WritePartPackageWorkLists(
+            workListDirectory,
+            characterHeightMetersById,
+            partitions
+        );
         planningStopwatch.Stop();
         Console.WriteLine(
             $"Planned {registry.PartRegistry.Entries.Count} registry row(s) across {workers} worker(s) " +
             $"in {planningStopwatch.ElapsedMilliseconds} ms."
         );
 
-        for (var index = 0; index < workers; index++)
-        {
-            var startInfo = CreateCurrentProcessStartInfo(new[]
-            {
-                "--emit-part-packages",
-                "--master", options.MasterDirectory!,
-                "--asset-root", options.AssetRoot!,
-                "--out", options.OutputDirectory,
-                "--manifest", manifestPath,
-                "--part-package-process-concurrency", "1",
-                "--part-package-work-list", workListPaths[index],
-                "--assetstudio-log-level", options.AssetStudioLogLevel,
-                "--convert-model-textures", options.ConvertModelTextures.ToString(),
-                "--texture-format", options.TextureFormat,
-            });
-            if (!string.IsNullOrWhiteSpace(options.CompiledContentStore))
-            {
-                startInfo.ArgumentList.Add("--compiled-content-store");
-                startInfo.ArgumentList.Add(options.CompiledContentStore);
-            }
-            if (!string.IsNullOrWhiteSpace(options.SharedContentStore))
-            {
-                startInfo.ArgumentList.Add("--shared-content-store");
-                startInfo.ArgumentList.Add(options.SharedContentStore);
-            }
-            if (!string.IsNullOrWhiteSpace(options.BundleHashIndex))
-            {
-                startInfo.ArgumentList.Add("--bundle-hash-index");
-                startInfo.ArgumentList.Add(options.BundleHashIndex);
-            }
-            if (!string.IsNullOrWhiteSpace(options.BundleDependencyIndex))
-            {
-                startInfo.ArgumentList.Add("--bundle-dependency-index");
-                startInfo.ArgumentList.Add(options.BundleDependencyIndex);
-            }
-            var process = Process.Start(startInfo)
-                ?? throw new InvalidOperationException($"Failed to start part package worker {index}.");
-            processes.Add(process);
-            Console.WriteLine($"Started part package worker {index + 1}/{workers}: pid {process.Id}");
-        }
-
-        var failed = false;
-        foreach (var process in processes)
-        {
-            process.WaitForExit();
-            if (process.ExitCode != 0)
-            {
-                Console.Error.WriteLine($"Part package worker pid {process.Id} exited with code {process.ExitCode}.");
-                failed = true;
-            }
-        }
-
-        if (failed)
+        StartPartPackageWorkers(options, manifestPath, workListPaths, processes);
+        if (WaitForPartPackageWorkers(processes))
         {
             return 2;
         }
@@ -375,18 +304,111 @@ static int RunPartPackageWorkers(
     }
     finally
     {
-        foreach (var process in processes)
+        CleanupPartPackageWorkers(processes, workListDirectory);
+    }
+}
+
+static List<string> WritePartPackageWorkLists(
+    string workListDirectory,
+    IReadOnlyDictionary<string, float> characterHeightMetersById,
+    IReadOnlyList<IReadOnlyList<PartRegistryEntry>> partitions
+)
+{
+    var paths = new List<string>(partitions.Count);
+    for (var index = 0; index < partitions.Count; index++)
+    {
+        var path = Path.Combine(workListDirectory, $"worker-{index:D3}.json");
+        File.WriteAllText(path, JsonSerializer.Serialize(new PartPackageWorkList(
+            characterHeightMetersById,
+            partitions[index]
+        )));
+        paths.Add(path);
+    }
+    return paths;
+}
+
+static void StartPartPackageWorkers(
+    ConversionOptions options,
+    string manifestPath,
+    IReadOnlyList<string> workListPaths,
+    List<Process> processes
+)
+{
+    for (var index = 0; index < workListPaths.Count; index++)
+    {
+        var startInfo = BuildPartPackageWorkerStartInfo(options, manifestPath, workListPaths[index]);
+        var process = Process.Start(startInfo)
+            ?? throw new InvalidOperationException($"Failed to start part package worker {index}.");
+        processes.Add(process);
+        Console.WriteLine($"Started part package worker {index + 1}/{workListPaths.Count}: pid {process.Id}");
+    }
+}
+
+static ProcessStartInfo BuildPartPackageWorkerStartInfo(
+    ConversionOptions options,
+    string manifestPath,
+    string workListPath
+)
+{
+    var startInfo = CreateCurrentProcessStartInfo(new[]
+    {
+        "--emit-part-packages",
+        "--master", options.MasterDirectory!,
+        "--asset-root", options.AssetRoot!,
+        "--out", options.OutputDirectory,
+        "--manifest", manifestPath,
+        "--part-package-process-concurrency", "1",
+        "--part-package-work-list", workListPath,
+        "--assetstudio-log-level", options.AssetStudioLogLevel,
+        "--convert-model-textures", options.ConvertModelTextures.ToString(),
+        "--texture-format", options.TextureFormat,
+    });
+    AddWorkerOption(startInfo, "--compiled-content-store", options.CompiledContentStore);
+    AddWorkerOption(startInfo, "--shared-content-store", options.SharedContentStore);
+    AddWorkerOption(startInfo, "--bundle-hash-index", options.BundleHashIndex);
+    AddWorkerOption(startInfo, "--bundle-dependency-index", options.BundleDependencyIndex);
+    return startInfo;
+}
+
+static void AddWorkerOption(ProcessStartInfo startInfo, string option, string? value)
+{
+    if (string.IsNullOrWhiteSpace(value))
+    {
+        return;
+    }
+    startInfo.ArgumentList.Add(option);
+    startInfo.ArgumentList.Add(value);
+}
+
+static bool WaitForPartPackageWorkers(IEnumerable<Process> processes)
+{
+    var failed = false;
+    foreach (var process in processes)
+    {
+        process.WaitForExit();
+        if (process.ExitCode == 0)
         {
-            if (!process.HasExited)
-            {
-                process.WaitForExit();
-            }
-            process.Dispose();
+            continue;
         }
-        if (Directory.Exists(workListDirectory))
+        Console.Error.WriteLine($"Part package worker pid {process.Id} exited with code {process.ExitCode}.");
+        failed = true;
+    }
+    return failed;
+}
+
+static void CleanupPartPackageWorkers(IEnumerable<Process> processes, string workListDirectory)
+{
+    foreach (var process in processes)
+    {
+        if (!process.HasExited)
         {
-            Directory.Delete(workListDirectory, recursive: true);
+            process.WaitForExit();
         }
+        process.Dispose();
+    }
+    if (Directory.Exists(workListDirectory))
+    {
+        Directory.Delete(workListDirectory, recursive: true);
     }
 }
 
