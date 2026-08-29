@@ -59,6 +59,99 @@ type CharacterLightingDebug = {
   head: RuntimeMaterialDebug[];
 };
 
+type RenderIsolationState = {
+  mode: RenderIsolationMode;
+  faceSdfEnabled: boolean;
+  eyelightOnly: boolean;
+  noEyelight: boolean;
+  faceLayersVisible: boolean;
+  outlineOnly: boolean;
+  outlineVisible: boolean;
+  noEyeThroughHair: boolean;
+  eyeThroughHairOnly: boolean;
+};
+
+function applyRenderIsolationToNode(node: THREE.Object3D, state: RenderIsolationState) {
+  const mesh = node as THREE.Mesh;
+  if (!mesh.isMesh) return;
+  if (mesh.userData.pjskEyeThroughHairOverlay || mesh.userData.pjskEyeThroughHairStencilPrepass) {
+    applyEyeThroughHairIsolation(mesh, state);
+    return;
+  }
+  if (mesh.userData.pjskOutlineShell) {
+    applyOutlineIsolation(mesh, state);
+    return;
+  }
+  applyBaseMeshIsolation(mesh, state);
+}
+
+function applyEyeThroughHairIsolation(mesh: THREE.Mesh, state: RenderIsolationState) {
+  const source = mesh.userData.pjskEyeThroughHairSource;
+  const sourceKind = typeof mesh.userData.pjskEyeThroughHairSourceKind === "string"
+    ? mesh.userData.pjskEyeThroughHairSourceKind : "";
+  const passKind = typeof mesh.userData.pjskEyeThroughHairPassKind === "string"
+    ? mesh.userData.pjskEyeThroughHairPassKind : "";
+  const sourceVisible = source instanceof THREE.Object3D ? source.visible : true;
+  if (source instanceof THREE.Object3D) mesh.layers.mask = source.layers.mask;
+  mesh.visible = sourceVisible && !state.outlineOnly && !state.eyelightOnly && !state.noEyeThroughHair &&
+    isEyeThroughHairSourceAllowed(sourceKind, state.mode) &&
+    isEyeThroughHairPassAllowed(sourceKind, passKind, state.mode) &&
+    state.faceLayersVisible && (!state.noEyelight || sourceKind !== "eyelight");
+  mesh.userData.pjskEyeThroughHairBaseVisible = mesh.visible;
+}
+
+function applyOutlineIsolation(mesh: THREE.Mesh, state: RenderIsolationState) {
+  const sourceKind = typeof mesh.userData.pjskSourceMaterialKind === "string"
+    ? mesh.userData.pjskSourceMaterialKind : "";
+  if (state.eyelightOnly) {
+    mesh.visible = sourceKind === "eye" || sourceKind === "eyelight";
+    return;
+  }
+  const faceLayerOutline = isFaceOrFaceLayerMaterialKind(sourceKind);
+  mesh.visible = !state.eyeThroughHairOnly && state.outlineVisible &&
+    !isOutlineHiddenByIsolation(sourceKind, state.mode) &&
+    (!state.noEyelight || sourceKind !== "eyelight") &&
+    (!faceLayerOutline || state.faceLayersVisible);
+}
+
+function applyBaseMeshIsolation(mesh: THREE.Mesh, state: RenderIsolationState) {
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  const layers = inspectFaceLayers(materials, state.faceSdfEnabled);
+  if (state.outlineOnly || state.eyeThroughHairOnly) mesh.visible = false;
+  else if (state.eyelightOnly) {
+    mesh.visible = layers.faceLayer && materials.some((material) =>
+      material.userData.pjskMaterialKind === "eye" || material.userData.pjskMaterialKind === "eyelight");
+  } else if (layers.faceLayer) {
+    mesh.visible = state.faceLayersVisible && (!state.noEyelight || !layers.eyelightLayer);
+  } else {
+    mesh.visible = true;
+  }
+  const source = mesh.userData.pjskEyeThroughHairSource;
+  if (source instanceof THREE.Object3D) {
+    mesh.visible = mesh.visible && source.visible;
+    mesh.layers.mask = source.layers.mask;
+  }
+}
+
+function inspectFaceLayers(materials: THREE.Material[], faceSdfEnabled: boolean) {
+  let faceLayer = false;
+  let eyelightLayer = false;
+  for (const material of materials) {
+    if (!(material instanceof THREE.ShaderMaterial)) continue;
+    const draws = material.visible !== false && material.colorWrite !== false;
+    if (material.uniforms.uFaceSdfEnabled) {
+      material.uniforms.uFaceSdfEnabled.value = faceSdfEnabled &&
+        material.userData.pjskFaceSdfCapable === true ? 1 : 0;
+      faceLayer = true;
+    }
+    if (material.uniforms.uMode && !material.uniforms.uFaceSdfEnabled) {
+      faceLayer = true;
+      eyelightLayer ||= draws && material.uniforms.uMode.value > 1.5;
+    }
+  }
+  return { faceLayer, eyelightLayer };
+}
+
 function applySkinColors(material: THREE.ShaderMaterial, colors: RuntimeSkinColors) {
   const uniforms = material.uniforms;
   if (uniforms.uSkinColorDefault) {
@@ -403,66 +496,21 @@ export class CharacterLightingRuntime {
   applyRenderIsolationMode() {
     const faceSdfEnabled = this.shouldEnableFaceSdf();
     const mode = this.renderIsolationMode;
-    const eyelightOnly = mode === "eyelight_only";
-    const noEyelight = mode === "no_eyelight";
-    const faceLayersVisible = mode !== "no_face_layers";
-    const outlineOnly = mode === "outline_only";
-    const outlineVisible = mode !== "no_outline";
-    const noEyeThroughHair = mode === "no_eye_through_hair";
-    const eyeThroughHairOnly = mode === "eye_through_hair_only" || mode === "eye_through_hair_eye_only" ||
-      mode === "eye_through_hair_eyebrow_only" || mode === "eye_through_hair_eyelash_only";
-    const apply = (node: THREE.Object3D) => {
-      const mesh = node as THREE.Mesh;
-      if (!mesh.isMesh) return;
-      if (mesh.userData.pjskEyeThroughHairOverlay || mesh.userData.pjskEyeThroughHairStencilPrepass) {
-        const source = mesh.userData.pjskEyeThroughHairSource;
-        const sourceKind = typeof mesh.userData.pjskEyeThroughHairSourceKind === "string" ? mesh.userData.pjskEyeThroughHairSourceKind : "";
-        const passKind = typeof mesh.userData.pjskEyeThroughHairPassKind === "string" ? mesh.userData.pjskEyeThroughHairPassKind : "";
-        const sourceVisible = source instanceof THREE.Object3D ? source.visible : true;
-        if (source instanceof THREE.Object3D) mesh.layers.mask = source.layers.mask;
-        mesh.visible = sourceVisible && !outlineOnly && !eyelightOnly && !noEyeThroughHair &&
-          isEyeThroughHairSourceAllowed(sourceKind, mode) && isEyeThroughHairPassAllowed(sourceKind, passKind, mode) &&
-          faceLayersVisible && (!noEyelight || sourceKind !== "eyelight");
-        mesh.userData.pjskEyeThroughHairBaseVisible = mesh.visible;
-        return;
-      }
-      if (mesh.userData.pjskOutlineShell) {
-        const sourceKind = typeof mesh.userData.pjskSourceMaterialKind === "string" ? mesh.userData.pjskSourceMaterialKind : "";
-        const faceLayerOutline = isFaceOrFaceLayerMaterialKind(sourceKind);
-        if (eyelightOnly) {
-          mesh.visible = sourceKind === "eye" || sourceKind === "eyelight";
-          return;
-        }
-        mesh.visible = !eyeThroughHairOnly && outlineVisible && !isOutlineHiddenByIsolation(sourceKind, mode) &&
-          (!noEyelight || sourceKind !== "eyelight") && (!faceLayerOutline || faceLayersVisible);
-        return;
-      }
-      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
-      let faceLayer = false;
-      let eyelightLayer = false;
-      for (const material of materials) {
-        if (!(material instanceof THREE.ShaderMaterial)) continue;
-        const draws = material.visible !== false && material.colorWrite !== false;
-        if (material.uniforms.uFaceSdfEnabled) {
-          material.uniforms.uFaceSdfEnabled.value = faceSdfEnabled && material.userData.pjskFaceSdfCapable === true ? 1 : 0;
-          faceLayer = true;
-        }
-        if (material.uniforms.uMode && !material.uniforms.uFaceSdfEnabled) {
-          faceLayer = true;
-          eyelightLayer ||= draws && material.uniforms.uMode.value > 1.5;
-        }
-      }
-      if (outlineOnly || eyeThroughHairOnly) mesh.visible = false;
-      else if (eyelightOnly) mesh.visible = faceLayer && materials.some((material) => material.userData.pjskMaterialKind === "eye" || material.userData.pjskMaterialKind === "eyelight");
-      else if (faceLayer) mesh.visible = faceLayersVisible && (!noEyelight || !eyelightLayer);
-      else mesh.visible = !eyelightOnly;
-      const source = mesh.userData.pjskEyeThroughHairSource;
-      if (source instanceof THREE.Object3D) {
-        mesh.visible = mesh.visible && source.visible;
-        mesh.layers.mask = source.layers.mask;
-      }
+    const state: RenderIsolationState = {
+      mode,
+      faceSdfEnabled,
+      eyelightOnly: mode === "eyelight_only",
+      noEyelight: mode === "no_eyelight",
+      faceLayersVisible: mode !== "no_face_layers",
+      outlineOnly: mode === "outline_only",
+      outlineVisible: mode !== "no_outline",
+      noEyeThroughHair: mode === "no_eye_through_hair",
+      eyeThroughHairOnly: mode === "eye_through_hair_only" || mode === "eye_through_hair_eye_only" ||
+        mode === "eye_through_hair_eyebrow_only" || mode === "eye_through_hair_eyelash_only",
     };
-    for (const slot of this.slots) slot.traverse(apply);
+    for (const slot of this.slots) {
+      slot.traverse((node) => applyRenderIsolationToNode(node, state));
+    }
     for (const entries of this.debugEntries) {
       for (const entry of entries) {
         if (entry.shaderFaceSdfEnabled !== undefined || entry.resolvedKind === "face_sdf") {

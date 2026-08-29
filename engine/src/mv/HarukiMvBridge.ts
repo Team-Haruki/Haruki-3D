@@ -327,50 +327,37 @@ function resolveRenderProfileDimensions(
   request: HarukiMvRenderProfileRequest,
   resolution: NonNullable<HarukiMvRenderProfileRequest["resolution"]> | "device"
 ) {
-  let width = 0;
-  let height = 0;
-  let dpi = 0;
-  let quality = 0;
-  let playMode = 4;
   if (resolution === "device") {
-    const deviceRequest = request as HarukiMvDeviceRenderProfileRequest;
-    for (const field of ["width", "height"] as const) {
-      if (!Number.isInteger(deviceRequest[field]) || deviceRequest[field] <= 0) {
-        throw new RangeError(`MV render profile ${field} must be a positive integer.`);
-      }
-    }
-    if (!Number.isFinite(deviceRequest.dpi) || deviceRequest.dpi <= 0) {
-      throw new RangeError("MV render profile dpi must be positive and finite.");
-    }
-    quality = {
-      default: 0,
-      high: 1,
-      "virtual-live-default": 2,
-    }[deviceRequest.quality];
-    playMode = {
-      "ingame-3dmv": 0,
-      "music-video": 4,
-    }[deviceRequest.playMode];
-    if (quality === undefined || playMode === undefined) {
-      throw new RangeError("MV render profile quality and playMode are invalid.");
-    }
-    width = deviceRequest.width;
-    height = deviceRequest.height;
-    dpi = deviceRequest.dpi;
-  } else if (resolution === "custom") {
-    const customRequest = request as HarukiMvCustomRenderProfileRequest;
-    for (const field of ["width", "height"] as const) {
-      if (!Number.isInteger(customRequest[field]) || customRequest[field] <= 0) {
-        throw new RangeError(`MV render profile ${field} must be a positive integer.`);
-      }
-    }
-    width = customRequest.width;
-    height = customRequest.height;
-  } else {
-    ({ width, height } = HARUKI_MV_RENDER_PRESETS[resolution]);
+    return resolveDeviceRenderProfile(request as HarukiMvDeviceRenderProfileRequest);
   }
+  if (resolution === "custom") {
+    const customRequest = request as HarukiMvCustomRenderProfileRequest;
+    validateRenderDimensions(customRequest);
+    return { width: customRequest.width, height: customRequest.height, dpi: 0, quality: 0, playMode: 4 };
+  }
+  const { width, height } = HARUKI_MV_RENDER_PRESETS[resolution];
+  return { width, height, dpi: 0, quality: 0, playMode: 4 };
+}
 
-  return { width, height, dpi, quality, playMode };
+function validateRenderDimensions(request: { width: number; height: number }) {
+  for (const field of ["width", "height"] as const) {
+    if (!Number.isInteger(request[field]) || request[field] <= 0) {
+      throw new RangeError(`MV render profile ${field} must be a positive integer.`);
+    }
+  }
+}
+
+function resolveDeviceRenderProfile(request: HarukiMvDeviceRenderProfileRequest) {
+  validateRenderDimensions(request);
+  if (!Number.isFinite(request.dpi) || request.dpi <= 0) {
+    throw new RangeError("MV render profile dpi must be positive and finite.");
+  }
+  const quality = { default: 0, high: 1, "virtual-live-default": 2 }[request.quality];
+  const playMode = { "ingame-3dmv": 0, "music-video": 4 }[request.playMode];
+  if (quality === undefined || playMode === undefined) {
+    throw new RangeError("MV render profile quality and playMode are invalid.");
+  }
+  return { width: request.width, height: request.height, dpi: request.dpi, quality, playMode };
 }
 
 function createRenderProfilePayload(request: HarukiMvRenderProfileRequest) {

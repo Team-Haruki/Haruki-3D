@@ -755,7 +755,7 @@ public sealed class VrmSpringBoneCandidateBuilder
     }
 
     private static IReadOnlyList<SpringBoneChain> BuildChains(
-        IReadOnlyList<SpringBoneEntry> bones
+        List<SpringBoneEntry> bones
     )
     {
         if (bones.Count == 0)

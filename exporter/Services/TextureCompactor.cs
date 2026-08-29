@@ -656,51 +656,50 @@ public sealed class TextureCompactor
         IReadOnlyDictionary<Ktx2VariantKey, Ktx2VariantResult> variants
     )
     {
+        return RewriteCharacterTexturesToKtx2(node["characterTextures"] as JsonObject, packageDirectory, outputDirectory, variants) +
+            RewriteMaterialSlotsToKtx2(node["materialSlots"] as JsonArray, packageDirectory, outputDirectory, variants) +
+            RewriteTextureRolesToKtx2(node["textureRoles"] as JsonArray, packageDirectory, outputDirectory, variants);
+    }
+
+    private static int RewriteCharacterTexturesToKtx2(JsonObject? textures, string packageDirectory, string outputDirectory, IReadOnlyDictionary<Ktx2VariantKey, Ktx2VariantResult> variants)
+    {
+        if (textures is null) return 0;
         var rewritten = 0;
-        if (node["characterTextures"] is JsonObject characterTextures)
+        foreach (var pair in textures.ToList())
         {
-            foreach (var pair in characterTextures.ToList())
+            if (pair.Value is JsonValue valueNode && valueNode.TryGetValue<string>(out var value) &&
+                TryResolveKtx2Variant(packageDirectory, outputDirectory, value, Ktx2Transfer.Srgb, variants, true, out var uri))
             {
-                if (pair.Value is JsonValue valueNode && valueNode.TryGetValue<string>(out var value) &&
-                    TryResolveKtx2Variant(packageDirectory, outputDirectory, value, Ktx2Transfer.Srgb, variants, true, out var uri))
-                {
-                    characterTextures[pair.Key] = uri;
-                    rewritten += 1;
-                }
-            }
-        }
-        if (node["materialSlots"] is JsonArray materialSlots)
-        {
-            foreach (var slot in materialSlots.OfType<JsonObject>())
-            {
-                rewritten += RewriteKtx2Property(slot, "mainTex", Ktx2Transfer.Srgb, packageDirectory, outputDirectory, variants);
-                rewritten += RewriteKtx2Property(slot, "shadowTex", Ktx2Transfer.Srgb, packageDirectory, outputDirectory, variants);
-                rewritten += RewriteKtx2Property(slot, "valueTex", Ktx2Transfer.Linear, packageDirectory, outputDirectory, variants);
-                rewritten += RewriteKtx2Property(slot, "faceShadowTex", Ktx2Transfer.Linear, packageDirectory, outputDirectory, variants);
-                foreach (var texture in EnumerateRawMaterialTextures(slot))
-                {
-                    rewritten += RewriteKtx2Property(
-                        texture,
-                        "uri",
-                        RawTextureTransfer(texture),
-                        packageDirectory,
-                        outputDirectory,
-                        variants
-                    );
-                }
-            }
-        }
-        if (node["textureRoles"] is JsonArray textureRoles)
-        {
-            foreach (var role in textureRoles.OfType<JsonObject>())
-            {
-                var transfer = role["role"]?.GetValue<string>() is "value" or "faceShadow"
-                    ? Ktx2Transfer.Linear
-                    : Ktx2Transfer.Srgb;
-                rewritten += RewriteKtx2Property(role, "uri", transfer, packageDirectory, outputDirectory, variants);
+                textures[pair.Key] = uri;
+                rewritten += 1;
             }
         }
         return rewritten;
+    }
+
+    private static int RewriteMaterialSlotsToKtx2(JsonArray? slots, string packageDirectory, string outputDirectory, IReadOnlyDictionary<Ktx2VariantKey, Ktx2VariantResult> variants)
+    {
+        if (slots is null) return 0;
+        var rewritten = 0;
+        foreach (var slot in slots.OfType<JsonObject>())
+        {
+            rewritten += RewriteKtx2Property(slot, "mainTex", Ktx2Transfer.Srgb, packageDirectory, outputDirectory, variants);
+            rewritten += RewriteKtx2Property(slot, "shadowTex", Ktx2Transfer.Srgb, packageDirectory, outputDirectory, variants);
+            rewritten += RewriteKtx2Property(slot, "valueTex", Ktx2Transfer.Linear, packageDirectory, outputDirectory, variants);
+            rewritten += RewriteKtx2Property(slot, "faceShadowTex", Ktx2Transfer.Linear, packageDirectory, outputDirectory, variants);
+            foreach (var texture in EnumerateRawMaterialTextures(slot))
+                rewritten += RewriteKtx2Property(texture, "uri", RawTextureTransfer(texture), packageDirectory, outputDirectory, variants);
+        }
+        return rewritten;
+    }
+
+    private static int RewriteTextureRolesToKtx2(JsonArray? roles, string packageDirectory, string outputDirectory, IReadOnlyDictionary<Ktx2VariantKey, Ktx2VariantResult> variants)
+    {
+        if (roles is null) return 0;
+        return roles.OfType<JsonObject>().Sum(role => RewriteKtx2Property(
+            role, "uri",
+            role["role"]?.GetValue<string>() is "value" or "faceShadow" ? Ktx2Transfer.Linear : Ktx2Transfer.Srgb,
+            packageDirectory, outputDirectory, variants));
     }
 
     private static int RewriteKtx2Property(
@@ -1230,49 +1229,48 @@ public sealed class TextureCompactor
 
     private static IEnumerable<string> EnumerateTextureValues(JsonObject node)
     {
-        if (node["characterTextures"] is JsonObject characterTextures)
+        foreach (var value in EnumerateTextureMapValues(node["characterTextures"] as JsonObject)) yield return value;
+        foreach (var value in EnumerateMaterialSlotTextureValues(node["materialSlots"] as JsonArray)) yield return value;
+        foreach (var value in EnumerateTextureRoleValues(node["textureRoles"] as JsonArray)) yield return value;
+    }
+
+    private static IEnumerable<string> EnumerateTextureMapValues(JsonObject? textures)
+    {
+        if (textures is null) yield break;
+        foreach (var value in textures.Select(pair => pair.Value).OfType<JsonValue>())
+            if (value.TryGetValue<string>(out var text)) yield return text;
+    }
+
+    private static IEnumerable<string> EnumerateMaterialSlotTextureValues(JsonArray? materialSlots)
+    {
+        if (materialSlots is null) yield break;
+        foreach (var materialSlot in materialSlots.OfType<JsonObject>())
         {
-            foreach (var value in characterTextures.Select(pair => pair.Value).OfType<JsonValue>())
+            foreach (var propertyName in new[] { "mainTex", "shadowTex", "valueTex", "faceShadowTex" })
             {
-                if (value.TryGetValue<string>(out var text))
-                {
-                    yield return text;
-                }
-            }
-        }
-        if (node["materialSlots"] is JsonArray materialSlots)
-        {
-            foreach (var materialSlot in materialSlots.OfType<JsonObject>())
-            {
-                foreach (var propertyName in new[] { "mainTex", "shadowTex", "valueTex", "faceShadowTex" })
-                {
-                    if (materialSlot[propertyName] is JsonValue value &&
-                        value.TryGetValue<string>(out var text))
-                    {
-                        yield return text;
-                    }
-                }
-                foreach (var texture in EnumerateRawMaterialTextures(materialSlot))
-                {
-                    if (texture["uri"] is JsonValue rawValue &&
-                        rawValue.TryGetValue<string>(out var rawText))
-                    {
-                        yield return rawText;
-                    }
-                }
-            }
-        }
-        if (node["textureRoles"] is JsonArray textureRoles)
-        {
-            foreach (var textureRole in textureRoles.OfType<JsonObject>())
-            {
-                if (textureRole["uri"] is JsonValue value &&
+                if (materialSlot[propertyName] is JsonValue value &&
                     value.TryGetValue<string>(out var text))
                 {
                     yield return text;
                 }
             }
+            foreach (var texture in EnumerateRawMaterialTextures(materialSlot))
+            {
+                if (texture["uri"] is JsonValue rawValue &&
+                    rawValue.TryGetValue<string>(out var rawText))
+                {
+                    yield return rawText;
+                }
+            }
         }
+    }
+
+    private static IEnumerable<string> EnumerateTextureRoleValues(JsonArray? textureRoles)
+    {
+        if (textureRoles is null) yield break;
+        foreach (var textureRole in textureRoles.OfType<JsonObject>())
+            if (textureRole["uri"] is JsonValue value && value.TryGetValue<string>(out var text))
+                yield return text;
     }
 
     private static IEnumerable<JsonObject> EnumerateRawMaterialTextures(

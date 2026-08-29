@@ -401,9 +401,9 @@ public sealed class CostumeRegistryExporter
         Func<PartRegistryEntry, bool> isAccessory,
         Func<PartRegistryEntry, (int GroupId, string Unit, string PartType)> family,
         Func<PartRegistryEntry, (int GroupId, string PartType)> groupSlot,
-        IReadOnlyDictionary<string, int> accessoryIdBySource,
-        IReadOnlyDictionary<(int GroupId, string Unit, string PartType), string> baseSourceByFamily,
-        IReadOnlyDictionary<(int GroupId, string PartType), string> baseSourceByGroupSlot
+        Dictionary<string, int> accessoryIdBySource,
+        Dictionary<(int GroupId, string Unit, string PartType), string> baseSourceByFamily,
+        Dictionary<(int GroupId, string PartType), string> baseSourceByGroupSlot
     )
     {
         if (!isAccessory(entry)) return 0;

@@ -179,55 +179,8 @@ public static class RuntimeJsonWriter
         string path
     )
     {
-        if (value is null)
-        {
-            stream.WriteByte(0xc0);
-            return;
-        }
-
-        if (value is JsonElement element)
-        {
-            WriteMessagePackValue(stream, element, binaryArraySchema, path);
-            return;
-        }
-        if (value is JsonNode node)
-        {
-            using var document = JsonDocument.Parse(node.ToJsonString(options));
-            WriteMessagePackValue(stream, document.RootElement, binaryArraySchema, path);
-            return;
-        }
-        if (value is string text)
-        {
-            WriteString(stream, text);
-            return;
-        }
-        if (value is bool boolean)
-        {
-            stream.WriteByte(boolean ? (byte)0xc3 : (byte)0xc2);
-            return;
-        }
-        if (value is byte[] bytes)
-        {
-            WriteString(stream, Convert.ToBase64String(bytes));
-            return;
-        }
-        if (TryWriteNumber(stream, value))
-        {
-            return;
-        }
-        if (value is Enum enumValue)
-        {
-            if (options.Converters.Any(converter => converter is JsonStringEnumConverter))
-            {
-                WriteString(stream, enumValue.ToString());
-            }
-            else
-            {
-                WriteSignedNumber(stream, Convert.ToInt64(enumValue));
-            }
-            return;
-        }
-        if (TryWriteDictionary(stream, value, options, binaryArraySchema, path))
+        if (TryWriteScalarObject(stream, value, options, binaryArraySchema, path)) return;
+        if (TryWriteDictionary(stream, value!, options, binaryArraySchema, path))
         {
             return;
         }
@@ -247,7 +200,7 @@ public static class RuntimeJsonWriter
         }
 
         var properties = SerializableProperties.GetOrAdd(
-            value.GetType(),
+            value!.GetType(),
             type => type.GetProperties(BindingFlags.Instance | BindingFlags.Public)
                 .Where(property => property.CanRead && property.GetIndexParameters().Length == 0)
                 .ToArray()
@@ -266,6 +219,51 @@ public static class RuntimeJsonWriter
             var childPath = path.Length == 0 ? propertyName : $"{path}.{propertyName}";
             WriteMessagePackObject(stream, item.Value, options, binaryArraySchema, childPath);
         }
+    }
+
+    private static bool TryWriteScalarObject(
+        Stream stream,
+        object? value,
+        JsonSerializerOptions options,
+        RuntimeBinaryArraySchema binaryArraySchema,
+        string path
+    )
+    {
+        switch (value)
+        {
+            case null:
+                stream.WriteByte(0xc0);
+                return true;
+            case JsonElement element:
+                WriteMessagePackValue(stream, element, binaryArraySchema, path);
+                return true;
+            case JsonNode node:
+                using (var document = JsonDocument.Parse(node.ToJsonString(options)))
+                    WriteMessagePackValue(stream, document.RootElement, binaryArraySchema, path);
+                return true;
+            case string text:
+                WriteString(stream, text);
+                return true;
+            case bool boolean:
+                stream.WriteByte(boolean ? (byte)0xc3 : (byte)0xc2);
+                return true;
+            case byte[] bytes:
+                WriteString(stream, Convert.ToBase64String(bytes));
+                return true;
+            case Enum enumValue:
+                WriteEnum(stream, enumValue, options);
+                return true;
+            default:
+                return TryWriteNumber(stream, value);
+        }
+    }
+
+    private static void WriteEnum(Stream stream, Enum value, JsonSerializerOptions options)
+    {
+        if (options.Converters.Any(converter => converter is JsonStringEnumConverter))
+            WriteString(stream, value.ToString());
+        else
+            WriteSignedNumber(stream, Convert.ToInt64(value));
     }
 
     private static bool ShouldWriteProperty(
@@ -525,11 +523,11 @@ public static class RuntimeJsonWriter
         return true;
     }
 
-    private static bool TryWriteJsonFloat32Array(Stream stream, IReadOnlyList<JsonElement> items)
+    private static bool TryWriteJsonFloat32Array(Stream stream, JsonElement[] items)
     {
-        var payload = new byte[1 + items.Count * sizeof(float)];
+        var payload = new byte[1 + items.Length * sizeof(float)];
         payload[0] = 1;
-        for (var index = 0; index < items.Count; index += 1)
+        for (var index = 0; index < items.Length; index += 1)
         {
             if (items[index].ValueKind != JsonValueKind.Number) return false;
             var number = items[index].GetSingle();
@@ -543,23 +541,23 @@ public static class RuntimeJsonWriter
         return true;
     }
 
-    private static bool TryReadUnsignedIndexes(IReadOnlyList<JsonElement> items, out uint[] indexes)
+    private static bool TryReadUnsignedIndexes(JsonElement[] items, out uint[] indexes)
     {
-        indexes = new uint[items.Count];
-        for (var index = 0; index < items.Count; index += 1)
+        indexes = new uint[items.Length];
+        for (var index = 0; index < items.Length; index += 1)
         {
             if (!items[index].TryGetUInt32(out indexes[index])) return false;
         }
         return true;
     }
 
-    private static void WriteUnsignedIndexArray(Stream stream, IReadOnlyList<uint> indexes)
+    private static void WriteUnsignedIndexArray(Stream stream, uint[] indexes)
     {
         var useUInt16 = indexes.All(number => number <= ushort.MaxValue);
         var width = useUInt16 ? sizeof(ushort) : sizeof(uint);
-        var integerPayload = new byte[1 + indexes.Count * width];
+        var integerPayload = new byte[1 + indexes.Length * width];
         integerPayload[0] = useUInt16 ? (byte)2 : (byte)3;
-        for (var index = 0; index < indexes.Count; index += 1)
+        for (var index = 0; index < indexes.Length; index += 1)
         {
             var target = integerPayload.AsSpan(1 + index * width, width);
             if (useUInt16)

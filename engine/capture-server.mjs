@@ -278,6 +278,51 @@ function readHeadPackagePath(value) {
 }
 
 function validateCaptureRequest(input) {
+  const { cacheMode, imageId, roleId, region } = validateCaptureIdentity(input);
+  const traceMaxEvents = Number(input.traceUtjMaxEvents);
+  const optionalHeadOptional = input.headOptionalCostume3dId;
+  const headPackagePath = readHeadPackagePath(input.headPackagePath);
+  const width = readIntInRange(input.width, defaultWidth, 320, MAX_CAPTURE_DIMENSION);
+  const height = readIntInRange(input.height, defaultHeight, 320, MAX_CAPTURE_DIMENSION);
+  const scale = Math.min(Math.max(readNumber(input.scale, defaultScale), 1), 2);
+  return {
+    imageId,
+    cacheMode,
+    ttlMs: cacheMode === "temporary" ? readCaptureTtlMs(input.ttlSeconds) : 0,
+    runtimeBaseUrl: region === "" ? "/runtime/" : `/runtime/${region}/`,
+    region: region || null,
+    roleId,
+    bodyCostume3dId: readCaptureId(input, "bodyCostume3dId"),
+    headCostume3dId: readCaptureId(input, "headCostume3dId"),
+    headPackagePath,
+    hairCostume3dId: readCaptureId(input, "hairCostume3dId"),
+    headOptionalCostume3dId: readOptionalCaptureId(input, "headOptionalCostume3dId", optionalHeadOptional),
+    phase: Math.min(Math.max(readNumber(input.phase, defaultPhase), 0), 1),
+    cameraPreset: normalizeCameraPreset(input.cameraPreset, defaultCameraPreset),
+    cameraProfile: normalizeCameraProfile(input.cameraProfile, defaultCameraProfile),
+    characterYawMode: normalizeCharacterYawMode(input.characterYawMode, null),
+    warmupMs: readIntInRange(input.warmupMs, defaultWarmupMs, 0, MAX_CAPTURE_WARMUP_MS),
+    warmupFrames: readIntInRange(input.warmupFrames, defaultWarmupFrames, 0, MAX_CAPTURE_WARMUP_FRAMES),
+    warmupMode: normalizeWarmupMode(input),
+    bodyDebugMode: normalizeBodyDebugMode(input.bodyDebugMode),
+    faceSdfEnabled: input.faceSdfEnabled === undefined ? defaultFaceSdfEnabled : readBoolean(input.faceSdfEnabled),
+    faceSdfDebugMode: normalizeFaceSdfDebugMode(input.faceSdfDebugMode),
+    faceSdfDebugLightMode: normalizeFaceSdfDebugLightMode(input.faceSdfDebugLightMode),
+    projectedShadow: readProjectedShadow(input.projectedShadow),
+    width,
+    height,
+    scale,
+    timeoutMs: readIntInRange(input.timeoutMs, defaultTimeoutMs, 5000, MAX_CAPTURE_TIMEOUT_MS),
+    traceUtjBones: readCaptureStringList(input.traceUtjBones, input.traceUtjBone),
+    traceUtjMaxEvents: normalizeTraceMaxEvents(traceMaxEvents),
+    springDebugBones: readCaptureStringList(input.springDebugBones, input.springDebugBone),
+    springDebugAllOffsets: readBoolean(input.springDebugAllOffsets),
+    springRuntimeMode: normalizeSpringRuntimeMode(input),
+    includeDebugSnapshots: readBoolean(input.includeDebugSnapshots),
+  };
+}
+
+function validateCaptureIdentity(input) {
   const cacheMode = input.cacheMode === "temporary" ? "temporary" : "persistent";
   let imageId = String(input.imageId ?? "");
   if (imageId === "") {
@@ -297,68 +342,26 @@ function validateCaptureRequest(input) {
   if (region !== "" && !/^[A-Za-z0-9_-]+$/.test(region)) {
     throw new Error("region must match /^[A-Za-z0-9_-]+$/.");
   }
-  const traceMaxEvents = Number(input.traceUtjMaxEvents);
-  const optionalHeadOptional = input.headOptionalCostume3dId;
-  const headPackagePath = readHeadPackagePath(input.headPackagePath);
-  const width = readIntInRange(input.width, defaultWidth, 320, MAX_CAPTURE_DIMENSION);
-  const height = readIntInRange(input.height, defaultHeight, 320, MAX_CAPTURE_DIMENSION);
-  const scale = Math.min(Math.max(readNumber(input.scale, defaultScale), 1), 2);
-  return {
-    imageId,
-    cacheMode,
-    ttlMs: cacheMode === "temporary" ? readCaptureTtlMs(input.ttlSeconds) : 0,
-    runtimeBaseUrl: region === "" ? "/runtime/" : `/runtime/${region}/`,
-    region: region || null,
-    roleId,
-    bodyCostume3dId: readCaptureId(input, "bodyCostume3dId"),
-    headCostume3dId: readCaptureId(input, "headCostume3dId"),
-    headPackagePath,
-    hairCostume3dId: readCaptureId(input, "hairCostume3dId"),
-    headOptionalCostume3dId:
-      optionalHeadOptional === undefined || optionalHeadOptional === null
-        ? null
-        : readCaptureId(input, "headOptionalCostume3dId"),
-    phase: Math.min(Math.max(readNumber(input.phase, defaultPhase), 0), 1),
-    cameraPreset: normalizeCameraPreset(input.cameraPreset, defaultCameraPreset),
-    cameraProfile: normalizeCameraProfile(input.cameraProfile, defaultCameraProfile),
-    characterYawMode: normalizeCharacterYawMode(input.characterYawMode, null),
-    warmupMs: readIntInRange(input.warmupMs, defaultWarmupMs, 0, MAX_CAPTURE_WARMUP_MS),
-    warmupFrames: readIntInRange(
-      input.warmupFrames,
-      defaultWarmupFrames,
-      0,
-      MAX_CAPTURE_WARMUP_FRAMES
-    ),
-    warmupMode: input.warmupMode === "animation" || input.warmupMode === "runtime"
-      ? input.warmupMode
-      : defaultWarmupMode === "animation" ? "animation" : "runtime",
-    bodyDebugMode: normalizeBodyDebugMode(input.bodyDebugMode),
-    faceSdfEnabled: input.faceSdfEnabled === undefined
-      ? defaultFaceSdfEnabled
-      : readBoolean(input.faceSdfEnabled),
-    faceSdfDebugMode: normalizeFaceSdfDebugMode(input.faceSdfDebugMode),
-    faceSdfDebugLightMode: normalizeFaceSdfDebugLightMode(input.faceSdfDebugLightMode),
-    projectedShadow: readProjectedShadow(input.projectedShadow),
-    width,
-    height,
-    scale,
-    timeoutMs: readIntInRange(input.timeoutMs, defaultTimeoutMs, 5000, MAX_CAPTURE_TIMEOUT_MS),
-    traceUtjBones: readCaptureStringList(input.traceUtjBones, input.traceUtjBone),
-    traceUtjMaxEvents: Math.min(
-      Math.max(
-        Math.trunc(Number.isFinite(traceMaxEvents) ? traceMaxEvents : 240),
-        1
-      ),
-      MAX_TRACE_EVENTS
-    ),
-    springDebugBones: readCaptureStringList(input.springDebugBones, input.springDebugBone),
-    springDebugAllOffsets: readBoolean(input.springDebugAllOffsets),
-    springRuntimeMode:
-      input.springRuntimeMode === "off" || input.springRuntimeMode === "unity-prefab"
-        ? input.springRuntimeMode
-        : defaultSpringRuntimeMode,
-    includeDebugSnapshots: readBoolean(input.includeDebugSnapshots),
-  };
+  return { cacheMode, imageId, roleId, region };
+}
+
+function readOptionalCaptureId(input, name, value) {
+  return value === undefined || value === null ? null : readCaptureId(input, name);
+}
+
+function normalizeWarmupMode(input) {
+  if (input.warmupMode === "animation" || input.warmupMode === "runtime") return input.warmupMode;
+  return defaultWarmupMode === "animation" ? "animation" : "runtime";
+}
+
+function normalizeTraceMaxEvents(value) {
+  return Math.min(Math.max(Math.trunc(Number.isFinite(value) ? value : 240), 1), MAX_TRACE_EVENTS);
+}
+
+function normalizeSpringRuntimeMode(input) {
+  return input.springRuntimeMode === "off" || input.springRuntimeMode === "unity-prefab"
+    ? input.springRuntimeMode
+    : defaultSpringRuntimeMode;
 }
 
 function normalizeBodyDebugMode(value) {
