@@ -3,6 +3,8 @@ import test from "node:test";
 import * as THREE from "three";
 import {
   CharacterProjectedShadowController,
+  applyCostumeShopViewFraming,
+  clampCostumeShopViewFraming,
   createCaptureBackgroundTexture,
   getCostumeShopCameraPose,
   getDefaultCameraPose,
@@ -10,6 +12,28 @@ import {
 } from "../dist/haruki-3d-engine-internal.js";
 
 const vector = (value) => [value.x, value.y, value.z].map((entry) => Number(entry.toFixed(5)));
+
+test("view framing dollies and lifts CameraRoot without touching the profile pose", () => {
+  const fullBody = getCostumeShopCameraPose("full-body", 90);
+  const unchanged = applyCostumeShopViewFraming(fullBody, { zoom: 1, heightOffset: 0 });
+  assert.deepEqual(vector(unchanged.target), vector(fullBody.target));
+  assert.deepEqual(vector(unchanged.position), vector(fullBody.position));
+
+  const closer = applyCostumeShopViewFraming(fullBody, { zoom: 2, heightOffset: 0.3 });
+  assert.deepEqual(vector(closer.target), [0, 1.065, 0]);
+  assert.deepEqual(vector(closer.position), [2.25, 1.065, 0]);
+  // The profile pose itself is not mutated.
+  assert.deepEqual(vector(fullBody.position), [4.5, 0.765, 0]);
+
+  assert.deepEqual(clampCostumeShopViewFraming({ zoom: 10, heightOffset: -3 }), {
+    zoom: 3,
+    heightOffset: -0.5,
+  });
+  assert.deepEqual(clampCostumeShopViewFraming({ zoom: Number.NaN }), {
+    zoom: 1,
+    heightOffset: 0,
+  });
+});
 
 test("camera poses retain official profiles and the calibrated legacy Cloud framing", () => {
   const defaultPose = getDefaultCameraPose(1);

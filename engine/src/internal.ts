@@ -104,6 +104,10 @@ export {
   type Haruki3DKernelOptions,
 } from "./costume_shop/CostumeShopKernel";
 export {
+  COSTUME_SHOP_VIEW_FRAMING_DEFAULT,
+  COSTUME_SHOP_VIEW_FRAMING_LIMITS,
+  applyCostumeShopViewFraming,
+  clampCostumeShopViewFraming,
   getCostumeShopCameraPose,
   getDefaultCameraPose,
   shiftCameraPoseRight,

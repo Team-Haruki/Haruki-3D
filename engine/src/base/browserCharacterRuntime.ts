@@ -8,6 +8,8 @@ export type HarukiBaseCharacterRuntime = {
   resize(width: number, height: number): void;
   setCharacterYawDegrees(degrees: number): void;
   setViewYawDegrees(degrees: number): void;
+  setViewZoom(zoom: number): void;
+  setViewHeightOffset(metres: number): void;
   destroy(): Promise<void>;
 };
 
@@ -17,6 +19,8 @@ export type HarukiBaseRuntimeEngine = {
   renderFrame(): void;
   setCharacterYawDegrees(degrees: number): void;
   setViewYawDegrees(degrees: number): void;
+  setViewZoom(zoom: number): void;
+  setViewHeightOffset(metres: number): void;
   setViewportSize(width: number, height: number): void;
   stepRuntimeFrame(
     deltaSeconds: number,
@@ -144,6 +148,20 @@ export function createHarukiBaseCharacterRuntime(
     setViewYawDegrees(degrees) {
       assertActive();
       engine.setViewYawDegrees(degrees);
+      if (!running) {
+        engine.renderFrame();
+      }
+    },
+    setViewZoom(zoom) {
+      assertActive();
+      engine.setViewZoom(zoom);
+      if (!running) {
+        engine.renderFrame();
+      }
+    },
+    setViewHeightOffset(metres) {
+      assertActive();
+      engine.setViewHeightOffset(metres);
       if (!running) {
         engine.renderFrame();
       }

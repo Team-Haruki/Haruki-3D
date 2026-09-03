@@ -58,9 +58,13 @@ import type {
   RuntimeSkinColors,
 } from "../runtime/runtimeTypes";
 import {
+  COSTUME_SHOP_VIEW_FRAMING_DEFAULT,
+  applyCostumeShopViewFraming,
+  clampCostumeShopViewFraming,
   getCostumeShopCameraPose,
   getDefaultCameraPose,
   shiftCameraPoseRight,
+  type CostumeShopViewFraming,
   type PjskCameraProfile,
   type PjskCameraPreset,
   type RuntimeCameraDebug,
@@ -139,6 +143,7 @@ export type {
 } from "./characterLightingRuntime";
 
 export type {
+  CostumeShopViewFraming,
   PjskCameraProfile,
   PjskCameraPreset,
   RuntimeCameraDebug,
@@ -855,6 +860,7 @@ export class Haruki3DEngine {
   private currentCameraPreset: PjskCameraPreset = "default";
   private currentCameraProfile: PjskCameraProfile | null = null;
   private cameraRootYawDegrees = 0;
+  private viewFraming: CostumeShopViewFraming = { ...COSTUME_SHOP_VIEW_FRAMING_DEFAULT };
   private cameraDebugChangeCallback: (() => void) | null = null;
   private currentLoadedRuntimePackage: RuntimePackageLoadResult | null = null;
   private lastNativeMeshInstallDiagnostics: NativeMeshInstallDiagnostics | null = null;
@@ -1221,25 +1227,53 @@ export class Haruki3DEngine {
    */
   setViewYawDegrees(degrees: number) {
     this.cameraRootYawDegrees = Number.isFinite(degrees) ? degrees : 0;
+    this.applyCostumeShopView();
+  }
+
+  /** Dolly the view: 1 keeps the profile distance, larger values move closer. */
+  setViewZoom(zoom: number) {
+    this.viewFraming = clampCostumeShopViewFraming({ ...this.viewFraming, zoom });
+    this.applyCostumeShopView();
+  }
+
+  /** Slide the view up or down by `metres`; the character stays put. */
+  setViewHeightOffset(metres: number) {
+    this.viewFraming = clampCostumeShopViewFraming({
+      ...this.viewFraming,
+      heightOffset: metres,
+    });
+    this.applyCostumeShopView();
+  }
+
+  getViewFraming(): CostumeShopViewFraming {
+    return { ...this.viewFraming };
+  }
+
+  /**
+   * Re-derives the camera from the current preset/profile, CameraRoot yaw
+   * and host framing. Every view mutation funnels through here so the
+   * lights that hang off CameraRoot follow the camera.
+   */
+  private applyCostumeShopView() {
+    let pose: { target: THREE.Vector3; position: THREE.Vector3; fov: number };
     if (this.currentCameraPreset === "capture") {
-      const pose = getCostumeShopCameraPose(
+      pose = getCostumeShopCameraPose(
         this.currentCameraProfile ?? "full-body",
         this.cameraRootYawDegrees,
         this.masterCharacterHeightMeters
       );
-      this.setCameraTarget(pose.target);
-      this.camera.position.copy(pose.position);
-      this.camera.fov = pose.fov;
     } else {
-      const pose = getDefaultCameraPose(this.characterModelScaleMeters);
-      const offset = pose.position.clone().sub(pose.target).applyAxisAngle(
+      const base = getDefaultCameraPose(this.characterModelScaleMeters);
+      const offset = base.position.clone().sub(base.target).applyAxisAngle(
         COSTUME_SHOP_CAMERA_ROOT_AXIS,
         THREE.MathUtils.degToRad(this.cameraRootYawDegrees)
       );
-      this.setCameraTarget(pose.target);
-      this.camera.position.copy(pose.target).add(offset);
-      this.camera.fov = pose.fov;
+      pose = { target: base.target, position: base.target.clone().add(offset), fov: base.fov };
     }
+    const framed = applyCostumeShopViewFraming(pose, this.viewFraming);
+    this.setCameraTarget(framed.target);
+    this.camera.position.copy(framed.position);
+    this.camera.fov = pose.fov;
     this.camera.updateProjectionMatrix();
     this.syncCameraTarget();
     this.applyPreviewLightForCameraRoot();
@@ -2161,39 +2195,19 @@ export class Haruki3DEngine {
         ? 0
         : THREE.MathUtils.degToRad(this.cameraRootYawDegrees)
     );
-    this.setCameraTarget(pose.target);
-    this.camera.position.copy(pose.target).add(offset);
+    const framed = applyCostumeShopViewFraming(
+      { target: pose.target, position: pose.target.clone().add(offset) },
+      this.viewFraming
+    );
+    this.setCameraTarget(framed.target);
+    this.camera.position.copy(framed.position);
     this.syncCameraTarget();
   }
 
   applyCameraPreset(preset: PjskCameraPreset, profile: PjskCameraProfile = "full-body") {
     this.currentCameraPreset = preset;
-    if (preset === "capture") {
-      this.currentCameraProfile = profile;
-      const pose = getCostumeShopCameraPose(
-        profile,
-        this.cameraRootYawDegrees,
-        this.masterCharacterHeightMeters
-      );
-      this.setCameraTarget(pose.target);
-      this.camera.position.copy(pose.position);
-      this.camera.fov = pose.fov;
-    } else {
-      this.currentCameraProfile = null;
-      const pose = getDefaultCameraPose(this.characterModelScaleMeters);
-      const offset = pose.position.clone().sub(pose.target).applyAxisAngle(
-        COSTUME_SHOP_CAMERA_ROOT_AXIS,
-        THREE.MathUtils.degToRad(this.cameraRootYawDegrees)
-      );
-      this.setCameraTarget(pose.target);
-      this.camera.position.copy(pose.target).add(offset);
-      this.camera.fov = pose.fov;
-    }
-    this.camera.updateProjectionMatrix();
-    this.syncCameraTarget();
-    this.applyPreviewLightForCameraRoot();
-    this.updateShaderFaceBasis();
-    this.cameraDebugChangeCallback?.();
+    this.currentCameraProfile = preset === "capture" ? profile : null;
+    this.applyCostumeShopView();
   }
 
   shiftCameraRight(amount = 1) {

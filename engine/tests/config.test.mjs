@@ -533,7 +533,7 @@ test("capture camera preset uses official CostumeShop camera parameters and keep
   assert.doesNotMatch(engineSource, /CAPTURE_CAMERA_OFFSET_SCALE/);
   assert.match(
     engineSource,
-    /this\.setCameraTarget\(pose\.target\);\s+this\.camera\.position\.copy\(pose\.position\);\s+this\.camera\.fov = pose\.fov;/s
+    /const framed = applyCostumeShopViewFraming\(pose, this\.viewFraming\);\s+this\.setCameraTarget\(framed\.target\);\s+this\.camera\.position\.copy\(framed\.position\);\s+this\.camera\.fov = pose\.fov;/s
   );
   assert.match(engineSource, /getDefaultCameraPose\(this\.characterModelScaleMeters\)/);
   assert.match(harnessSource, /cameraPreset: "capture"/);

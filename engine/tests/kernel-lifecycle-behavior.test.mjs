@@ -133,6 +133,20 @@ test("destroy exposes one promise that settles after engine resources are releas
   assert.deepEqual(calls, [["load", "/runtime/jp/"], ["destroy"]]);
 });
 
+test("view framing setters forward to the engine and render a frame while paused", () => {
+  const calls = [];
+  installAnimationFrameStubs();
+  const kernel = createHaruki3DKernelRuntime(fakeEngine(calls, () => Promise.resolve()), "/runtime/jp/");
+  kernel.setViewZoom(1.5);
+  kernel.setViewHeightOffset(0.2);
+  assert.deepEqual(calls, [
+    ["view-zoom", 1.5],
+    ["render"],
+    ["view-height", 0.2],
+    ["render"],
+  ]);
+});
+
 function fakeEngine(calls, load) {
   return {
     loadRenderRecipe(request) {
@@ -153,6 +167,12 @@ function fakeEngine(calls, load) {
     },
     setViewYawDegrees(degrees) {
       calls.push(["view-yaw", degrees]);
+    },
+    setViewZoom(zoom) {
+      calls.push(["view-zoom", zoom]);
+    },
+    setViewHeightOffset(metres) {
+      calls.push(["view-height", metres]);
     },
     destroy() {
       calls.push(["destroy"]);

@@ -170,3 +170,61 @@ export function shiftCameraPoseRight(
     position: position.clone().add(shift),
   };
 }
+
+/**
+ * Host-driven framing on top of a profile pose: `zoom` scales the camera
+ * distance (1 = the profile's own distance, 2 = twice as close) and
+ * `heightOffset` lifts target and camera together, in metres. The character
+ * never moves; this mirrors the CostumeShop pinch/drag which dollies and
+ * slides CameraRoot's local camera.
+ */
+export type CostumeShopViewFraming = {
+  zoom: number;
+  heightOffset: number;
+};
+
+export const COSTUME_SHOP_VIEW_FRAMING_LIMITS = {
+  minZoom: 0.5,
+  maxZoom: 3,
+  minHeightOffset: -0.5,
+  maxHeightOffset: 0.8,
+} as const;
+
+export const COSTUME_SHOP_VIEW_FRAMING_DEFAULT: Readonly<CostumeShopViewFraming> = {
+  zoom: 1,
+  heightOffset: 0,
+};
+
+export function clampCostumeShopViewFraming(
+  framing: Partial<CostumeShopViewFraming>
+): CostumeShopViewFraming {
+  const limits = COSTUME_SHOP_VIEW_FRAMING_LIMITS;
+  const zoom = Number.isFinite(framing.zoom)
+    ? (framing.zoom as number)
+    : COSTUME_SHOP_VIEW_FRAMING_DEFAULT.zoom;
+  const heightOffset = Number.isFinite(framing.heightOffset)
+    ? (framing.heightOffset as number)
+    : COSTUME_SHOP_VIEW_FRAMING_DEFAULT.heightOffset;
+  return {
+    zoom: THREE.MathUtils.clamp(zoom, limits.minZoom, limits.maxZoom),
+    heightOffset: THREE.MathUtils.clamp(
+      heightOffset,
+      limits.minHeightOffset,
+      limits.maxHeightOffset
+    ),
+  };
+}
+
+export function applyCostumeShopViewFraming(
+  pose: { target: THREE.Vector3; position: THREE.Vector3 },
+  framing: CostumeShopViewFraming
+) {
+  const { zoom, heightOffset } = clampCostumeShopViewFraming(framing);
+  const target = pose.target.clone();
+  target.y += heightOffset;
+  const offset = pose.position.clone().sub(pose.target).divideScalar(zoom);
+  return {
+    target,
+    position: target.clone().add(offset),
+  };
+}

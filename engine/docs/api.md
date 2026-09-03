@@ -240,6 +240,9 @@ interface Haruki3DKernel {
   play(): void;
   pause(): void;
   resize(width: number, height: number): void;
+  setViewYawDegrees(degrees: number): void;
+  setViewZoom(zoom: number): void;
+  setViewHeightOffset(metres: number): void;
   destroy(): Promise<void>;
 }
 ```
@@ -253,6 +256,21 @@ interface Haruki3DKernel {
   immediately, waits for any in-flight load, then releases Three.js, WebGL,
   texture, geometry, animation, and SpringBone resources. Await it when the
   caller needs deterministic cleanup.
+
+### View Methods
+
+The three view setters move CameraRoot, never the character, so authored
+SpringBone chains see no false inertia. They render one frame while paused.
+
+- `setViewYawDegrees(degrees)` orbits the camera around the character's
+  vertical axis. `setCharacterYawDegrees` remains as an alias for older hosts.
+- `setViewZoom(zoom)` dollies the camera: `1` is the profile's own distance,
+  `2` is twice as close. Clamped to `0.5..3`.
+- `setViewHeightOffset(metres)` slides target and camera up or down by the
+  given metres. Clamped to `-0.5..0.8`.
+
+The engine keeps yaw, zoom and height across `load()` calls; hosts that want a
+fresh framing per character reset them explicitly.
 
 The canvas and its CSS remain caller-owned. The kernel does not install a
 `ResizeObserver`, pointer handlers, OrbitControls, page visibility handlers,
