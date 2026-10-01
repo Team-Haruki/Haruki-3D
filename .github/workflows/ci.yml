@@ -52,8 +52,10 @@ jobs:
       package-manager: npm
       node-version: "22"
       install-command: npm ci --ignore-scripts
-      test-command: npm run test:coverage && npm run test:consumer
-      build-command: "" # test:consumer builds
+      # the unit tests import dist/, so build first; then the consumer build without a second
+      # library build (test:consumer = build + build:consumer + check)
+      test-command: npm run build && npm run test:coverage && npm run build:consumer && node scripts/check-consumer-build.mjs
+      build-command: ""
       coverage-path: coverage/lcov.info
       e2e-prepare-command: npm run build
       e2e-command: npm run test:browser
@@ -90,7 +92,8 @@ jobs:
       - run: bash scripts/prepare-assetstudio.sh # the revision lives only in this script
       - run: dotnet build -p:AssetStudioRoot="${ASSETSTUDIO_ROOT}"
       - run: node --test scripts/test-costume-masterdata-audit.mjs scripts/test-face-motion-export.mjs
-      - run: HARUKI_EXPORTER_CONFIG_TEST=true dotnet run --no-build --project Haruki-3D-Exporter.csproj
+      # HARUKI_EXPORTER_CONFIG_TEST switches the compile items in the csproj, so this must rebuild.
+      - run: HARUKI_EXPORTER_CONFIG_TEST=true dotnet run --project Haruki-3D-Exporter.csproj
 
   contract:
     name: Contract round-trip
