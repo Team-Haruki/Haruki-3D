@@ -1,0 +1,68 @@
+name: Release
+# Component tags re-tag the image already built from main for that commit.
+
+on:
+  push:
+    tags: ['engine-v*', 'exporter-v*']
+  workflow_dispatch: # dry run: builds everything, publishes nothing
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  engine-gate:
+    name: Engine gate
+    if: startsWith(github.ref_name, 'engine-v')
+    permissions:
+      contents: read
+      checks: read
+    uses: seiunx-dev/ci-templates/.github/workflows/release-gate.yml@v1
+    with:
+      version-source: package-json
+      version-path: engine/package.json
+      tag-prefix: engine-v
+
+  engine:
+    name: Engine image
+    needs: engine-gate
+    if: needs.engine-gate.outputs.is-tag == 'true'
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: read
+    uses: seiunx-dev/ci-templates/.github/workflows/docker.yml@v1
+    with:
+      image: ghcr.io/team-haruki/haruki-3d-engine
+      context: engine
+      tag-prefix: engine-v
+      promote-on-tag: true
+
+  exporter-gate:
+    name: Exporter gate
+    if: startsWith(github.ref_name, 'exporter-v')
+    permissions:
+      contents: read
+      checks: read
+    uses: seiunx-dev/ci-templates/.github/workflows/release-gate.yml@v1
+    with:
+      version-source: none
+      tag-prefix: exporter-v
+
+  exporter:
+    name: Exporter image
+    needs: exporter-gate
+    if: needs.exporter-gate.outputs.is-tag == 'true'
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: read
+    uses: seiunx-dev/ci-templates/.github/workflows/docker.yml@v1
+    with:
+      image: ghcr.io/team-haruki/haruki-3d-exporter
+      context: exporter
+      tag-prefix: exporter-v
+      promote-on-tag: true

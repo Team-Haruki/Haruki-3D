@@ -1,0 +1,230 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# PRs: one group per PR, newer pushes cancel older runs. Everything else: one group per
+# event and commit, so a queued main run is never replaced by a newer one (every commit keeps
+# its "CI OK" and :sha-<sha> image for the release gate and promote-on-tag).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && format('pr-{0}', github.event.pull_request.number) || format('{0}-{1}', github.event_name, github.sha) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  changes:
+    name: Changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      engine: ${{ steps.f.outputs.engine }}
+      exporter: ${{ steps.f.outputs.exporter }}
+      contract: ${{ steps.f.outputs.contract }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # On pull requests the filter compares with the base branch, on main pushes with the
+      # previous commit, so a push only rebuilds the subproject it touched (as the old Docker
+      # workflows' changed-paths check did). workflow_dispatch runs everything.
+      - id: f
+        uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        with:
+          # one filter file replaces 6 hand-kept path lists and 2 git-diff scripts
+          filters: .github/path-filters.yml
+
+  engine:
+    name: Engine
+    needs: changes
+    if: needs.changes.outputs.engine == 'true' || github.event_name == 'workflow_dispatch'
+    uses: seiunx-dev/ci-templates/.github/workflows/node-ci.yml@v1
+    with:
+      working-directory: engine
+      package-manager: npm
+      node-version: "22"
+      install-command: npm ci --ignore-scripts
+      test-command: npm run test:coverage && npm run test:consumer
+      build-command: "" # test:consumer builds
+      coverage-path: coverage/lcov.info
+      e2e-prepare-command: npm run build
+      e2e-command: npm run test:browser
+      # chromium on PRs, all three engines on main
+      e2e-browsers: ${{ github.event_name == 'pull_request' && 'chromium' || 'chromium firefox webkit' }}
+      e2e-xvfb: true
+
+  exporter:
+    name: Exporter
+    needs: changes
+    if: needs.changes.outputs.exporter == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      ASSETSTUDIO_ROOT: /tmp/haruki-assetstudio # repository/branch/revision defaults live in prepare-assetstudio.sh
+    defaults:
+      run:
+        working-directory: exporter
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: exporter/global.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - name: Cache AssetStudio build
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/haruki-assetstudio
+          key: assetstudio-${{ hashFiles('exporter/scripts/prepare-assetstudio.sh') }}
+      - run: bash scripts/prepare-assetstudio.sh # the revision lives only in this script
+      - run: dotnet build -p:AssetStudioRoot="${ASSETSTUDIO_ROOT}"
+      - run: node --test scripts/test-costume-masterdata-audit.mjs scripts/test-face-motion-export.mjs
+      - run: HARUKI_EXPORTER_CONFIG_TEST=true dotnet run --no-build --project Haruki-3D-Exporter.csproj
+
+  contract:
+    name: Contract round-trip
+    needs: changes
+    if: needs.changes.outputs.contract == 'true' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: exporter/global.json
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: engine/package-lock.json
+      - run: npm ci --prefix engine --ignore-scripts
+      - run: ./contract/roundtrip/run.sh
+      - run: ./contract/parity/run.sh
+
+  sonar:
+    name: Sonar
+    needs: [engine, exporter]
+    # dotnet-sonarscanner wraps the exporter build, so this scan stays repo-specific;
+    # it reuses the engine lcov instead of rebuilding and retesting the engine.
+    if: >-
+      !cancelled() && github.actor != 'dependabot[bot]' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      ASSETSTUDIO_ROOT: /tmp/haruki-assetstudio
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-java@de7274f081f381c8f8158605e0321c36c376e2e6 # v6.0.1
+        with:
+          distribution: zulu
+          java-version: "17"
+      - uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68 # v6.0.0
+        with:
+          global-json-file: exporter/global.json
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        continue-on-error: true # engine may be path-filtered out on PRs
+        with:
+          name: coverage-js
+          path: coverage
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /tmp/haruki-assetstudio
+          key: assetstudio-${{ hashFiles('exporter/scripts/prepare-assetstudio.sh') }}
+      - run: bash exporter/scripts/prepare-assetstudio.sh
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "22"
+      - run: ./scripts/ci/sonar-dotnet.sh coverage/lcov-js.info # begin / dotnet build exporter / end
+
+  docker-engine:
+    name: Docker engine
+    needs: [changes] # not on engine: builds in parallel with the tests
+    if: needs.changes.outputs.engine == 'true' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: read
+    uses: seiunx-dev/ci-templates/.github/workflows/docker.yml@v1
+    with:
+      defer-moving-tags: true # push :sha-* right away; :main moves after CI OK (docker-tags)
+      image: ghcr.io/team-haruki/haruki-3d-engine # legacy name from the split repos
+      context: engine
+      tag-prefix: engine-v
+
+  docker-exporter:
+    name: Docker exporter
+    needs: [changes]
+    if: needs.changes.outputs.exporter == 'true' || github.event_name == 'workflow_dispatch'
+    permissions:
+      contents: read
+      packages: write
+      pull-requests: read
+    uses: seiunx-dev/ci-templates/.github/workflows/docker.yml@v1
+    with:
+      defer-moving-tags: true # push :sha-* right away; :main moves after CI OK (docker-tags)
+      image: ghcr.io/team-haruki/haruki-3d-exporter
+      context: exporter
+      tag-prefix: exporter-v
+      cache-mode: max # oxipng cargo install + AssetStudio stages
+
+  workflows:
+    name: Workflow lint
+    uses: seiunx-dev/ci-templates/.github/workflows/actionlint.yml@v1
+
+  ci-ok:
+    name: CI OK # the only required status check
+    if: always()
+    needs: [changes, engine, exporter, contract, sonar, docker-engine, docker-exporter, workflows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: exit 1
+
+  docker-engine-tags:
+    name: Docker engine tags # :main follows only commits whose CI OK passed
+    needs: [docker-engine, ci-ok]
+    # Explicit result check: the implicit success() also fails when any job upstream of ci-ok was
+    # skipped (e.g. a PR-only job), which silently skipped this job on main.
+    if: ${{ !cancelled() && needs.ci-ok.result == 'success' && needs.docker-engine.outputs.deferred-tags != '' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: seiunx-dev/ci-templates/.github/workflows/docker-retag.yml@v1
+    with:
+      image: ${{ needs.docker-engine.outputs.image }}
+      digest: ${{ needs.docker-engine.outputs.digest }}
+      tags: ${{ needs.docker-engine.outputs.deferred-tags }}
+
+  docker-exporter-tags:
+    name: Docker exporter tags # :main follows only commits whose CI OK passed
+    needs: [docker-exporter, ci-ok]
+    # Explicit result check: the implicit success() also fails when any job upstream of ci-ok was
+    # skipped (e.g. a PR-only job), which silently skipped this job on main.
+    if: ${{ !cancelled() && needs.ci-ok.result == 'success' && needs.docker-exporter.outputs.deferred-tags != '' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: seiunx-dev/ci-templates/.github/workflows/docker-retag.yml@v1
+    with:
+      image: ${{ needs.docker-exporter.outputs.image }}
+      digest: ${{ needs.docker-exporter.outputs.digest }}
+      tags: ${{ needs.docker-exporter.outputs.deferred-tags }}

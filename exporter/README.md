@@ -123,8 +123,9 @@ docker run --rm \
   --out /data/out
 ```
 
-GitHub Actions (the workflows in the monorepo root `.github/workflows/`) builds and publishes a
-self-contained Linux image to GHCR as `ghcr.io/team-haruki/haruki-3d-exporter` on `main` and
+GitHub Actions (`ci.yml` and `release.yml` in the monorepo root `.github/workflows/`) builds and
+publishes a self-contained Linux image to GHCR as `ghcr.io/team-haruki/haruki-3d-exporter` on
+`main` pushes that touch `exporter/` (`:sha-*`, then `:main` after `CI OK`) and re-tags it for
 `exporter-v*` tags. Pull requests only build the image.
 
 ## Command-Line Reference

@@ -1,0 +1,12 @@
+# .github/path-filters.yml (read by dorny/paths-filter in ci.yml)
+engine:
+  - 'engine/**'
+  - '.github/workflows/ci.yml'
+exporter:
+  - 'exporter/**'
+  - '.github/workflows/ci.yml'
+contract:
+  - 'contract/**'
+  - 'engine/**'
+  - 'exporter/**'
+  - '.github/workflows/ci.yml'

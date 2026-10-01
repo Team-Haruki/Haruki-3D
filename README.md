@@ -43,13 +43,27 @@ cd exporter
 ## Repository Conventions
 
 - Release tags are prefixed per subproject: `engine-v*` and `exporter-v*`.
-- CI lives only in the root `.github/workflows/` and is path-filtered per
-  subproject. The Docker workflows' release/branch push triggers cannot carry
-  paths filters (tag pushes would stop firing), so those gate branch pushes
-  with an in-job changed-paths check instead; tag pushes always build.
-- The exporter↔engine package-format contract is guarded by the
-  `Contract Round-Trip` workflow, which runs `contract/roundtrip/run.sh`
-  whenever `contract/**` or either side's codec sources change.
+- CI lives only in the root `.github/workflows/`: `ci.yml` (`CI`) and
+  `release.yml` (`Release`), thin callers of the shared templates in
+  [`seiunx-dev/ci-templates`](https://github.com/seiunx-dev/ci-templates)
+  (`@v1`). Reuse the templates first; customize in the caller only when they
+  genuinely cannot meet a need (the .NET exporter build, the contract test and
+  the dotnet-sonarscanner scan have no template), with a comment saying why.
+- `ci.yml` is path-filtered per subproject through `.github/path-filters.yml`
+  (pull requests against the base branch, `main` pushes against the previous
+  commit; manual dispatch runs everything): `Engine` (`node-ci`: unit tests
+  under c8, the consumer build, Playwright on chromium for PRs and on
+  chromium/firefox/webkit for `main`), `Exporter` (AssetStudio prepare, build,
+  node tests, config smoke), `Contract round-trip` (`contract/roundtrip/run.sh`
+  and `contract/parity/run.sh`), `Sonar` (`scripts/ci/sonar-dotnet.sh`, reusing
+  the engine's lcov), and the two images (`docker.yml`, in parallel with the
+  tests; `:sha-*` right away, `:main` only after `CI OK`). The aggregate job
+  **`CI OK`** is the only required status check.
+- `release.yml`: an `engine-v<version>` tag must match `engine/package.json`;
+  an `exporter-v*` tag takes its version from the tag. The gate waits for the
+  tagged commit's `CI OK`, then the `main` image of that commit is re-tagged
+  (rebuilt if `main` never built it) to `:<version>`, `:<major>.<minor>` and,
+  for the highest stable tag, `:latest`.
 - Each Docker image builds with its subproject directory as the build context:
   `engine/` with `engine/Dockerfile`, `exporter/` with `exporter/Dockerfile`.
 - GHCR image names are unchanged from the standalone repositories:
