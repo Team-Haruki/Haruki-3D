@@ -36,12 +36,18 @@ test("capture kernel boots with WebGL and no page errors", async ({ page }) => {
 
   expect(state).toMatchObject({
     hasCanvas: true,
-    drawingBufferSize: [1024, 1024],
     hasRequestHandler: true,
     hasWebGL: true,
     captureError: "",
   });
   expect(state.devicePixelRatio).toBeCloseTo(5 / 3, 6);
+  // The presentation pass is off by default, so the canvas is the final image and renders at
+  // device resolution (device pixel ratio capped at 2), not at the 1024 intermediate size.
+  const expectedBuffer = 1024 * Math.min(state.devicePixelRatio, 2);
+  for (const size of state.drawingBufferSize) {
+    expect(size).toBeGreaterThanOrEqual(Math.floor(expectedBuffer));
+    expect(size).toBeLessThanOrEqual(Math.ceil(expectedBuffer));
+  }
   expect(pageErrors).toEqual([]);
   expect(consoleErrors).toEqual([]);
 
