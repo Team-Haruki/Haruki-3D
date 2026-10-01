@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 
 WORKDIR /app
 COPY package.json package-lock.json ./
@@ -6,7 +6,7 @@ RUN npm ci --ignore-scripts
 COPY . .
 RUN npm run build
 
-FROM node:22-bookworm-slim
+FROM node:26-bookworm-slim
 
 ARG CHROMIUM_DEBIAN_VERSION=150.0.7871.100-1~deb12u1
 RUN apt-get update \
