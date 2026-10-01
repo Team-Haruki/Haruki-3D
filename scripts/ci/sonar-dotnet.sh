@@ -3,6 +3,8 @@
 # Ported from the old sonar.yml, except that the engine is no longer rebuilt and retested
 # here: the engine lcov comes from the Engine job (artifact coverage-js). When that job
 # was path-filtered out, the scan runs without JS coverage.
+# Like the template sonar.yml, it ignores githubactions:S7637 ("use a full commit SHA") in
+# .github/workflows/**, so the @v1 references to seiunx-dev/ci-templates pass the gate.
 # Env: SONAR_TOKEN, ASSETSTUDIO_ROOT (prepared by exporter/scripts/prepare-assetstudio.sh).
 # Usage: scripts/ci/sonar-dotnet.sh [engine-lcov]   (default coverage/lcov-js.info)
 set -euo pipefail
@@ -21,6 +23,9 @@ fi
   /d:sonar.token="$SONAR_TOKEN" \
   /d:sonar.exclusions="**/node_modules/**,**/dist/**,**/bin/**,**/obj/**" \
   /d:sonar.coverage.exclusions="exporter/**,engine/capture-server.mjs,engine/src/runtime/**,engine/src/engine/Haruki3DEngine.ts,engine/scripts/**,engine/examples/**,engine/check-*.mjs,engine/format-*.mjs,engine/inspect-*.mjs,engine/playwright*.mjs,engine/vite*.ts,engine/*.d.mts" \
+  /d:sonar.issue.ignore.multicriteria=ciTemplatesPins \
+  /d:sonar.issue.ignore.multicriteria.ciTemplatesPins.ruleKey=githubactions:S7637 \
+  /d:sonar.issue.ignore.multicriteria.ciTemplatesPins.resourceKey=".github/workflows/**" \
   "${js_args[@]}"
 dotnet build exporter/Haruki-3D-Exporter.csproj -p:AssetStudioRoot="$ASSETSTUDIO_ROOT"
 "$RUNNER_TEMP/scanner/dotnet-sonarscanner" end /d:sonar.token="$SONAR_TOKEN"

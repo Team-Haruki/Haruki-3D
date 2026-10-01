@@ -58,8 +58,8 @@ jobs:
       build-command: ""
       coverage-path: coverage/lcov.info
       e2e-prepare-command: npm run build
-      e2e-command: npm run test:browser
       # chromium on PRs, all three engines on main
+      e2e-command: ${{ github.event_name == 'pull_request' && 'npm run test:browser:chromium' || 'npm run test:browser' }}
       e2e-browsers: ${{ github.event_name == 'pull_request' && 'chromium' || 'chromium firefox webkit' }}
       e2e-xvfb: true
 
