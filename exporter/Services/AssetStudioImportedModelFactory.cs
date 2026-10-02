@@ -6,7 +6,7 @@ namespace PjskBundle2Parts.Services;
 
 public sealed class AssetStudioImportedModelFactory
 {
-    private const string SekaiUnityVersion = "2022.3.21f1";
+    private const string SekaiUnityVersion = "2022.3.62f2";
     private readonly bool convertModelTextures;
 
     public AssetStudioImportedModelFactory(bool convertModelTextures = false)

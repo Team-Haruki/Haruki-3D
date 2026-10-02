@@ -154,6 +154,7 @@ public static class RuntimeJsonWriter
         "nativeMeshes.meshes.boneInverseBindMatrices",
         "nativeMeshes.meshes.morphTargets.positionDeltas",
         "nativeMeshes.meshes.morphTargets.normalDeltas",
+        "nativeMeshes.meshes.morphTargets.tangentDeltas",
     };
 
     private static readonly HashSet<string> PartRuntimeUnsignedIndexArrayPaths = new(StringComparer.Ordinal)

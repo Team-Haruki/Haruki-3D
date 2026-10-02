@@ -67,8 +67,14 @@ type AnimationPlaybackRuntimeOptions = {
   onLoopPromoted?: () => void;
 };
 
-function getErrorMessage(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
+function requireUniqueClip(
+  clips: THREE.AnimationClip[],
+  label: string
+) {
+  if (clips.length !== 1) {
+    throw new Error(`Expected exactly one ${label}, found ${clips.length}.`);
+  }
+  return clips[0]!;
 }
 
 async function loadRuntimeAnimationClips(
@@ -234,7 +240,6 @@ export class AnimationPlaybackRuntime {
     const clips = await this.loadCachedClips(
       this.motionUrl,
       this.motionKind,
-      false,
       revision
     );
     if (revision !== this.revision || !clips) {
@@ -245,19 +250,25 @@ export class AnimationPlaybackRuntime {
       return { poseApplied: false };
     }
 
-    const sourceClip = clips.find((candidate) =>
-      !isLoopClipName(candidate.name, this.motionUrl)
-    ) ?? clips[0];
+    const sourceClip = requireUniqueClip(
+      clips.filter((candidate) =>
+        !isLoopClipName(candidate.name, this.motionUrl)
+      ),
+      `primary motion in ${this.motionUrl}`
+    );
     const clip = this.preparePlayableClip(sourceClip, context, true);
-    if (!clip) {
-      return { poseApplied: false };
-    }
 
     let loopClip: THREE.AnimationClip | null = null;
     if (this.loopUrl === this.motionUrl) {
-      const sourceLoopClip = clips.find((candidate) =>
+      const loopCandidates = clips.filter((candidate) =>
         isLoopClipName(candidate.name, this.loopUrl)
-      ) ?? clips.find((candidate) => candidate !== sourceClip) ?? null;
+      );
+      if (loopCandidates.length > 1) {
+        throw new Error(
+          `Expected at most one loop motion in ${this.loopUrl}, found ${loopCandidates.length}.`
+        );
+      }
+      const sourceLoopClip = loopCandidates[0] ?? null;
       loopClip = sourceLoopClip
         ? this.preparePlayableClip(sourceLoopClip, context, false)
         : null;
@@ -265,16 +276,16 @@ export class AnimationPlaybackRuntime {
       const loopClips = await this.loadCachedClips(
         this.loopUrl,
         this.loopKind,
-        true,
         revision
       );
       if (revision !== this.revision) {
         return { poseApplied: false };
       }
-      const sourceLoopClip = loopClips?.[0] ?? null;
-      loopClip = sourceLoopClip
-        ? this.preparePlayableClip(sourceLoopClip, context, false)
-        : null;
+      const sourceLoopClip = requireUniqueClip(
+        loopClips,
+        `loop motion in ${this.loopUrl}`
+      );
+      loopClip = this.preparePlayableClip(sourceLoopClip, context, false);
     }
 
     if (revision !== this.revision) {
@@ -347,7 +358,6 @@ export class AnimationPlaybackRuntime {
   private async loadCachedClips(
     url: string,
     kind: BodyAnimationKind | null,
-    ignoreErrors: boolean,
     revision: number
   ) {
     const key = animationClipCacheKey(url, kind);
@@ -356,20 +366,18 @@ export class AnimationPlaybackRuntime {
       return cached;
     }
     if (kind !== "unity-json") {
-      if (!ignoreErrors) {
-        this.error = `Unity motion .msgpack.br is required for ${url}.`;
-      }
-      return null;
+      this.error = `Unity motion .msgpack.br is required for ${url}.`;
+      throw new Error(this.error);
     }
     try {
       const clips = await this.loadClips(url, kind);
       this.clipCache.set(key, clips);
       return clips;
     } catch (error) {
-      if (!ignoreErrors && revision === this.revision) {
-        this.error = getErrorMessage(error);
+      if (revision === this.revision) {
+        this.error = error instanceof Error ? error.message : String(error);
       }
-      return null;
+      throw error;
     }
   }
 
@@ -402,8 +410,7 @@ export class AnimationPlaybackRuntime {
       return clip;
     }
     if (!context.root) {
-      this.error = "Unity Prefab animation requires a loaded prefab root.";
-      return null;
+      throw new Error("Unity Prefab animation requires a loaded prefab root.");
     }
     const retargeted = retargetUnityPrefabAnimationClip(
       clip,
@@ -418,7 +425,10 @@ export class AnimationPlaybackRuntime {
     }
     if (retargeted.error) {
       this.error = retargeted.error;
-      return null;
+      throw new Error(retargeted.error);
+    }
+    if (!retargeted.clip) {
+      throw new Error("Unity Prefab animation retarget produced no clip.");
     }
     return retargeted.clip;
   }

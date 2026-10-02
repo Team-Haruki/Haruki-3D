@@ -85,6 +85,8 @@ export type UtjSpringBoneTraceEvent = {
   pivotResolvedPath: string | null;
   tailBinding: TailBindingSnapshot;
   managerPathId: number | null;
+  /** Manager invoking this step; nested managers share the constraint owner's bone state. */
+  updateManagerPathId?: number | null;
   deltaTime: number;
   dynamicRatio: number;
   automaticUpdates: boolean;

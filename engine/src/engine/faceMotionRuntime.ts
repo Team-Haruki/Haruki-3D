@@ -54,6 +54,15 @@ function isMorphMesh(node: THREE.Object3D): node is THREE.Mesh {
   return !!mesh.isMesh && Array.isArray(mesh.morphTargetInfluences);
 }
 
+function unityMorphNameHash(name: string) {
+  let crc = 0xffffffff;
+  for (const byte of new TextEncoder().encode(name)) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  return (~crc) >>> 0;
+}
+
 function sampleFaceCurve(keyframes: FaceMotionKeyframe[], time: number) {
   if (!keyframes.length) {
     return 0;
@@ -105,6 +114,7 @@ export class FaceMotionRuntime {
 
     root.traverse((node) => {
       if (
+        node.userData.pjskOutlineShell ||
         node.userData.pjskEyeThroughHairOverlay ||
         node.userData.pjskEyeThroughHairStencilPrepass ||
         !isMorphMesh(node)
@@ -137,6 +147,14 @@ export class FaceMotionRuntime {
         controlledIndices.push(index);
       }
 
+      // Unity's built blend-shape binding is CRC32(channel name). Older part
+      // packages wrote FNV(blendShape.name); keep those aliases while binding
+      // original clips by the mesh's actual channel names.
+      for (const [name, index] of Object.entries(dictionary)) {
+        curveIndexByHash.set(unityMorphNameHash(name), index);
+        controlledIndices.push(index);
+      }
+
       mesh.morphTargetInfluences?.fill(0);
       this.bindings.push({
         mesh,
@@ -149,7 +167,7 @@ export class FaceMotionRuntime {
       debug.push({
         meshName: mesh.name,
         morphTargetCount,
-        mappedChannelCount: curveIndexByHash.size,
+        mappedChannelCount: new Set(curveIndexByHash.values()).size,
         sampleChannels: channelNames.slice(0, 12),
       });
     });
@@ -170,16 +188,27 @@ export class FaceMotionRuntime {
       this.clearInfluences();
       return;
     }
-    this.clip = data.clips.find((candidate) => candidate.name === preferredClipName)
-      ?? data.clips[0]
-      ?? null;
-    if (!this.clip) {
-      return;
+    const primaryCandidates = preferredClipName
+      ? data.clips.filter((candidate) => candidate.name === preferredClipName)
+      : data.clips;
+    if (primaryCandidates.length !== 1) {
+      throw new Error(
+        `Expected exactly one face motion '${preferredClipName ?? "<only clip>"}', ` +
+        `found ${primaryCandidates.length}.`
+      );
     }
+    this.clip = primaryCandidates[0]!;
     if (preferredLoopClipName && preferredLoopClipName !== this.clip.name) {
-      this.loopClip = data.clips.find(
+      const loopCandidates = data.clips.filter(
         (candidate) => candidate.name === preferredLoopClipName
-      ) ?? null;
+      );
+      if (loopCandidates.length !== 1) {
+        throw new Error(
+          `Expected exactly one face loop '${preferredLoopClipName}', ` +
+          `found ${loopCandidates.length}.`
+        );
+      }
+      this.loopClip = loopCandidates[0]!;
     }
     this.applyCurrent();
   }
@@ -272,7 +301,7 @@ export class FaceMotionRuntime {
       currentTime: this.time,
       mappedMeshCount: this.bindings.length,
       mappedCurveCount: this.bindings.reduce(
-        (sum, binding) => sum + binding.curveIndexByHash.size,
+        (sum, binding) => sum + new Set(binding.curveIndexByHash.values()).size,
         0
       ),
     };

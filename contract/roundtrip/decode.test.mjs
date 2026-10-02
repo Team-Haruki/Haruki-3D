@@ -171,6 +171,25 @@ test("targeted decoded-value assertions", () => {
   assert.equal(mesh.submeshes[0].indices[0], 65536);
   assert.equal(mesh.submeshes[0].indices[1], 4294967295);
 
+  assert.deepEqual(mesh.bonePaths, ["Root/Hip", "Root/Hip", "Root/Knee"]);
+  assert.deepEqual(mesh.bonePathIds, [17, 17, 29]);
+  assert.ok(mesh.boneInverseBindMatrices instanceof Float32Array);
+  assert.equal(mesh.boneInverseBindMatrices.length, 3 * 16);
+  assert.equal(mesh.boneInverseBindMatrices[12], 0);
+  assert.equal(mesh.boneInverseBindMatrices[28], 0.25);
+  assert.equal(mesh.boneInverseBindMatrices[44], 0.5);
+
+  const morph = mesh.morphTargets[0];
+  assert.equal(morph.hasPositionDeltas, true);
+  assert.equal(morph.hasNormalDeltas, false);
+  assert.equal(morph.hasTangentDeltas, true);
+  assert.ok(morph.indices instanceof Uint16Array);
+  assert.ok(morph.positionDeltas instanceof Float32Array);
+  assert.ok(morph.tangentDeltas instanceof Float32Array);
+  assert.equal(morph.positionDeltas.length, morph.indices.length * 3);
+  assert.equal(morph.tangentDeltas.length, morph.indices.length * 3);
+  assert.deepEqual(morph.normalDeltas, []);
+
   assert.ok(Array.isArray(mesh.normals), "below-threshold ext-path arrays stay ordinary");
   assert.equal(mesh.normals.length, 0);
 

@@ -6,6 +6,7 @@ import {
   getDefaultCustomSelection,
   getDeniedHeadHairCompatibilityKeys,
   headHairCompatibilityKey,
+  runtimePartSlot,
   runtimeRoleId,
   tryRuntimePartSlot,
   type HeadHairCompatibility,
@@ -139,12 +140,11 @@ async function loadPartPackageSetFromBaseUrl(
       runtime: await fetchOptionalPartRuntime(baseUrl, entry),
     })));
     for (const result of results) {
-      if (result.runtime) {
-        packages.set(
-          result.entry.packagePath,
-          withPartRuntimePackagePath(result.runtime, result.entry)
-        );
-      }
+      if (!result.runtime) continue;
+      packages.set(
+        result.entry.packagePath,
+        withPartRuntimePackagePath(result.runtime, result.entry)
+      );
     }
     if (hasUsableCustomPartSelection(registry, roles, compatibility, packages, baseUrl)) {
       break;
@@ -187,7 +187,7 @@ export async function ensureRoleRuntimePackage(
   partSet: PartPackageSet,
   characterId: number,
   unit: string | null
-): Promise<RoleRuntimePackage | null> {
+): Promise<RoleRuntimePackage> {
   const roleId = runtimeRoleId(characterId, unit);
   const existing = partSet.roleRuntimes.get(roleId);
   if (existing) {
@@ -199,25 +199,28 @@ export async function ensureRoleRuntimePackage(
     runtimeRoleId(candidate.characterId, candidate.unit ?? null) === roleId
   );
   if (!entry?.roleRuntimePath) {
-    return null;
+    throw new Error(`Runtime role catalog has no package for ${roleId}.`);
   }
-  const runtime = await fetchOptionalRuntimeMessagePack<RoleRuntimePackage>(
+  const runtime = await fetchRuntimeMessagePack(
     withRuntimeMasterVersion(
       resolveRuntimePackageUrl(partSet.baseUrl, entry.roleRuntimePath),
       partSet.masterVersion
     )
-  );
-  if (!runtime) {
-    return null;
-  }
+  ) as RoleRuntimePackage;
   const normalized = normalizeRoleRuntimePackage(
     partSet.baseUrl,
     entry.roleRuntimePath,
     runtime,
     partSet.masterVersion
   );
-  const normalizedCharacterId = normalized.role?.characterId ?? characterId;
-  const normalizedUnit = normalized.role?.unit ?? unit;
+  const normalizedCharacterId = normalized.role?.characterId;
+  const normalizedUnit = normalized.role?.unit ?? null;
+  if (
+    normalizedCharacterId !== characterId ||
+    runtimeRoleId(normalizedCharacterId, normalizedUnit) !== roleId
+  ) {
+    throw new Error(`Runtime role package identity differs from requested role ${roleId}.`);
+  }
   partSet.roleRuntimes.set(runtimeRoleId(normalizedCharacterId, normalizedUnit), normalized);
   return normalized;
 }
@@ -235,17 +238,14 @@ async function loadRoleRuntimePackages(
   );
   const loaded = await Promise.all(entries.map(async (entry) => ({
     entry,
-    runtime: await fetchOptionalRuntimeMessagePack<RoleRuntimePackage>(
+    runtime: await fetchRuntimeMessagePack(
       withRuntimeMasterVersion(
         resolveRuntimePackageUrl(baseUrl, entry.roleRuntimePath!),
         masterVersion
       )
-    ),
+    ) as RoleRuntimePackage,
   })));
   for (const item of loaded) {
-    if (!item.runtime) {
-      continue;
-    }
     const characterId = item.runtime.role?.characterId ?? item.entry.characterId;
     const unit = item.runtime.role?.unit ?? item.entry.unit ?? null;
     const runtime = normalizeRoleRuntimePackage(
@@ -322,11 +322,17 @@ async function fetchPartRuntime(baseUrl: string, entry: PartRegistryEntry) {
   return mergePartRuntimeCore(runtime, core) as PartRuntimePackage;
 }
 
+// Registry candidates may be planned before their package has been exported.
+// Only a missing candidate entry is optional; missing cores and decode errors
+// indicate a broken published package and must fail the load.
 async function fetchOptionalPartRuntime(baseUrl: string, entry: PartRegistryEntry) {
+  const url = resolveRuntimePackageUrl(baseUrl, `${entry.packagePath}/part-runtime.msgpack.br`);
   try {
     return await fetchPartRuntime(baseUrl, entry);
-  } catch {
-    return null;
+  } catch (error) {
+    if (error instanceof Error && "status" in error && error.status === 404 &&
+        "url" in error && error.url === url) return null;
+    throw error;
   }
 }
 
@@ -467,7 +473,9 @@ export async function fetchRuntimeMessagePack(url: string) {
   const request = (async () => {
     const response = await fetch(url);
     if (!response.ok) {
-      throw new Error(`Failed to load ${url}: HTTP ${response.status}`);
+      throw Object.assign(new Error(`Failed to load ${url}: HTTP ${response.status}`), {
+        status: response.status, url,
+      });
     }
     return readMessagePackBrotliRuntime(response, url);
   })();
@@ -517,16 +525,43 @@ export function isCacheableRuntimeMetadataUrl(url: string) {
     /\/roles\/[^/]+\/[^/]+\/(?:role-runtime|motion\/unity-motion)\.msgpack\.br$/.test(path);
 }
 
-async function fetchOptionalRuntimeMessagePack<T>(url: string): Promise<T | null> {
-  try {
-    return await fetchRuntimeMessagePack(url) as T;
-  } catch {
-    return null;
+// Exported for the producer/consumer contract harness, not the app-facing API.
+export function normalizePartRegistry(input: PartRegistryInput): PartRegistryEntry[] {
+  const entries = Array.isArray(input) ? input : input.entries ?? input.parts ?? [];
+  if (entries.length === 0) {
+    throw new Error("Runtime part registry is empty.");
   }
-}
-
-function normalizePartRegistry(input: PartRegistryInput): PartRegistryEntry[] {
-  return Array.isArray(input) ? input : input.entries ?? input.parts ?? [];
+  const identities = new Set<string>();
+  for (const [index, entry] of entries.entries()) {
+    const slot = runtimePartSlot(entry);
+    const identity = [
+      entry.characterId,
+      entry.unit ?? "default",
+      slot,
+      entry.costume3dId,
+      entry.packagePath?.replace(/\/$/, ""),
+    ].join("\n");
+    if (
+      !Number.isInteger(entry.characterId) ||
+      entry.characterId <= 0 ||
+      !Number.isInteger(entry.costume3dId) ||
+      entry.costume3dId < 0 ||
+      typeof entry.packagePath !== "string" ||
+      entry.packagePath.length === 0 ||
+      entry.packagePath.startsWith("/") ||
+      entry.packagePath.includes("\\") ||
+      entry.packagePath.replace(/\/$/, "").split("/").some((segment) =>
+        segment.length === 0 || segment === "." || segment === ".."
+      ) ||
+      (entry.status !== undefined &&
+        !["planned", "ready", "empty", "missing"].includes(entry.status)) ||
+      identities.has(identity)
+    ) {
+      throw new Error(`Runtime part registry entry ${index} is invalid or duplicated.`);
+    }
+    identities.add(identity);
+  }
+  return entries;
 }
 
 type AddPartCandidate = (entry: PartRegistryEntry | undefined) => void;

@@ -16,7 +16,6 @@ public static class ConversionOptionsParser
         "  Haruki-3D-Exporter --emit-runtime-role-catalog --master <master-directory> --out <directory>\n" +
         "  Haruki-3D-Exporter --emit-part-packages --part-costume3d-id <id> --part-type <body|head|hair|head_optional> --master <master-directory> --asset-root <AssetBundles-root> --out <directory> [--part-unit <unit>]\n\n" +
         "  Haruki-3D-Exporter --emit-role-runtimes [--role-character3d-id <id>] --master <master-directory> --asset-root <AssetBundles-root> --out <directory> [--motion <bundle-or-export-folder>]\n" +
-        "  Haruki-3D-Exporter --emit-mv-source-set --mv-manifest <manifest.json> --asset-root <raw-bundle-root> --out <directory>\n" +
         "  Haruki-3D-Exporter --export-face-motion --motion <bundle-or-decoded-folder-or-json> --out <face_motion.json-or-directory> [--source-path <bundle-path>]\n\n" +
         "  Add --config <json> to load defaults from haruki-3d-exporter.config.json.\n\n" +
         "Notes:\n" +
@@ -37,7 +36,6 @@ public static class ConversionOptionsParser
         "  --shared-content-store hard-links exact texture and part-runtime bytes into a shared cross-region CAS\n" +
         "  --bundle-hash-index reuses updater-provided SHA-256 values when fingerprinting source bundles\n" +
         "  --bundle-dependency-index preserves updater-provided logical bundle dependency closure\n" +
-        "  --emit-mv-source-set validates and stages a manifest-selected MV bundle closure; output remains source-platform data and must be rebuilt for WebGL\n" +
         "  --png-optimize controls lossless PNG optimization during compaction: oxipng or off\n" +
         "  --texture-format selects final runtime textures: png (default) or ktx2\n" +
         "  --texture-compact-workers limits concurrent PNG optimizers; 0 = min(4, CPU count)\n" +
@@ -135,8 +133,6 @@ public static class ConversionOptionsParser
         state.PartPackageWorkList = config.PartPackageWorkList;
         state.BundleHashIndex = config.BundleHashIndex;
         state.BundleDependencyIndex = config.BundleDependencyIndex;
-        state.EmitMvSourceSet = config.EmitMvSourceSet ?? false;
-        state.MvManifestPath = config.MvManifest;
     }
 
     private static string DefaultWhenBlank(string? value, string fallback)
@@ -199,8 +195,6 @@ public static class ConversionOptionsParser
             case "--part-package-work-list": state.PartPackageWorkList = ReadValue(args, ref index, arg); break;
             case "--bundle-hash-index": state.BundleHashIndex = ReadValue(args, ref index, arg); break;
             case "--bundle-dependency-index": state.BundleDependencyIndex = ReadValue(args, ref index, arg); break;
-            case "--emit-mv-source-set": state.EmitMvSourceSet = true; break;
-            case "--mv-manifest": state.MvManifestPath = ReadValue(args, ref index, arg); break;
             case "--help": case "-?": return "Help requested.";
             default: return $"Unknown argument: {arg}";
         }
@@ -236,24 +230,9 @@ public static class ConversionOptionsParser
                 ? "Missing --master for --emit-runtime-role-catalog."
                 : null;
         }
-        if (state.EmitMvSourceSet)
-        {
-            return ValidateMvSourceSet(state);
-        }
         return state.EmitCostumeRegistries || state.EmitPartPackages || state.EmitRoleRuntimes
             ? ValidateRegistryOperation(state)
             : "Missing final pipeline operation.";
-    }
-
-    private static string? ValidateMvSourceSet(OptionState state)
-    {
-        if (string.IsNullOrWhiteSpace(state.AssetRoot))
-        {
-            return "Missing --asset-root for --emit-mv-source-set.";
-        }
-        return string.IsNullOrWhiteSpace(state.MvManifestPath)
-            ? "Missing --mv-manifest for --emit-mv-source-set."
-            : null;
     }
 
     private static string? ValidateRegistryOperation(OptionState state)
@@ -315,8 +294,7 @@ public static class ConversionOptionsParser
             BlankToNull(state.CompiledContentStore), NormalizePngOptimizeMode(state.PngOptimize),
             NormalizeTextureFormat(state.TextureFormat), state.TextureCompactWorkers,
             state.ConvertModelTextures, BlankToNull(state.PartPackageWorkList),
-            BlankToNull(state.BundleHashIndex), BlankToNull(state.BundleDependencyIndex),
-            state.EmitMvSourceSet, BlankToNull(state.MvManifestPath)
+            BlankToNull(state.BundleHashIndex), BlankToNull(state.BundleDependencyIndex)
         );
     }
 
@@ -448,7 +426,5 @@ public static class ConversionOptionsParser
         public string? PartPackageWorkList { get; set; }
         public string? BundleHashIndex { get; set; }
         public string? BundleDependencyIndex { get; set; }
-        public bool EmitMvSourceSet { get; set; }
-        public string? MvManifestPath { get; set; }
     }
 }

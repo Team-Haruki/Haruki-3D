@@ -446,16 +446,16 @@ public sealed class PartPackageExporter
             IReadOnlyList<HeadMorphChannel> morphChannelBindings = normalizedType is "head" or "hair"
                 ? ReadHeadMorphBindings(imported)
                 : Array.Empty<HeadMorphChannel>();
-            var nativeDeduplication = DeduplicateNativeMeshes(nativeMeshes, builtMaterialSlots.Slots);
+            var nativeValidation = ValidateNativeMeshesWithoutDeduplication(nativeMeshes);
             cachedCore = new PartBuildCore(
                 buildKey,
                 input,
                 inventory,
                 springBone,
                 runtimeSpringBone,
-                nativeDeduplication.NativeMeshes,
+                nativeValidation.NativeMeshes,
                 builtMaterialSlots,
-                nativeDeduplication.Warnings,
+                nativeValidation.Warnings,
                 baseTextures,
                 morphChannelBindings
             );
@@ -512,7 +512,7 @@ public sealed class PartPackageExporter
             .ToList();
         var deltaWarnings = entry.Warnings
             .Concat(core.MaterialSlots.Warnings)
-            .Concat(core.NativeDeduplicationWarnings)
+            .Concat(core.NativeMeshValidationWarnings)
             .Distinct(StringComparer.Ordinal)
             .ToList();
         var coreKey = BuildCoreKey(ShardKey(entry));
@@ -526,7 +526,7 @@ public sealed class PartPackageExporter
             WriteJson(
                 coreRuntimePath,
                 new PartRuntimeCorePackage(
-                    Version: "0415-part-core-3",
+                    Version: "0415-part-core-4",
                     NativeMeshes: core.NativeMeshes,
                     SpringBone: core.RuntimeSpringBone,
                     CharacterControllers: new PjskSekaiRuntimeCharacterControllers(
@@ -539,7 +539,7 @@ public sealed class PartPackageExporter
             );
         }
         var package = new PartRuntimeDeltaPackage(
-            Version: "0415-part-delta-3",
+            Version: "0415-part-delta-4",
             CorePath: coreRuntimeRelativePath,
             Part: partIdentity,
             Source: source,
@@ -693,7 +693,7 @@ public sealed class PartPackageExporter
         var bindingDecisions = PjskSekaiRuntimeExtensionBuilder.BuildBindingDecisions(bones, bindings);
         return new PjskSpringBoneRuntimeUnitySetup(
             Version: "0414-part-1",
-            UnityVersion: "2022.3.21f1",
+            UnityVersion: "2022.3.62f2",
             CoordinateSpace: new PjskUnityRuntimeCoordinateSpace(
                 Source: "unity-left-handed",
                 Viewer: "three-js-right-handed",
@@ -904,78 +904,57 @@ public sealed class PartPackageExporter
         PartRuntimeSpringBone RuntimeSpringBone,
         PjskUnityRuntimeNativeMeshSet NativeMeshes,
         BuiltMaterialSlots MaterialSlots,
-        IReadOnlyList<string> NativeDeduplicationWarnings,
+        IReadOnlyList<string> NativeMeshValidationWarnings,
         IReadOnlyDictionary<string, string> BaseTextures,
         IReadOnlyList<HeadMorphChannel> MorphChannelBindings
     );
 
-    private sealed record NativeMeshDeduplicationResult(
+    private sealed record NativeMeshValidationResult(
         PjskUnityRuntimeNativeMeshSet NativeMeshes,
         IReadOnlyList<string> Warnings
     );
 
-    private static NativeMeshDeduplicationResult DeduplicateNativeMeshes(
-        PjskUnityRuntimeNativeMeshSet nativeMeshes,
-        IReadOnlyList<PjskSekaiRuntimeMaterialSlot> materialSlots
+    private static NativeMeshValidationResult ValidateNativeMeshesWithoutDeduplication(
+        PjskUnityRuntimeNativeMeshSet nativeMeshes
     )
     {
-        var materialSlotByKey = materialSlots
-            .GroupBy(slot => slot.MaterialKey, StringComparer.Ordinal)
-            .ToDictionary(group => group.Key, group => group.First(), StringComparer.Ordinal);
-        var warnings = new List<string>();
-        var meshes = nativeMeshes.Meshes
-            .GroupBy(mesh => $"{mesh.PartKind}::{mesh.MeshPath}::{mesh.RendererTransformPath}", StringComparer.OrdinalIgnoreCase)
-            .Select(group =>
-            {
-                if (group.Count() == 1)
-                {
-                    return group.First();
-                }
-
-                var ranked = group
-                    .Select(mesh => new
-                    {
-                        Mesh = mesh,
-                        Score = ScoreNativeMeshMaterialCompleteness(mesh, materialSlotByKey),
-                    })
-                    .OrderByDescending(candidate => candidate.Score)
-                    .ThenBy(candidate => candidate.Mesh.RendererPathId)
-                    .ToList();
-                var kept = ranked[0];
-                var dropped = ranked.Skip(1)
-                    .Select(candidate => string.Join(",", candidate.Mesh.Submeshes.Select(submesh => submesh.MaterialKey).Distinct(StringComparer.Ordinal)))
-                    .ToList();
-                warnings.Add(
-                    $"Duplicate native mesh '{kept.Mesh.RendererTransformPath}' kept material(s) {string.Join(",", kept.Mesh.Submeshes.Select(submesh => submesh.MaterialKey).Distinct(StringComparer.Ordinal))} and dropped {string.Join("; ", dropped)} by material texture completeness."
-                );
-                return kept.Mesh;
-            })
-            .ToList();
-
-        return new NativeMeshDeduplicationResult(
-            nativeMeshes with { Meshes = meshes },
-            warnings
-        );
-    }
-
-    private static int ScoreNativeMeshMaterialCompleteness(
-        PjskUnityRuntimeNativeMesh mesh,
-        Dictionary<string, PjskSekaiRuntimeMaterialSlot> materialSlotByKey
-    )
-    {
-        var score = 0;
-        foreach (var submesh in mesh.Submeshes)
+        foreach (var mesh in nativeMeshes.Meshes)
         {
-            if (!materialSlotByKey.TryGetValue(submesh.MaterialKey, out var slot))
+            if (mesh.RendererPathId == 0)
             {
-                continue;
+                throw new InvalidOperationException(
+                    $"Native mesh '{mesh.MeshPath}' has no Renderer PathID."
+                );
             }
-            score += string.IsNullOrWhiteSpace(slot.MainTex) ? 0 : 1;
-            score += string.IsNullOrWhiteSpace(slot.ShadowTex) ? 0 : 2;
-            score += string.IsNullOrWhiteSpace(slot.ValueTex) ? 0 : 4;
-            score += string.IsNullOrWhiteSpace(slot.FaceShadowTex) ? 0 : 2;
+            var duplicateSlots = mesh.Submeshes
+                .GroupBy(submesh => submesh.SlotIndex)
+                .Where(group => group.Count() != 1)
+                .Select(group => group.Key)
+                .OrderBy(value => value)
+                .ToArray();
+            if (duplicateSlots.Length != 0)
+            {
+                throw new InvalidOperationException(
+                    $"Native Renderer PathID {mesh.RendererPathId} has duplicate material " +
+                    $"slots: {string.Join(", ", duplicateSlots)}."
+                );
+            }
         }
-        return score;
+
+        var duplicateRenderers = nativeMeshes.Meshes
+            .GroupBy(mesh => mesh.RendererPathId)
+            .Where(group => group.Count() != 1)
+            .OrderBy(group => group.Key)
+            .ToArray();
+        if (duplicateRenderers.Length != 0)
+        {
+            throw new InvalidOperationException(
+                "Native mesh export produced duplicate Renderer PathIDs: " +
+                string.Join(", ", duplicateRenderers.Select(group => group.Key)) + "."
+            );
+        }
+
+        return new NativeMeshValidationResult(nativeMeshes, Array.Empty<string>());
     }
 
     private static IReadOnlyList<PjskSekaiRuntimeMaterialSlot> FilterMaterialSlotsForNativeMeshes(
@@ -1445,17 +1424,13 @@ public sealed class PartPackageExporter
             {
                 return false;
             }
-            if (partType is not ("head" or "hair"))
-            {
-                return true;
-            }
-            if (!HasResolvedEyelashMasks(document.RootElement))
+            if (partType is "head" or "hair" && !HasResolvedEyelashMasks(document.RootElement))
             {
                 return false;
             }
             using var coreDocument = RuntimeJsonWriter.ReadJsonDocument(corePath);
             return coreDocument.RootElement.TryGetProperty("version", out var coreVersion) &&
-                coreVersion.GetString() == "0415-part-core-3";
+                coreVersion.GetString() == "0415-part-core-4";
         }
         catch (Exception)
         {
@@ -1467,7 +1442,7 @@ public sealed class PartPackageExporter
     {
         corePath = string.Empty;
         if (!runtime.TryGetProperty("version", out var version) ||
-            version.GetString() != "0415-part-delta-3" ||
+            version.GetString() != "0415-part-delta-4" ||
             !runtime.TryGetProperty("corePath", out var corePathNode))
         {
             return false;
@@ -2107,24 +2082,11 @@ public sealed class PartPackageExporter
             .SelectMany(morph => morph.Channels.Select(channel => new HeadMorphChannel(
                 Name: channel.Name,
                 SourceName: channel.Name,
-                NameHash: Fnv1A32(channel.Name),
-                CurveHash: Fnv1A32($"blendShape.{channel.Name}")
+                NameHash: MotionPackageExporter.CalculateCrc32(channel.Name),
+                CurveHash: MotionPackageExporter.CalculateCrc32(channel.Name)
             )))
             .DistinctBy(channel => channel.Name, StringComparer.OrdinalIgnoreCase)
             .ToList();
-    }
-
-    private static uint Fnv1A32(string value)
-    {
-        const uint offsetBasis = 2166136261;
-        const uint prime = 16777619;
-        var hash = offsetBasis;
-        foreach (var c in value)
-        {
-            hash ^= c;
-            hash *= prime;
-        }
-        return hash;
     }
 
     private static bool ReadBool(System.Text.Json.Nodes.JsonObject raw, string name, bool defaultValue)

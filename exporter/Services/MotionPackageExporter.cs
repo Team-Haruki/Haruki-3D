@@ -10,7 +10,7 @@ namespace PjskBundle2Parts.Services;
 
 public sealed class MotionPackageExporter
 {
-    private const string SekaiUnityVersion = "2022.3.21f1";
+    private const string SekaiUnityVersion = "2022.3.62f2";
     private const float BakeSampleRate = 120f;
     private const uint SekaiBlendShapeCrc = 2770785369;
 
@@ -1224,7 +1224,7 @@ public sealed class MotionPackageExporter
         return keyframes.All(keyframe => MathF.Abs(keyframe.Value - value) <= 1e-5f);
     }
 
-    private static uint CalculateCrc32(string value)
+    internal static uint CalculateCrc32(string value)
     {
         var crc = 0xffffffffu;
         foreach (var b in System.Text.Encoding.UTF8.GetBytes(value))

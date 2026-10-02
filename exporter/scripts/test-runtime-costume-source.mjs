@@ -33,7 +33,7 @@ test("part exporter preserves official runtime resource names and FaceSDF metada
   assert.match(exporter, /"body" => "body"/);
   assert.match(exporter, /"head" or "hair" => "face"/);
   assert.match(exporter, /"head_optional" => "optional"/);
-  assert.match(exporter, /resourceExtractor\.Extract/);
+  assert.match(exporter, /OfficialUnityResourceExtractor\.Extract/);
   assert.match(officialExtractor, /bundle\.m_Container/);
   assert.match(officialExtractor, /BuildExpectedContainerSuffix/);
   assert.match(officialExtractor, /ContainerPath\.EndsWith\(expectedContainerSuffix/);

@@ -1,15 +1,14 @@
 # Haruki-3D
 
-Monorepo for the Haruki 3D pipeline: an offline converter that turns Project
-SEKAI Unity AssetBundles into a browser-friendly runtime package format, and a
-browser engine that renders those packages.
+Monorepo for the Project SEKAI Costume pipeline: an offline converter that
+turns character and costume Unity AssetBundles into runtime packages, and a
+browser engine for character assembly, wardrobe changes, and preview capture.
 
 - `exporter/` — C# / .NET 8 offline converter. Reads Unity AssetBundles with
   the Team-Haruki AssetStudio fork and emits the Brotli-compressed MessagePack
   (`.msgpack.br`) runtime package format.
-- `engine/` — TypeScript + Three.js browser runtime plus the Unity WebGL MV
-  host (npm package `haruki-3d-engine`). Loads only the exported runtime
-  packages, never raw bundles.
+- `engine/` — TypeScript + Three.js CostumeShop runtime and persistent capture
+  service (npm package `haruki-3d-engine`). Loads the exported runtime packages.
 - `contract/` — the authoritative package format specification
   ([contract/SPEC.md](contract/SPEC.md)) and the cross-language round-trip
   test ([contract/roundtrip/](contract/roundtrip/)) that keeps exporter output
@@ -18,7 +17,7 @@ browser engine that renders those packages.
 ## Pipeline
 
 ```text
-game bundles + masterdata -> exporter -> .msgpack.br package -> engine (CostumeShop / MV) -> browser
+costume bundles + masterdata -> exporter -> .msgpack.br packages -> CostumeShop -> browser / preview PNG
 ```
 
 ## Quick Start

@@ -9,6 +9,7 @@ import {
 } from "./unityConstraintRuntime";
 import {
   convertUnityPositionToThree,
+  getUnityWorldQuaternion,
   convertUnityQuaternionToThree,
   readUnityQuaternion,
   readUnityVector3,
@@ -221,8 +222,12 @@ type RuntimeNativeSubmeshSource = {
 type RuntimeNativeMorphTargetSource = {
   name?: string;
   indices?: RuntimeNumericArray;
+  hasPositionDeltas?: boolean;
   positionDeltas?: RuntimeNumericArray;
+  hasNormalDeltas?: boolean;
   normalDeltas?: RuntimeNumericArray;
+  hasTangentDeltas?: boolean;
+  tangentDeltas?: RuntimeNumericArray;
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -853,7 +858,16 @@ function installUnityRuntimeNativeMeshSource(
   }
   const geometry = buildUnityRuntimeNativeGeometry(source);
   if (!geometry) {
-    warnings.push(`Native mesh '${nativeMeshLabel(source)}' skipped: invalid geometry payload.`);
+    const error = `Native mesh '${nativeMeshLabel(source)}' skipped: invalid geometry payload.`;
+    warnings.push(error);
+    fatalErrors.push(error);
+    return { installed: false, skinned: false };
+  }
+  if (!source.submeshes?.length || geometry.groups.length !== source.submeshes.length) {
+    geometry.dispose();
+    const error = `Native mesh '${nativeMeshLabel(source)}' has no exact submesh/material-slot mapping.`;
+    warnings.push(error);
+    fatalErrors.push(error);
     return { installed: false, skinned: false };
   }
   const meshMaterials = buildNativeMeshMaterials(source, geometry);
@@ -923,9 +937,7 @@ function resolveNativeMeshParent(
   }
   const error = `Native mesh '${nativeMeshLabel(source)}' skipped: renderer transform '${targetPath ?? "<null>"}' was not found.`;
   warnings.push(error);
-  if (typeof source.rendererTransformPathId === "number") {
-    fatalErrors.push(error);
-  }
+  fatalErrors.push(error);
   return null;
 }
 
@@ -933,19 +945,23 @@ function buildNativeMeshMaterials(
   source: RuntimeNativeMeshSource,
   geometry: THREE.BufferGeometry
 ): THREE.Material[] {
-  const materials = (source.submeshes ?? []).map((submesh) => {
+  const materials = (source.submeshes ?? []).map((submesh, index) => {
     if (!submesh.materialKey || typeof submesh.slotIndex !== "number") {
       throw new Error(
         `Native mesh '${nativeMeshLabel(source)}' has a submesh without material identity; regenerate it with Haruki-3D-Exporter materialKey runtime support.`
       );
     }
+    if (submesh.slotIndex !== index) {
+      throw new Error(`Native mesh '${nativeMeshLabel(source)}' material slot ${submesh.slotIndex} is out of order; expected ${index}.`);
+    }
     const material = new THREE.MeshBasicMaterial({ color: 0xffffff, vertexColors: geometry.hasAttribute("color") });
     material.name = submesh.materialName ?? source.meshName ?? source.meshPath ?? "native_material";
     material.userData.pjskMaterialKey = submesh.materialKey;
     material.userData.pjskMaterialSlotIndex = submesh.slotIndex;
+    material.userData.pjskPlaceholderMaterial = true;
     return material;
   });
-  return materials.length > 0 ? materials : [new THREE.MeshBasicMaterial({ color: 0xffffff })];
+  return materials;
 }
 
 function resolveNativeMeshBones(
@@ -1109,11 +1125,15 @@ function buildUnityRuntimeBoneInverseBindMatrices(
 ) {
   const values = source.boneInverseBindMatrices ?? [];
   if (boneCount === 0 || values.length === 0) {
-    return [];
+    if (boneCount === 0 && values.length === 0) {
+      return [];
+    }
+    throw new Error(
+      `Native mesh inverse bind matrices are missing for ${boneCount} bones.`
+    );
   }
   if (values.length !== boneCount * 16) {
-    warnings.push(`Native mesh '${source.meshPath ?? source.meshName ?? "<unnamed>"}' has ${values.length} inverse bind matrix floats for ${boneCount} bones; expected ${boneCount * 16}.`);
-    return [];
+    throw new Error(`Native mesh '${source.meshPath ?? source.meshName ?? "<unnamed>"}' has ${values.length} inverse bind matrix floats for ${boneCount} bones; expected ${boneCount * 16}.`);
   }
 
   const matrices: THREE.Matrix4[] = [];
@@ -1132,7 +1152,7 @@ function buildUnityRuntimeNativeGeometry(source: RuntimeNativeMeshSource) {
   const geometry = new THREE.BufferGeometry();
   geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
   addNativeGeometryAttributes(geometry, source, vertexCount);
-  addNativeGeometryIndices(geometry, source.submeshes ?? []);
+  addNativeGeometryIndices(geometry, source, vertexCount);
   addNativeGeometryMorphTargets(geometry, source.morphTargets ?? [], vertexCount);
 
   geometry.computeBoundingSphere();
@@ -1144,6 +1164,12 @@ function addNativeGeometryAttributes(
   source: RuntimeNativeMeshSource,
   vertexCount: number
 ) {
+  for (const [name, size] of [["normals", 3], ["tangents", 4], ["uv0", 2], ["uv1", 2], ["uv2", 2], ["colors", 4], ["skinIndices", 4], ["skinWeights", 4]] as const) {
+    requireOptionalAttributeLength(source, name, vertexCount * size);
+  }
+  if ((source.skinIndices?.length ?? 0) !== (source.skinWeights?.length ?? 0)) {
+    throw new Error(`Native mesh '${nativeMeshLabel(source)}' has incomplete skin indices/weights.`);
+  }
   addFloatGeometryAttribute(geometry, "normal", source.normals, 3, vertexCount);
   if (source.tangents?.length === vertexCount * 4) {
     geometry.setAttribute("tangent", new THREE.Float32BufferAttribute(source.tangents, 4));
@@ -1184,12 +1210,20 @@ function addUint16GeometryAttribute(
 
 function addNativeGeometryIndices(
   geometry: THREE.BufferGeometry,
-  submeshes: RuntimeNativeSubmeshSource[]
+  source: RuntimeNativeMeshSource,
+  vertexCount: number
 ) {
+  const submeshes = source.submeshes ?? [];
   const allIndices: number[] = [];
   for (const submesh of submeshes) {
     const start = allIndices.length;
     const indices = submesh.indices ?? [];
+    if (indices.length === 0 || indices.some((value) =>
+      !Number.isInteger(value) || value < 0 || value >= vertexCount)) {
+      throw new Error(
+        `Native mesh '${source.meshPath ?? source.meshName ?? "<unnamed>"}' has invalid submesh indices.`
+      );
+    }
     allIndices.push(...indices);
     geometry.addGroup(start, indices.length, geometry.groups.length);
   }
@@ -1203,64 +1237,151 @@ function addNativeGeometryMorphTargets(
   targets: RuntimeNativeMorphTargetSource[],
   vertexCount: number
 ) {
-  const positions: THREE.BufferAttribute[] = [];
-  const normals: THREE.BufferAttribute[] = [];
+  const morphPositions: THREE.BufferAttribute[] = [];
+  const morphNormals: THREE.BufferAttribute[] = [];
+  const morphTangents: THREE.BufferAttribute[] = [];
+  const morphNames = new Set<string>();
   for (const target of targets) {
-    addNativeGeometryMorphTarget(target, vertexCount, positions, normals);
-  }
-  if (positions.length > 0) {
-    geometry.morphAttributes.position = positions;
-    geometry.morphTargetsRelative = true;
-  }
-  if (normals.length === positions.length && normals.length > 0) {
-    geometry.morphAttributes.normal = normals;
-  }
-}
+    const name = target.name;
+    if (typeof name !== "string" || name.trim().length === 0) {
+      throw new Error(
+        `Native mesh '${"native geometry"}' has a morph target without a name.`
+      );
+    }
+    if (morphNames.has(name)) {
+      throw new Error(
+        `Native mesh '${"native geometry"}' has duplicate target name '${name}'.`
+      );
+    }
+    morphNames.add(name);
 
-function addNativeGeometryMorphTarget(
-  target: RuntimeNativeMorphTargetSource,
-  vertexCount: number,
-  positions: THREE.BufferAttribute[],
-  normals: THREE.BufferAttribute[]
-) {
-  const indices = target.indices ?? [];
-  const positionDeltas = target.positionDeltas ?? [];
-  if (indices.length === 0 || positionDeltas.length !== indices.length * 3) {
-    return;
-  }
-  const positionArray = new Float32Array(vertexCount * 3);
-  const normalArray = target.normalDeltas?.length === indices.length * 3
-    ? new Float32Array(vertexCount * 3)
-    : null;
-  for (let index = 0; index < indices.length; index += 1) {
-    copyNativeMorphDelta(indices[index], index, vertexCount, positionDeltas, positionArray);
-    if (normalArray && target.normalDeltas) {
-      copyNativeMorphDelta(indices[index], index, vertexCount, target.normalDeltas, normalArray);
+    if (target.hasPositionDeltas !== true) {
+      throw new Error(
+        `Native morph target '${name}' must explicitly declare position deltas present with hasPositionDeltas=true.`
+      );
+    }
+    if (typeof target.hasNormalDeltas !== "boolean") {
+      throw new Error(`Native morph target '${name}' must explicitly declare hasNormalDeltas.`);
+    }
+    if (typeof target.hasTangentDeltas !== "boolean") {
+      throw new Error(`Native morph target '${name}' must explicitly declare hasTangentDeltas.`);
+    }
+
+    const indices = target.indices;
+    const positionDeltas = target.positionDeltas;
+    const normalDeltas = target.normalDeltas;
+    const tangentDeltas = target.tangentDeltas;
+    if (!indices || indices.length === 0) {
+      throw new Error(`Native morph target '${name}' must contain a non-empty indices array.`);
+    }
+    if (!positionDeltas || positionDeltas.length !== indices.length * 3) {
+      throw new Error(`Native morph target '${name}' has invalid positionDeltas length.`);
+    }
+    if (!normalDeltas || normalDeltas.length !==
+      (target.hasNormalDeltas ? indices.length * 3 : 0)) {
+      throw new Error(
+        `Native morph target '${name}' has invalid normalDeltas length for hasNormalDeltas=${target.hasNormalDeltas}.`
+      );
+    }
+    if (!tangentDeltas || tangentDeltas.length !==
+      (target.hasTangentDeltas ? indices.length * 3 : 0)) {
+      throw new Error(
+        `Native morph target '${name}' has invalid tangentDeltas length for hasTangentDeltas=${target.hasTangentDeltas}.`
+      );
+    }
+    if (
+      !Array.from(positionDeltas).every(Number.isFinite) ||
+      !Array.from(normalDeltas).every(Number.isFinite) ||
+      !Array.from(tangentDeltas).every(Number.isFinite)
+    ) {
+      throw new Error(`Native morph target '${name}' delta arrays must contain only finite numbers.`);
+    }
+
+    const positionArray = new Float32Array(vertexCount * 3);
+    const normalArray = target.hasNormalDeltas
+      ? new Float32Array(vertexCount * 3)
+      : null;
+    const tangentArray = target.hasTangentDeltas
+      ? new Float32Array(vertexCount * 3)
+      : null;
+    const seenIndices = new Set<number>();
+    for (let index = 0; index < indices.length; index += 1) {
+      const vertexIndex = indices[index];
+      if (!Number.isInteger(vertexIndex) || vertexIndex < 0 || vertexIndex >= vertexCount) {
+        throw new Error(`Native morph target '${name}' has invalid vertex index ${vertexIndex}.`);
+      }
+      if (seenIndices.has(vertexIndex)) {
+        throw new Error(`Native morph target '${name}' has duplicate vertex index ${vertexIndex}.`);
+      }
+      seenIndices.add(vertexIndex);
+      positionArray[vertexIndex * 3] = positionDeltas[index * 3]!;
+      positionArray[vertexIndex * 3 + 1] = positionDeltas[index * 3 + 1]!;
+      positionArray[vertexIndex * 3 + 2] = positionDeltas[index * 3 + 2]!;
+      if (normalArray) {
+        normalArray[vertexIndex * 3] = normalDeltas[index * 3]!;
+        normalArray[vertexIndex * 3 + 1] = normalDeltas[index * 3 + 1]!;
+        normalArray[vertexIndex * 3 + 2] = normalDeltas[index * 3 + 2]!;
+      }
+      if (tangentArray) {
+        tangentArray[vertexIndex * 3] = tangentDeltas[index * 3]!;
+        tangentArray[vertexIndex * 3 + 1] = tangentDeltas[index * 3 + 1]!;
+        tangentArray[vertexIndex * 3 + 2] = tangentDeltas[index * 3 + 2]!;
+      }
+    }
+    const positionAttribute = new THREE.BufferAttribute(positionArray, 3);
+    positionAttribute.name = name;
+    morphPositions.push(positionAttribute);
+    if (normalArray) {
+      const normalAttribute = new THREE.BufferAttribute(normalArray, 3);
+      normalAttribute.name = name;
+      morphNormals.push(normalAttribute);
+    }
+    if (tangentArray) {
+      const tangentAttribute = new THREE.BufferAttribute(tangentArray, 3);
+      tangentAttribute.name = name;
+      morphTangents.push(tangentAttribute);
     }
   }
-  const positionAttribute = new THREE.BufferAttribute(positionArray, 3);
-  positionAttribute.name = target.name ?? `morph_${positions.length}`;
-  positions.push(positionAttribute);
-  if (normalArray) {
-    const normalAttribute = new THREE.BufferAttribute(normalArray, 3);
-    normalAttribute.name = positionAttribute.name;
-    normals.push(normalAttribute);
+  if (morphPositions.length > 0) {
+    geometry.morphAttributes.position = morphPositions;
+    geometry.morphTargetsRelative = true;
   }
+  if (morphNormals.length > 0 && morphNormals.length !== morphPositions.length) {
+    throw new Error(
+      `Native mesh '${"native geometry"}' has mixed normal delta presence across morph targets.`
+    );
+  }
+  if (morphNormals.length > 0) {
+    geometry.morphAttributes.normal = morphNormals;
+  }
+  if (morphTangents.length > 0 && morphTangents.length !== morphPositions.length) {
+    throw new Error(
+      `Native mesh '${"native geometry"}' has mixed tangent delta presence across morph targets.`
+    );
+  }
+  if (morphTangents.length > 0) {
+    const preservedMorphAttributes = geometry.morphAttributes as
+      typeof geometry.morphAttributes & { tangent?: THREE.BufferAttribute[] };
+    preservedMorphAttributes.tangent = morphTangents;
+    const tangent = geometry.getAttribute("tangent");
+    if (!tangent || tangent.itemSize !== 4 || tangent.count !== vertexCount) {
+      throw new Error("Native morph tangent deltas require a complete base tangent attribute.");
+    }
+  }
+
 }
 
-function copyNativeMorphDelta(
-  vertexIndex: number | undefined,
-  deltaIndex: number,
-  vertexCount: number,
-  deltas: RuntimeNumericArray,
-  output: Float32Array
+function requireOptionalAttributeLength(
+  source: RuntimeNativeMeshSource,
+  name: "normals" | "tangents" | "uv0" | "uv1" | "uv2" | "colors" | "skinIndices" | "skinWeights",
+  expected: number
 ) {
-  if (!Number.isInteger(vertexIndex) || vertexIndex! < 0 || vertexIndex! >= vertexCount) {
-    return;
+  const values = source[name] ?? [];
+  if (values.length !== 0 && values.length !== expected) {
+    throw new Error(
+      `Native mesh '${source.meshPath ?? source.meshName ?? "<unnamed>"}' attribute '${name}' has ${values.length} values; expected ${expected}.`
+    );
   }
-  output[vertexIndex! * 3] = deltas[deltaIndex * 3] ?? 0;
-  output[vertexIndex! * 3 + 1] = deltas[deltaIndex * 3 + 1] ?? 0;
-  output[vertexIndex! * 3 + 2] = deltas[deltaIndex * 3 + 2] ?? 0;
 }
 
 export function syncUnityPrefabSourceGraph(
@@ -1440,7 +1561,7 @@ function makePrefabNodeDebug(
   const worldQuaternion = new THREE.Quaternion();
   const worldForward = new THREE.Vector3(0, 0, 1);
   node.getWorldPosition(worldPosition);
-  node.getWorldQuaternion(worldQuaternion);
+  getUnityWorldQuaternion(node, worldQuaternion);
   worldForward.applyQuaternion(worldQuaternion).normalize();
   return {
     path: buildObjectPath(node, root),
@@ -1523,8 +1644,6 @@ export const unityPrefabRuntimeInternals = {
   addUint16GeometryAttribute,
   addNativeGeometryIndices,
   addNativeGeometryMorphTargets,
-  addNativeGeometryMorphTarget,
-  copyNativeMorphDelta,
   readRuntimeUnitySetupVersion,
   resolvePrefabNodeCandidate,
   stripThreeDuplicateSuffix,

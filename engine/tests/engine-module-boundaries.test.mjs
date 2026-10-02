@@ -17,22 +17,10 @@ test("camera policy is isolated from the engine orchestrator", () => {
   assert.match(cameraSource, /export function getDefaultCameraPose/);
 });
 
-test("base, CostumeShop, and MV have one-way module boundaries", () => {
-  const baseSource = [
-    readSource("src/base/index.ts"),
-    readSource("src/base/browserCharacterRuntime.ts"),
-  ].join("\n");
-  const costumeShopSource = readSource("src/costume_shop/CostumeShopKernel.ts");
-  const mvSource = [
-    readSource("src/mv/index.ts"),
-    readSource("src/mv/HarukiMvRuntime.ts"),
-    readSource("src/mv/unityWebGLBuild.ts"),
-  ].join("\n");
-
-  assert.doesNotMatch(baseSource, /costume_shop|\/mv\//i);
-  assert.match(costumeShopSource, /\.\.\/base\/browserCharacterRuntime/);
-  assert.doesNotMatch(mvSource, /costume_shop|from ["']three["']/i);
-  assert.match(mvSource, /createUnityInstance/);
+test("base and CostumeShop have one-way module boundaries", () => {
+  const baseSource = [readSource("src/base/index.ts"), readSource("src/base/browserCharacterRuntime.ts")].join("\n");
+  assert.doesNotMatch(baseSource, /costume_shop/);
+  assert.match(readSource("src/costume_shop/CostumeShopKernel.ts"), /\.\.\/base\/browserCharacterRuntime/);
 });
 
 test("capture background generation is isolated from rendering", () => {
@@ -139,29 +127,7 @@ test("through-hair pass policy and submesh cloning are isolated from engine stat
   assert.match(headMaterialSource, /const CHARACTER_STENCIL_BIT = 0x01/);
 });
 
-// ---------------------------------------------------------------------------
-// Transitive import-graph enforcement.
-//
-// CONTEXT.md invariants: "Base never depends on Costume Shop or MV" and
-// "Costume Shop and MV may depend on Base, but never on each other". The
-// regex tests above check hand-picked files; the walker below resolves every
-// import/export edge (static, re-export, dynamic, and `import type`) across
-// engine/src/ and asserts the invariants over the full transitive closure, so
-// a new edge in any shared file fails without this test being updated.
-//
-// POLICY on `import type`: CONTEXT.md motivates the boundary in runtime terms
-// ("Runtime modules may share Base capabilities, but they do not inherit each
-// other's camera, lighting, scene, or interaction rules") but states the
-// invariant as an unqualified dependency rule ("never depends"). We enforce
-// the strict reading: type-only edges are forbidden across the boundaries too,
-// because today's tree has no cross-boundary type-only edge, so the strict
-// reading locks the status quo without an allowlist. The `three` rule for MV
-// is the exception: it is asserted on value imports only, because
-// `import type` from "three" is erased at build time and would not pull
-// three.js into the Unity-based MV bundle — that invariant is about runtime
-// payload, not declarations.
-// ---------------------------------------------------------------------------
-
+// Enforce Costume runtime boundaries over transitive imports, including types.
 const srcRoot = path.join(repoRoot, "src");
 
 const stripComments = (source) =>
@@ -269,9 +235,6 @@ const moduleGroup = (file) => {
   if (relative.startsWith("costume_shop/")) {
     return "costume_shop";
   }
-  if (relative.startsWith("mv/")) {
-    return "mv";
-  }
   return "shared";
 };
 
@@ -285,7 +248,7 @@ const listTsFiles = (dir) =>
 const closureMembersInGroup = (modules, group) =>
   [...modules.keys()].filter((file) => moduleGroup(file) === group).map(srcRelative).sort();
 
-test("import graph: base transitive closure never reaches costume_shop or mv", () => {
+test("import graph: base transitive closure never reaches costume_shop", () => {
   const modules = collectClosure([path.join(srcRoot, "base/index.ts")], { followTypeOnly: true });
   const reached = [...modules.keys()].map(srcRelative).sort();
 
@@ -295,47 +258,10 @@ test("import graph: base transitive closure never reaches costume_shop or mv", (
   assert.ok(reached.includes("engine/unityPrefabRuntime.ts"));
 
   assert.deepEqual(closureMembersInGroup(modules, "costume_shop"), []);
-  assert.deepEqual(closureMembersInGroup(modules, "mv"), []);
-});
-
-test("import graph: costume_shop and mv never reach each other", () => {
-  const costumeShop = collectClosure(listTsFiles(path.join(srcRoot, "costume_shop")), {
-    followTypeOnly: true,
-  });
-  const costumeShopReached = [...costumeShop.keys()].map(srcRelative);
-  // Costume Shop legitimately reaches the shared engine orchestrator (which
-  // imports its camera/height policies back — see the debt-lock test below).
-  assert.ok(costumeShopReached.includes("engine/Haruki3DEngine.ts"));
-  assert.ok(costumeShopReached.includes("costume_shop/cameraPolicy.ts"));
-  assert.deepEqual(closureMembersInGroup(costumeShop, "mv"), []);
-
-  const mv = collectClosure(listTsFiles(path.join(srcRoot, "mv")), { followTypeOnly: true });
-  assert.ok([...mv.keys()].map(srcRelative).includes("mv/HarukiMvRuntime.ts"));
-  assert.deepEqual(closureMembersInGroup(mv, "costume_shop"), []);
-});
-
-test("import graph: mv runtime never value-imports three", () => {
-  const mv = collectClosure(listTsFiles(path.join(srcRoot, "mv")), { followTypeOnly: true });
-  const offenders = [...mv.entries()]
-    .filter(([, record]) =>
-      record.externals.some((external) => external.name === "three" && !external.typeOnly)
-    )
-    .map(([file]) => srcRelative(file))
-    .sort();
-  assert.deepEqual(offenders, []);
 });
 
 test("import graph: costume_shop back-edges outside the module are locked to known files", () => {
-  // Every import of costume_shop from outside src/costume_shop/, locked as an
-  // exact set so any NEW edge fails this test. Today's edges, by kind:
-  // - index.ts, internal.ts, kernel/Haruki3DKernel.ts: sanctioned by
-  //   CONTEXT.md ("The default package entry remains the Costume Shop kernel
-  //   for compatibility").
-  // - engine/Haruki3DEngine.ts, engine/cameraRuntime.ts: DEBT — shared engine
-  //   code value-imports Costume Shop camera/height policy. The invariant
-  //   still holds because neither file is reachable from src/base/index.ts
-  //   (the closure test above proves it), but any base-reachable module that
-  //   starts importing them would flip "Base never depends on Costume Shop".
+  // Keep shared engine policy imports explicit.
   const importers = listTsFiles(srcRoot)
     .filter((file) => moduleGroup(file) !== "costume_shop")
     .filter((file) => readModuleRecord(file).imports.some((edge) => moduleGroup(edge.file) === "costume_shop"))
@@ -349,11 +275,4 @@ test("import graph: costume_shop back-edges outside the module are locked to kno
     "kernel/Haruki3DKernel.ts",
   ]);
 
-  // No file outside src/mv/ imports mv at all today; lock that exact state.
-  const mvImporters = listTsFiles(srcRoot)
-    .filter((file) => moduleGroup(file) !== "mv")
-    .filter((file) => readModuleRecord(file).imports.some((edge) => moduleGroup(edge.file) === "mv"))
-    .map(srcRelative)
-    .sort();
-  assert.deepEqual(mvImporters, []);
 });

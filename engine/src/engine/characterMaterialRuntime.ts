@@ -278,7 +278,7 @@ export async function loadRuntimeTexture(
     texture.colorSpace = colorSpace;
     texture.needsUpdate = true;
     return texture;
-  }, () => null).finally(() => {
+  }).finally(() => {
     if (requests.get(key) === loading) {
       requests.delete(key);
     }

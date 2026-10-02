@@ -23,7 +23,6 @@ return await RunSelectedOperationAsync(options);
 
 static Task<int> RunSelectedOperationAsync(ConversionOptions options)
 {
-    if (options.EmitMvSourceSet) return RunMvSourceSetAsync(options);
     if (options.EmitRuntimeRoleCatalog) return RunRuntimeRoleCatalogAsync(options);
     if (options.OptimizeTextureStore) return RunTextureStoreOptimizationAsync(options);
     if (options.ExportFaceMotion) return RunFaceMotionExportAsync(options);
@@ -31,22 +30,6 @@ static Task<int> RunSelectedOperationAsync(ConversionOptions options)
     if (options.EmitCostumeRegistries) return RunCostumeRegistryExportAsync(options);
     if (options.EmitPartPackages) return RunPartPackageExportAsync(options);
     return ReportMissingOperationAsync();
-}
-
-static async Task<int> RunMvSourceSetAsync(ConversionOptions options)
-{
-    try
-    {
-        var result = MvSourceSetExporter.Export(options.MvManifestPath!, options.AssetRoot!, options.OutputDirectory);
-        Console.WriteLine($"Wrote MV {result.MusicId} source set: {result.BundleCount} bundle(s), {result.TotalBytes} byte(s).");
-        Console.WriteLine("These are source-platform Unity bundles; rebuild them for WebGL before browser loading.");
-        return 0;
-    }
-    catch (Exception ex)
-    {
-        await Console.Error.WriteLineAsync($"MV source set export failed: {ex.Message}");
-        return 2;
-    }
 }
 
 static async Task<int> RunRuntimeRoleCatalogAsync(ConversionOptions options)
@@ -220,7 +203,7 @@ static async Task<int> ExportAllPartPackagesAsync(ConversionOptions options, Par
 
 static async Task<int> ReportMissingOperationAsync()
 {
-    await Console.Error.WriteLineAsync("Choose one final pipeline operation: --emit-mv-source-set, --emit-costume-registries, --emit-runtime-role-catalog, --emit-part-packages, --emit-role-runtimes, --export-face-motion, or --optimize-texture-store.");
+    await Console.Error.WriteLineAsync("Choose one final pipeline operation: --emit-costume-registries, --emit-runtime-role-catalog, --emit-part-packages, --emit-role-runtimes, --export-face-motion, or --optimize-texture-store.");
     return 1;
 }
 

@@ -140,7 +140,7 @@ export class SekaiExtraBoneRuntime {
       if (entry.axisZ) {
         this.targetUnityEuler.z = this.sourceUnityEuler.z * sign;
       }
-      this.targetUnityQuaternion.setFromEuler(this.targetUnityEuler);
+      this.targetUnityQuaternion.setFromEuler(this.targetUnityEuler).invert();
       this.targetQuaternion.copy(convertUnityQuaternionToThree(this.targetUnityQuaternion));
       lerpQuaternion(
         entry.node.quaternion,

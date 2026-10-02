@@ -200,9 +200,10 @@ test("prefab retargeting ignores tracks for optional bones absent from an outfit
             nodeKey: "optional_key",
             leafName: "Optional",
             targets: [{
-              poseRoot: "body",
-              transformPath: "body/Hip/Optional",
-              pathId: 3,
+            poseRoot: "body",
+            transformPath: "body/Hip/Optional",
+            pathId: 3,
+            optional: true,
             }],
           },
         ],
@@ -213,7 +214,7 @@ test("prefab retargeting ignores tracks for optional bones absent from an outfit
   assert.equal(result.error, null);
   assert.deepEqual(result.clip.tracks.map((track) => track.name), [`${hip.uuid}.position`]);
   assert.equal(result.debug.emittedTrackCount, 1);
-  assert.equal(result.debug.unresolvedTrackCount, 1);
+  assert.equal(result.debug.unresolvedTrackCount, 0);
 });
 
 test("official body-head assembly suppresses only face bridge targets", () => {

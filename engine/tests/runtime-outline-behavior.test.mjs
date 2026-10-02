@@ -335,17 +335,17 @@ test("second-normal outline direction uses the official single-normalize form", 
   const material = createSekaiOutlineMaterial(true, rawMaterial({}), true, null, source);
 
   assert.ok(material instanceof THREE.ShaderMaterial);
-  // Official 0091 builds the direction from RAW attributes with one final
+  // Official 0091 receives already-skinned attributes and uses one final
   // normalize: normalize(T*uv1.x + cross(N,T)*T.w*uv1.y + N*uv2.x).
   // Per-term normalizes turn degenerate tangents into NaN vertices where
   // the official shader still produces a finite direction.
   assert.match(
     material.vertexShader,
-    /vec3 outlineSecondBitangent = cross\(normal, tangent\.xyz\) \* tangent\.w;/
+    /vec3 outlineSecondBitangent = cross\(outlineNormal, outlineTangent\) \* tangent\.w;/
   );
   assert.match(
     material.vertexShader,
-    /vec3 outlineDirection = normalize\(tangent\.xyz \* uv1\.x \+ outlineSecondBitangent \* uv1\.y \+ normal \* uv2\.x\);/
+    /vec3 outlineDirection = normalize\(outlineTangent \* uv1\.x \+ outlineSecondBitangent \* uv1\.y \+ outlineNormal \* uv2\.x\);/
   );
   assert.doesNotMatch(material.vertexShader, /normalize\(vec3\(uv1\.xy/);
   assert.doesNotMatch(material.vertexShader, /baseBitangent/);

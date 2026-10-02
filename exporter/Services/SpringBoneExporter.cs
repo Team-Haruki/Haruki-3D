@@ -11,7 +11,7 @@ public sealed class SpringBoneExporter
 {
     private static readonly string[] ColliderPropertyNames =
     ["colliders", "sphereColliders", "capsuleColliders", "panelColliders"];
-    private const string SekaiUnityVersion = "2022.3.21f1";
+    private const string SekaiUnityVersion = "2022.3.62f2";
     private static readonly string[] UnityConstraintTypeNames =
     {
         "RotationConstraint",

@@ -92,6 +92,8 @@ jobs:
       - run: bash scripts/prepare-assetstudio.sh # the revision lives only in this script
       - run: dotnet build -p:AssetStudioRoot="${ASSETSTUDIO_ROOT}"
       - run: node --test scripts/test-costume-masterdata-audit.mjs scripts/test-face-motion-export.mjs
+      - name: Native mesh and metadata contracts
+        run: dotnet run --project Tests/AssetStudioMetadata/AssetStudioMetadata.csproj -c Release -p:AssetStudioRoot="${ASSETSTUDIO_ROOT}" -- --synthetic-only
       # HARUKI_EXPORTER_CONFIG_TEST switches the compile items in the csproj, so this must rebuild.
       - run: HARUKI_EXPORTER_CONFIG_TEST=true dotnet run --project Haruki-3D-Exporter.csproj
 

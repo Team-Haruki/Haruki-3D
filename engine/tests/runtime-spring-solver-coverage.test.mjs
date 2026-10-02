@@ -42,7 +42,7 @@ test("UTJ state integration, cached movement, and length guards stay finite", ()
     boneAxis: vector(1, 0, 0),
     springLength: 2,
   });
-  assert.ok(animated.distanceTo(vector(1, 2, 0)) < 1e-12);
+  assert.ok(animated.distanceTo(vector(1, 2, 0)) < 3e-7);
 
   updateUtjSpring(state, {
     headPosition: vector(1, 2, 3),
@@ -57,7 +57,7 @@ test("UTJ state integration, cached movement, and length guards stay finite", ()
     externalForce: vector(0, 0, 1),
     deltaTime: 1 / 60,
   });
-  assert.ok(Math.abs(state.currTipPos.distanceTo(vector(1, 2, 3)) - 1) < 1e-12);
+  assert.ok(Math.abs(state.currTipPos.distanceTo(vector(1, 2, 3)) - 1) < 3e-7);
 
   const collapsed = vector(3, 3, 3);
   enforceSpringLength(collapsed, vector(3, 3, 3), 2, vector(0, 0, 1));

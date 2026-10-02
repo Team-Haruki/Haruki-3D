@@ -150,7 +150,7 @@ test("a stale animation load cannot overwrite the latest playback state", async 
   });
   await runtime.refresh(context);
   rejectSlowLoad(new Error("stale load failed"));
-  await staleRefresh;
+  await assert.rejects(staleRefresh, /stale load failed/);
 
   assert.equal(runtime.getSnapshot().selectedUrl, "latest");
   assert.equal(runtime.getSnapshot().activeClipName, "latest");

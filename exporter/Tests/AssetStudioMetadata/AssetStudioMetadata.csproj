@@ -1,0 +1,19 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssetStudioRoot Condition="'$(AssetStudioRoot)' == '' and '$(OS)' == 'Windows_NT'">D:\github\AssetStudio-Haruki</AssetStudioRoot>
+    <AssetStudioRoot Condition="'$(AssetStudioRoot)' == ''">/mnt/d/github/AssetStudio-Haruki</AssetStudioRoot>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="AssetStudio">
+      <HintPath>$(AssetStudioRoot)/AssetStudio/bin/Release/net8.0/AssetStudio.dll</HintPath>
+    </Reference>
+    <ProjectReference Include="../../Haruki-3D-Exporter.csproj" />
+    <Reference Include="AssetStudioUtility">
+      <HintPath>$(AssetStudioRoot)/AssetStudioUtility/bin/Release/net8.0/AssetStudioUtility.dll</HintPath>
+    </Reference>
+  </ItemGroup>
+</Project>

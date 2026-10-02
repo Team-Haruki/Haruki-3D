@@ -480,12 +480,14 @@ function createHeadSlotMaterials(
       alphaCutoff: kind === "accessory" ? ACCESSORY_ALPHA_CUTOFF : 0,
     });
     configureSekaiBaseStencilClear(material);
-  } else {
+  } else if (kind === "face" || kind === "face_sdf") {
     const faceMaterial = createHeadFaceMaterial(textures, headAsset, templates.face, lighting);
     if (faceMaterial.uniforms.uFaceDebugMode) faceMaterial.uniforms.uFaceDebugMode.value = view.faceDebugMode;
     faceMaterial.side = THREE.FrontSide;
     configureSekaiBaseStencilClear(faceMaterial);
     material = faceMaterial;
+  } else {
+    throw new Error(`Head material ${slot.materialName ?? slot.materialKey} has unsupported materialKind '${kind}'.`);
   }
   return { material, topLayerMaterial, outlineSourceMaterial };
 }

@@ -2,9 +2,8 @@
 
 Updated: 2026-07-25
 
-This document records what the Engine may reproduce as official behavior. It
-separates CostumeShop runtime evidence from Clausekai's public 3DMV scene so
-scene-specific values are never mixed.
+This document records what the Engine may reproduce as official behavior. Its
+reference is captured CostumeShop runtime evidence.
 
 ## Sources
 
@@ -56,11 +55,7 @@ Shader globals: _FinalSat=0, _Brightness=0, _HighlightRolloff=0
 Active face/body/hair/accessory materials: all three properties absent
 ```
 
-The Engine therefore has no final saturation/brightness/highlight-rolloff
-stage. The old `0.95 / 1 / 0.8` values came from Clausekai's 3DMV draw and
-were removed rather than translated into zero-valued uniforms, because
-executing that unrelated formula with zero values would produce another
-incorrect image.
+The Engine therefore has no final saturation, brightness or highlight-rolloff stage.
 
 The final fragment programs also remove the old inferred skin mask and
 shadow-strength ramp. The official operation is:
@@ -219,8 +214,6 @@ either toe cannot be resolved.
 - No FaceSphere contribution unless real non-zero CostumeShop material
   properties are captured.
 - No RCAS, FSR, SMAA, tone-mapping, or other post-process in the base kernel.
-- No 3DMV fog, global spotlight, reflection cube, or MRT auxiliary output in
-  the CostumeShop preview path.
 
 `CharacterModel` does not expose a dedicated neck/chin shadow controller.
 Those visible regions must come from the exported mesh normals, C/S/H/SDF

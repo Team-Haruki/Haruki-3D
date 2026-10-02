@@ -155,6 +155,38 @@ export function applySekaiOutlineController(
   );
 }
 
+function injectSekaiOutlineExpansion(shader: string, useVertexColor: boolean, useSecondNormal: boolean) {
+  // Unity's outline vertex inputs have already been skinned. Three skins in
+  // this vertex shader: expand only after skin/morph deformation, and measure
+  // camera distance from the posed vertex rather than the bind pose.
+  const anchor = ["skinning_vertex", "morphtarget_vertex", "begin_vertex"]
+    .map(name => `#include <${name}>`).find(chunk => shader.includes(chunk));
+  if (!anchor) throw new Error("Outline source has no vertex deformation boundary.");
+  return shader.replace(anchor, [
+    anchor,
+    "vec3 outlineWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;",
+    "float outlineDistance = length(outlineWorldPosition - cameraPosition);",
+    "float outlineDistanceFactor = clamp((outlineDistance - uSekaiOutlineFactor.x) * uSekaiOutlineFactor.y, 0.0, 1.0);",
+    "outlineDistanceFactor = min(outlineDistanceFactor * uSekaiOutlineFactor.z, 1.0);",
+    "float outlineWidth = mix(uSekaiOutlineWidth.x, uSekaiOutlineWidth.y, outlineDistanceFactor);",
+    "vec3 outlineNormal = normal;",
+    "#if defined(USE_SKINNING) || defined(USE_MORPHNORMALS)",
+    "outlineNormal = objectNormal;",
+    "#endif",
+    useSecondNormal ? [
+      "vec3 outlineTangent = tangent.xyz;",
+      "#ifdef USE_SKINNING",
+      "outlineTangent = (skinMatrix * vec4(outlineTangent, 0.0)).xyz;",
+      "#endif",
+      "vec3 outlineSecondBitangent = cross(outlineNormal, outlineTangent) * tangent.w;",
+      "vec3 outlineDirection = normalize(outlineTangent * uv1.x + outlineSecondBitangent * uv1.y + outlineNormal * uv2.x);",
+    ].join("\n") : "vec3 outlineDirection = normalize(outlineNormal);",
+    useVertexColor ? "float outlineScale = clamp(color.r, 0.0, 1.0);" : "float outlineScale = 1.0;",
+    useVertexColor ? "float outlineOffsetScale = clamp(color.b, 0.0, 1.0);" : "float outlineOffsetScale = 0.0;",
+    "transformed += outlineDirection * outlineWidth * outlineScale;",
+  ].join("\n"));
+}
+
 function createSekaiToonOutlineMaterial(
   source: THREE.ShaderMaterial,
   useVertexColor: boolean,
@@ -246,34 +278,7 @@ function createSekaiToonOutlineMaterial(
       "#endif",
     ].join("\n")
   );
-  material.vertexShader = material.vertexShader.replace(
-    "#include <begin_vertex>",
-    [
-      "#include <begin_vertex>",
-      "vec3 outlineWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;",
-      "float outlineDistance = length(outlineWorldPosition - cameraPosition);",
-      "float outlineDistanceFactor = clamp((outlineDistance - uSekaiOutlineFactor.x) * uSekaiOutlineFactor.y, 0.0, 1.0);",
-      "outlineDistanceFactor = min(outlineDistanceFactor * uSekaiOutlineFactor.z, 1.0);",
-      "float outlineWidth = mix(uSekaiOutlineWidth.x, uSekaiOutlineWidth.y, outlineDistanceFactor);",
-      useSecondNormal
-        ? [
-            // Official 0091 builds the direction from the raw attributes
-            // with a single final normalize; per-term normalizes turn
-            // degenerate tangents into NaN vertices where the official
-            // shader still produces a finite direction.
-            "vec3 outlineSecondBitangent = cross(normal, tangent.xyz) * tangent.w;",
-            "vec3 outlineDirection = normalize(tangent.xyz * uv1.x + outlineSecondBitangent * uv1.y + normal * uv2.x);",
-          ].join("\n")
-        : "vec3 outlineDirection = normalize(normal);",
-      useVertexColor
-        ? "float outlineScale = clamp(color.r, 0.0, 1.0);"
-        : "float outlineScale = 1.0;",
-      useVertexColor
-        ? "float outlineOffsetScale = clamp(color.b, 0.0, 1.0);"
-        : "float outlineOffsetScale = 0.0;",
-      "transformed += outlineDirection * outlineWidth * outlineScale;",
-    ].join("\n")
-  );
+  material.vertexShader = injectSekaiOutlineExpansion(material.vertexShader, useVertexColor, useSecondNormal);
   // The body shader ends with "gl_Position = projectionMatrix * viewPosition;"
   // while the face shader ends with
   // "gl_Position = projectionMatrix * viewMatrix * worldPosition;" — the
@@ -392,6 +397,11 @@ export function createSekaiOutlineMaterial(
   material.name = "pjsk_shell_outline";
   material.userData.pjskOutlineController = controllerState;
   material.onBeforeCompile = (shader) => {
+    // MeshBasic normally omits normal deformation without skinning/env maps;
+    // the outline also needs it for morph-only geometry.
+    shader.vertexShader = shader.vertexShader.replace(
+      "#if defined ( USE_ENVMAP ) || defined ( USE_SKINNING )", "#if 1"
+    );
     shader.uniforms.uSekaiOutlineWidth = {
       value: createSekaiPreviewOutlineWidth(),
     };
@@ -427,32 +437,7 @@ export function createSekaiOutlineMaterial(
         useSecondNormal ? "attribute vec2 uv2;" : "",
       ].join("\n")
     );
-    shader.vertexShader = shader.vertexShader.replace(
-      "#include <begin_vertex>",
-      [
-        "#include <begin_vertex>",
-        "vec3 outlineWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;",
-        "float outlineDistance = length(outlineWorldPosition - cameraPosition);",
-        "float outlineDistanceFactor = clamp((outlineDistance - uSekaiOutlineFactor.x) * uSekaiOutlineFactor.y, 0.0, 1.0);",
-        "outlineDistanceFactor = min(outlineDistanceFactor * uSekaiOutlineFactor.z, 1.0);",
-        "float outlineWidth = mix(uSekaiOutlineWidth.x, uSekaiOutlineWidth.y, outlineDistanceFactor);",
-        useSecondNormal
-          ? [
-              // Match 0091: raw attributes, one final normalize (see the
-              // Toon path above).
-              "vec3 outlineSecondBitangent = cross(normal, tangent.xyz) * tangent.w;",
-              "vec3 outlineDirection = normalize(tangent.xyz * uv1.x + outlineSecondBitangent * uv1.y + normal * uv2.x);",
-            ].join("\n")
-          : "vec3 outlineDirection = normalize(normal);",
-        useVertexColor
-          ? "float outlineScale = clamp(color.r, 0.0, 1.0);"
-          : "float outlineScale = 1.0;",
-        useVertexColor
-          ? "float outlineOffsetScale = clamp(color.b, 0.0, 1.0);"
-          : "float outlineOffsetScale = 0.0;",
-        "transformed += outlineDirection * outlineWidth * outlineScale;",
-      ].join("\n")
-    );
+    shader.vertexShader = injectSekaiOutlineExpansion(shader.vertexShader, useVertexColor, useSecondNormal);
     shader.vertexShader = shader.vertexShader.replace(
       "#include <project_vertex>",
       [

@@ -493,7 +493,7 @@ public sealed class PjskSekaiRuntimeExtensionBuilder
 
         return new PjskSpringBoneRuntimeUnitySetup(
             Version: "0414",
-            UnityVersion: "2022.3.21f1",
+            UnityVersion: "2022.3.62f2",
             CoordinateSpace: new PjskUnityRuntimeCoordinateSpace(
                 Source: "unity-left-handed",
                 Viewer: "three-js-right-handed",

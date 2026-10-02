@@ -10,10 +10,10 @@ test("shared wind provider advances inside each official GetForceOnBone call", (
   const boneB = addNode(root, "boneB");
   wind.rotation.y = 0.2;
 
-  const runtime = UnityPrefabSpringRuntime.fromPjskRuntimeExtension(
-    makeWindRuntimeExtension(),
-    root
-  );
+  const extension = makeWindRuntimeExtension();
+  // Keep the per-bone phase signal above Unity's near-parallel rotation cutoff.
+  extension.pjskSpringBone.runtimeUnitySetup.managers[0].forceProviders[0].raw.weight = 20;
+  const runtime = UnityPrefabSpringRuntime.fromPjskRuntimeExtension(extension, root);
 
   assert.ok(runtime);
   runtime.update(0.125);
@@ -30,6 +30,7 @@ test("active late-update wind also advances per manager bone", () => {
   const boneB = addNode(root, "boneB");
   const extension = makeWindRuntimeExtension();
   extension.pjskSpringBone.runtimeUnitySetup.managers[0].forceProviders[0].raw.isActive = true;
+  extension.pjskSpringBone.runtimeUnitySetup.managers[0].forceProviders[0].raw.weight = 20;
 
   const runtime = UnityPrefabSpringRuntime.fromPjskRuntimeExtension(extension, root);
 
@@ -39,7 +40,7 @@ test("active late-update wind also advances per manager bone", () => {
   assert.ok(boneA.quaternion.angleTo(boneB.quaternion) > 1e-6);
 });
 
-test("clearing timeline controls restores official per-bone values and manager defaults", () => {
+test("clearing simulation controls restores official per-bone values and manager defaults", () => {
   const root = new THREE.Group();
   addNode(root, "wind");
   addNode(root, "boneA");
@@ -52,7 +53,7 @@ test("clearing timeline controls restores official per-bone values and manager d
   const runtime = UnityPrefabSpringRuntime.fromPjskRuntimeExtension(extension, root);
 
   assert.ok(runtime);
-  runtime.setTimelineControl({
+  runtime.setSimulationControl({
     stiffnessForce: 50,
     dragForce: 0.8,
     windInfluence: 0.25,
@@ -64,7 +65,7 @@ test("clearing timeline controls restores official per-bone values and manager d
   assert.equal(snapshot.topOffsets[0].slowMotionScale, 0.4);
   assert.equal(snapshot.topOffsets[0].bonePaused, false);
 
-  runtime.clearTimelineControl();
+  runtime.clearSimulationControl();
   snapshot = runtime.getSnapshot();
   assert.equal(snapshot.topOffsets[0].stiffnessForce, 0);
   assert.equal(snapshot.topOffsets[0].slowMotionScale, 1);
@@ -259,9 +260,9 @@ test("spring runtime traces skirt constraints and all official collider shapes",
   assert.ok(runtime);
   assert.deepEqual([...runtime.getControlledTrackNodeNames()], ["skirtBone"]);
   runtime.setTraceBoneFilters(["  SKIRT  "], 1);
-  runtime.setTimelineControl({ paused: true });
+  runtime.setSimulationControl({ paused: true });
   runtime.update(1 / 60);
-  runtime.setTimelineControl({ paused: false, slowMotionScale: 0.5 });
+  runtime.setSimulationControl({ paused: false, slowMotionScale: 0.5 });
   skirt.quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), 0.1);
   runtime.update(1 / 60);
   runtime.settleCurrentPose(2, 1 / 120);

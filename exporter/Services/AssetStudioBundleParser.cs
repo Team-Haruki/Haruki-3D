@@ -6,7 +6,7 @@ namespace PjskBundle2Parts.Services;
 
 public sealed class AssetStudioBundleParser
 {
-    private const string SekaiUnityVersion = "2022.3.21f1";
+    private const string SekaiUnityVersion = "2022.3.62f2";
     private readonly SekaiBundleDecryptor decryptor = new();
 
     public BundleInventory Parse(ResolvedBundleInput input)
@@ -159,7 +159,7 @@ public sealed class AssetStudioBundleParser
             EnableInstancingVariants: material.m_EnableInstancingVariants,
             DoubleSidedGi: material.m_DoubleSidedGI,
             CustomRenderQueue: material.m_CustomRenderQueue,
-            StringTags: material.m_StringTagMap,
+            StringTags: material.m_StringTagMap.ToDictionary(entry => entry.Key, entry => entry.Value, StringComparer.Ordinal),
             DisabledShaderPasses: material.m_DisabledShaderPasses,
             ShaderFileId: material.m_Shader.m_FileID,
             ShaderPathId: material.m_Shader.m_PathID,

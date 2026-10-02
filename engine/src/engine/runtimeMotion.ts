@@ -52,6 +52,7 @@ type BodyMotionTarget = {
   poseRoot: string;
   transformPath: string;
   pathId: number;
+  optional: boolean;
   rest?: BodyMotionRestTransform | null;
 };
 
@@ -507,9 +508,13 @@ function readBodyMotionBindings(extension: unknown): BodyMotionBindingSet | null
     version: String(bindingSet.version ?? bindingSet.Version ?? ""),
     bindingMode: String(bindingSet.bindingMode ?? bindingSet.BindingMode ?? ""),
     warnings: readStringArray(bindingSet.warnings ?? bindingSet.Warnings),
-    bindings: bindings
-      .map(readBodyMotionBinding)
-      .filter((binding): binding is BodyMotionBinding => Boolean(binding)),
+    bindings: bindings.map((value, index) => {
+      const binding = readBodyMotionBinding(value);
+      if (!binding) {
+        throw new Error(`Body motion binding ${index} is invalid.`);
+      }
+      return binding;
+    }),
   };
 }
 
@@ -522,16 +527,24 @@ function readBodyMotionBinding(value: unknown): BodyMotionBinding | null {
   if (!Number.isFinite(pathCrc) || !nodeKey || !Array.isArray(targets)) {
     return null;
   }
-  const parsedTargets = targets
-    .map(readBodyMotionTarget)
-    .filter((target): target is BodyMotionTarget => Boolean(target));
+  const parsedTargets = targets.map((target, index) => {
+    const parsed = readBodyMotionTarget(target);
+    if (!parsed) {
+      throw new Error(`Body motion binding '${nodeKey}' target ${index} is invalid.`);
+    }
+    return parsed;
+  });
+  const targetCount = Number(item.targetCount ?? item.TargetCount ?? parsedTargets.length);
+  if (!Number.isInteger(targetCount) || targetCount !== parsedTargets.length) {
+    throw new Error(`Body motion binding '${nodeKey}' targetCount is inconsistent.`);
+  }
   return {
     pathCrc,
     nodeKey,
     leafName,
     importedPath: readNullableString(item.importedPath ?? item.ImportedPath),
     sourceRest: readBodyMotionRest(item.sourceRest ?? item.SourceRest),
-    targetCount: Number(item.targetCount ?? item.TargetCount ?? parsedTargets.length),
+    targetCount,
     targets: parsedTargets,
   };
 }
@@ -548,6 +561,7 @@ function readBodyMotionTarget(value: unknown): BodyMotionTarget | null {
     poseRoot,
     transformPath,
     pathId,
+    optional: (item.optional ?? item.Optional) === true,
     rest: readBodyMotionRest(item.rest ?? item.Rest),
   };
 }
@@ -728,6 +742,13 @@ export function retargetUnityPrefabAnimationClip(
   const bindingByNodeKey = new Map(
     bindingSet.bindings.map((binding) => [binding.nodeKey, binding])
   );
+  if (bindingByNodeKey.size !== bindingSet.bindings.length) {
+    return {
+      clip: null,
+      debug: baseDebug,
+      error: "Unity Prefab animation bindings contain duplicate node keys.",
+    };
+  }
   const nodeByPath = buildPrefabNodePathLookup(root);
   const suppressFaceAssemblyBridgeTargets = hasUnityBodyHeadAssembly(extension);
   const tracks: THREE.KeyframeTrack[] = [];
@@ -753,11 +774,17 @@ export function retargetUnityPrefabAnimationClip(
   baseDebug.resolvedBodyTargetCount = resolvedBodyTargetPaths.size;
   baseDebug.resolvedFaceTargetCount = resolvedFaceTargetPaths.size;
   baseDebug.sampleResolvedHeadTargets = [...sampleResolvedHeadTargets];
-  if (tracks.length === 0) {
+  if (
+    tracks.length === 0 ||
+    baseDebug.unresolvedTrackCount !== 0 ||
+    baseDebug.duplicateTargetTrackCount !== 0
+  ) {
     return {
       clip: null,
       debug: baseDebug,
-      error: `Unity Prefab animation retarget failed: ${baseDebug.unresolvedTrackCount} unresolved tracks.`,
+      error:
+        `Unity Prefab animation retarget failed: ${baseDebug.unresolvedTrackCount} ` +
+        `unresolved tracks, ${baseDebug.duplicateTargetTrackCount} duplicate targets.`,
     };
   }
 
@@ -788,10 +815,18 @@ function retargetPrefabTrack(track: THREE.KeyframeTrack, state: PrefabRetargetSt
   if (!binding || !propertyPath) return 0;
 
   let resolved = 0;
+  let failed = false;
+  let suppressed = false;
   for (const target of binding.targets) {
+    if ((state.suppressFaceAssemblyBridgeTargets && isFaceAssemblyBridgeMotionTarget(target)) ||
+        (target.optional && !state.nodeByPath.has(target.transformPath))) {
+      suppressed = true;
+      continue;
+    }
     if (tryRetargetPrefabTarget(track, propertyPath, binding, target, state)) resolved += 1;
+    else failed = true;
   }
-  return resolved;
+  return failed ? 0 : resolved || (suppressed ? 1 : 0);
 }
 
 function tryRetargetPrefabTarget(

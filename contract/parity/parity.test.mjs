@@ -21,6 +21,7 @@ try {
 const {
   expectedRuntimeRoleIdentity,
   isCacheableRuntimeMetadataUrl,
+  normalizePartRegistry,
   runtimePathUnitSegment,
   validateScopedRoleCatalog,
 } = engine;
@@ -139,4 +140,14 @@ test("root catalog agrees with the scoped catalogs", () => {
   assert.equal(root.masterVersion, parity.catalog.masterVersion, "root catalog master version");
   assert.ok(Array.isArray(root.roles), "root catalog roles");
   assert.equal(root.roles.length, 31, "root catalog must list all 31 roles");
+});
+
+test("exporter-generated costume registry rows pass the engine validator", () => {
+  const rows = normalizePartRegistry(parity.partRegistry);
+  assert.equal(rows.length, parity.partRegistry.entries.length);
+  assert.deepEqual(new Set(rows.map(row => row.status)), new Set(["planned", "missing", "empty"]));
+  assert.ok(rows.every(row => row.packagePath.endsWith("/")), "producer directory paths retain their trailing slash");
+  assert.ok(rows.some(row => row.status === "planned" && row.packagePath.startsWith("parts/_sources/")));
+  assert.ok(rows.some(row => row.status === "empty" && row.partType === "head_optional"));
+  assert.ok(rows.some(row => row.status === "missing" && row.unit === null));
 });

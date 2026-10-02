@@ -28,6 +28,12 @@ test("UTJ spring rotation composes the authored local rotation before the direct
   const targetDirection = new THREE.Vector3(-0.25, 0.71, 0.66).normalize();
   const headPosition = new THREE.Vector3(1.2, -0.4, 0.8);
   const tailPosition = headPosition.clone().addScaledVector(targetDirection, 0.42);
+  for (const quaternion of [initialLocalRotation, parentRotation]) {
+    quaternion.set(...quaternion.toArray().map(Math.fround));
+  }
+  for (const vector of [boneAxis, headPosition, tailPosition]) {
+    vector.set(...vector.toArray().map(Math.fround));
+  }
 
   const actualLocalRotation = computeUtjLocalRotation(
     headPosition,
@@ -36,12 +42,12 @@ test("UTJ spring rotation composes the authored local rotation before the direct
     initialLocalRotation,
     boneAxis
   );
-  const actualDirection = boneAxis
-    .clone()
-    .applyQuaternion(parentRotation.clone().multiply(actualLocalRotation))
-    .normalize();
-
-  assert.ok(actualDirection.distanceTo(targetDirection) < 1e-12);
+  // Unity 2022.3.62f2, with these exact float32 arguments. A 1e-12 comparison
+  // against ideal double-precision geometry cannot validate native rounding.
+  const nativeLocalRotation = new THREE.Quaternion(
+    0.24868929386138916, -0.5419690012931824, 0.6738292574882507, 0.4363226294517517
+  ).normalize();
+  assert.ok(actualLocalRotation.clone().normalize().angleTo(nativeLocalRotation) < 1e-6);
 
   const baseRotation = parentRotation.clone().multiply(initialLocalRotation);
   const localTarget = targetDirection.clone().applyQuaternion(baseRotation.clone().invert());
@@ -142,7 +148,7 @@ test("ExtraBone uses Unity positive ZXY input, reversed coefficient sign, and au
   positiveUnityEuler.x = ((positiveUnityEuler.x % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
   const unityDriven = new THREE.Quaternion().setFromEuler(
     new THREE.Euler(positiveUnityEuler.x, 0, 0, "ZYX")
-  );
+  ).invert();
   const engineDriven = new THREE.Quaternion(
     unityDriven.x,
     -unityDriven.y,
@@ -168,7 +174,11 @@ test("ExtraBone uses Unity positive ZXY input, reversed coefficient sign, and au
     THREE.MathUtils.lerp(engineDefault.w, engineDriven.w, 0.6)
   ).normalize();
 
-  assert.ok(driven.quaternion.angleTo(expected) < 1e-12);
+  const angleError = driven.quaternion.angleTo(expected);
+  assert.ok(
+    angleError < 1e-12,
+    `ExtraBone angle error: ${angleError}; actual=${driven.quaternion.toArray()}; expected=${expected.toArray()}`
+  );
 });
 
 test("CostumeShop height rate differentiates characters inside one body-size bundle", () => {
@@ -364,8 +374,12 @@ test("prefab runtime binds skinned morph meshes and applies exported constraints
   sourceMesh.morphTargets = [{
     name: "smile",
     indices: [0],
+    hasPositionDeltas: true,
     positionDeltas: [0.25, 0, 0],
+    hasNormalDeltas: true,
     normalDeltas: [0, 0.1, 0],
+    hasTangentDeltas: false,
+    tangentDeltas: [],
   }];
 
   const graph = buildUnityPrefabSourceGraph(extension);
@@ -394,11 +408,84 @@ test("prefab runtime binds skinned morph meshes and applies exported constraints
   assert.equal(mesh.skeleton.bones[0], graph.nodeByPath.get("face/Neck/Head"));
   assert.deepEqual(mesh.skeleton.boneInverses[0].toArray(), identityMatrix());
   assert.equal(mesh.geometry.morphAttributes.position[0].name, "smile");
+  assert.equal(mesh.geometry.morphAttributes.normal[0].name, "smile");
   assert.ok(
     Math.abs(mesh.geometry.morphAttributes.position[0].array[0] - 0.25) < 1e-6
   );
+  assert.ok(
+    Math.abs(mesh.geometry.morphAttributes.normal[0].array[1] - 0.1) < 1e-6
+  );
+  assert.equal(mesh.geometry.morphAttributes.tangent, undefined);
   assert.equal(constraints.appliedCount, 1);
   assert.deepEqual(renderer.position.toArray(), [-2, 0, 0]);
+});
+
+function nativeMorphTarget(overrides = {}) {
+  return {
+    name: "smile",
+    indices: [0],
+    hasPositionDeltas: true,
+    positionDeltas: [0.25, 0, 0],
+    hasNormalDeltas: false,
+    normalDeltas: [],
+    hasTangentDeltas: false,
+    tangentDeltas: [],
+    ...overrides,
+  };
+}
+
+function installNativeMorphTargets(morphTargets) {
+  const extension = makeRuntimeExtension();
+  extension.nativeMeshes.meshes[0].morphTargets = morphTargets;
+  const graph = buildUnityPrefabSourceGraph(extension);
+  return installUnityRuntimeNativeMeshes(graph, extension);
+}
+
+test("native morph rejects malformed targets instead of filling or dropping data", () => {
+  const cases = [
+    ["blank name", nativeMorphTarget({ name: " " }), /without a name/],
+    ["missing presence", nativeMorphTarget({ hasNormalDeltas: undefined }), /hasNormalDeltas/],
+    ["position absent", nativeMorphTarget({ hasPositionDeltas: false, positionDeltas: [] }), /position deltas/],
+    ["position length", nativeMorphTarget({ positionDeltas: [1, 2] }), /positionDeltas/],
+    ["normal length", nativeMorphTarget({ hasNormalDeltas: true, normalDeltas: [1, 2] }), /normalDeltas/],
+    ["tangent length", nativeMorphTarget({ hasTangentDeltas: true, tangentDeltas: [1, 2] }), /tangentDeltas/],
+    ["duplicate index", nativeMorphTarget({ indices: [0, 0], positionDeltas: [1, 0, 0, 2, 0, 0] }), /duplicate vertex index/],
+    ["invalid index", nativeMorphTarget({ indices: [3] }), /vertex index/],
+    ["non-finite", nativeMorphTarget({ positionDeltas: [Number.NaN, 0, 0] }), /finite/],
+  ];
+
+  for (const [label, morphTarget, expected] of cases) {
+    assert.throws(() => installNativeMorphTargets([morphTarget]), expected, label);
+  }
+});
+
+test("native morph rejects duplicate names and mixed normal presence", () => {
+  assert.throws(
+    () => installNativeMorphTargets([
+      nativeMorphTarget(),
+      nativeMorphTarget({ indices: [1], positionDeltas: [0, 0.5, 0] }),
+    ]),
+    /duplicate target name/
+  );
+
+  assert.throws(
+    () => installNativeMorphTargets([
+      nativeMorphTarget(),
+      nativeMorphTarget({
+        name: "blink",
+        indices: [1],
+        positionDeltas: [0, 0.5, 0],
+        hasNormalDeltas: true,
+        normalDeltas: [0, 0, 0.1],
+      }),
+    ]),
+    /mixed normal delta presence/
+  );
+});
+
+test("native tangent morphs require authored base tangent attributes", () => {
+  const morph = nativeMorphTarget({ hasTangentDeltas: true, tangentDeltas: [0.1, 0.2, 0.3] });
+  assert.throws(() => installNativeMorphTargets([morph]), /complete base tangent attribute/);
 });
 
 test("native meshes bind the exact Unity transform instance when paths collide", () => {

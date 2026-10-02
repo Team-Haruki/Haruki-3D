@@ -16,7 +16,6 @@ export default defineConfig({
         internal: fileURLToPath(new URL("./src/internal.ts", import.meta.url)),
         base: fileURLToPath(new URL("./src/base/index.ts", import.meta.url)),
         costume_shop: fileURLToPath(new URL("./src/costume_shop/index.ts", import.meta.url)),
-        mv: fileURLToPath(new URL("./src/mv/index.ts", import.meta.url)),
       },
       formats: ["es"],
       fileName: (_format, entryName) => ({
@@ -24,7 +23,6 @@ export default defineConfig({
         internal: "haruki-3d-engine-internal.js",
         base: "haruki-3d-engine-base.js",
         costume_shop: "haruki-3d-engine-costume-shop.js",
-        mv: "haruki-3d-engine-mv.js",
       })[entryName] ?? `${entryName}.js`,
     },
     rollupOptions: {

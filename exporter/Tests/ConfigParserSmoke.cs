@@ -222,90 +222,16 @@ var catalogOnly = ConversionOptionsParser.Parse(new[]
 Expect(catalogOnly.IsSuccess && catalogOnly.Options?.EmitRuntimeRoleCatalog == true,
     "runtime role catalog refresh requires masterdata but no AssetBundles root");
 
-var mvSourceOnly = ConversionOptionsParser.Parse(new[]
-{
-    "--emit-mv-source-set",
-    "--mv-manifest", "/data/mv-0112.json",
-    "--asset-root", "/data/raw",
-    "--out", "/data/mv-source",
-});
-Expect(
-    mvSourceOnly.IsSuccess &&
-    mvSourceOnly.Options?.EmitMvSourceSet == true &&
-    mvSourceOnly.Options.MvManifestPath == "/data/mv-0112.json",
-    "MV source set mode requires only a manifest, raw asset root, and output"
-);
-
-var mvAssetRoot = Path.Combine(tempDir, "mv-assets");
-var mvOutput = Path.Combine(tempDir, "mv-output");
-var mvManifestPath = Path.Combine(tempDir, "mv-manifest.json");
-var mvDataPath = Path.Combine(mvAssetRoot, "live_pv", "mv_data", "0112.bundle");
-var shaderPath = Path.Combine(mvAssetRoot, "shader", "live.bundle");
-var mvBodyPath = Path.Combine(mvAssetRoot, "live_pv", "model", "characterv2", "body", "05", "9001", "ladies_s.bundle");
-var mvFacePath = Path.Combine(mvAssetRoot, "live_pv", "model", "characterv2", "face", "05", "9001.bundle");
-var mvHeadOptionalPath = Path.Combine(mvAssetRoot, "live_pv", "model", "character", "head_optional", "0112", "a03.bundle");
-var mvBodyColorPath = Path.Combine(mvAssetRoot, "live_pv", "model", "characterv2", "color_variation", "body", "05", "9001", "02.bundle");
-var mvHeadColorPath = Path.Combine(mvAssetRoot, "live_pv", "model", "characterv2", "color_variation", "head_optional", "0112", "a03", "02.bundle");
-Directory.CreateDirectory(Path.GetDirectoryName(mvDataPath)!);
-Directory.CreateDirectory(Path.GetDirectoryName(shaderPath)!);
-Directory.CreateDirectory(Path.GetDirectoryName(mvBodyPath)!);
-Directory.CreateDirectory(Path.GetDirectoryName(mvFacePath)!);
-Directory.CreateDirectory(Path.GetDirectoryName(mvHeadOptionalPath)!);
-Directory.CreateDirectory(Path.GetDirectoryName(mvBodyColorPath)!);
-Directory.CreateDirectory(Path.GetDirectoryName(mvHeadColorPath)!);
-var wrappedMvBundle = new byte[132];
-wrappedMvBundle[0] = 0x10;
-"UnityFS-mv"u8.CopyTo(wrappedMvBundle.AsSpan(4));
-for (var index = 4; index < wrappedMvBundle.Length; index += 8)
+var wrappedCostumeBundle = new byte[132];
+wrappedCostumeBundle[0] = 0x10;
+"UnityFS-costume"u8.CopyTo(wrappedCostumeBundle.AsSpan(4));
+for (var index = 4; index < wrappedCostumeBundle.Length; index += 8)
 {
     for (var offset = 0; offset < 5; offset++)
     {
-        wrappedMvBundle[index + offset] = (byte)~wrappedMvBundle[index + offset];
+        wrappedCostumeBundle[index + offset] = (byte)~wrappedCostumeBundle[index + offset];
     }
 }
-File.WriteAllBytes(mvDataPath, wrappedMvBundle);
-File.WriteAllBytes(shaderPath, "UnityFS-shader"u8.ToArray());
-File.WriteAllBytes(mvBodyPath, "UnityFS-body"u8.ToArray());
-File.WriteAllBytes(mvFacePath, "UnityFS-face"u8.ToArray());
-File.WriteAllBytes(mvHeadOptionalPath, "UnityFS-head"u8.ToArray());
-File.WriteAllBytes(mvBodyColorPath, "UnityFS-body-color"u8.ToArray());
-File.WriteAllBytes(mvHeadColorPath, "UnityFS-head-color"u8.ToArray());
-File.WriteAllText(mvManifestPath, JsonSerializer.Serialize(new
-{
-    music_id = 112,
-    music_title = "天使のクローバー",
-    asset_version = "test",
-    bundles = new object[]
-    {
-        new { bundle = "live_pv/mv_data/0112", dependencies = Array.Empty<string>() },
-        new { bundle = "shader/live", dependencies = Array.Empty<string>() },
-        new { bundle = "live_pv/model/characterv2/body/05/9001/ladies_s", dependencies = Array.Empty<string>() },
-        new { bundle = "live_pv/model/characterv2/face/05/9001", dependencies = Array.Empty<string>() },
-        new { bundle = "live_pv/model/character/head_optional/0112/a03", dependencies = Array.Empty<string>() },
-        new { bundle = "live_pv/model/characterv2/color_variation/body/05/9001/02", dependencies = Array.Empty<string>() },
-        new { bundle = "live_pv/model/characterv2/color_variation/head_optional/0112/a03/02", dependencies = Array.Empty<string>() },
-    },
-}));
-var mvSourceResult = MvSourceSetExporter.Export(mvManifestPath, mvAssetRoot, mvOutput);
-var mvSourceSet = JsonNode.Parse(File.ReadAllText(Path.Combine(mvOutput, "mv-source-set.json")))!;
-Expect(
-    mvSourceResult.MusicId == 112 &&
-    mvSourceResult.BundleCount == 7 &&
-    File.Exists(Path.Combine(mvOutput, "mv-source-set.json")) &&
-    File.Exists(Path.Combine(mvOutput, "deps.json")) &&
-    File.Exists(Path.Combine(mvOutput, "source_bundles", "live_pv", "mv_data", "0112.bundle")),
-    "MV source exporter validates UnityFS inputs and preserves logical bundle paths"
-);
-Expect(
-    mvSourceSet["bundles"]![0]!["kind"]!.GetValue<string>() == "mv_data" &&
-    mvSourceSet["bundles"]![1]!["kind"]!.GetValue<string>() == "shader" &&
-    mvSourceSet["bundles"]![2]!["kind"]!.GetValue<string>() == "character_body" &&
-    mvSourceSet["bundles"]![3]!["kind"]!.GetValue<string>() == "character_face" &&
-    mvSourceSet["bundles"]![4]!["kind"]!.GetValue<string>() == "character_head_optional" &&
-    mvSourceSet["bundles"]![5]!["kind"]!.GetValue<string>() == "character_body_color" &&
-    mvSourceSet["bundles"]![6]!["kind"]!.GetValue<string>() == "character_head_optional_color",
-    "MV source exporter classifies per-part V2 bundles and V1 fallbacks for the WebGL rebuild"
-);
 
 var canaryRoot = Path.Combine(tempDir, "bundle-canary");
 Directory.CreateDirectory(canaryRoot);
@@ -343,7 +269,7 @@ Expect(!Directory.EnumerateFiles(canaryRoot, ".pjskbundle2parts.*").Any(),
     "rejected wrapped bundles do not leak decrypted temp files");
 var canaryPrimaryPath = Path.Combine(canaryRoot, "0001.bundle");
 var canarySparseSibling = Path.Combine(canaryRoot, "0001a.bundle");
-File.WriteAllBytes(canaryPrimaryPath, wrappedMvBundle);
+File.WriteAllBytes(canaryPrimaryPath, wrappedCostumeBundle);
 File.WriteAllBytes(canarySparseSibling, Array.Empty<byte>());
 using (var canaryWorkspace = new SekaiBundleDecryptor().PrepareReadableWorkspace(
     canaryPrimaryPath,
@@ -1007,6 +933,45 @@ using (var document = RuntimeJsonWriter.ReadJsonDocument(binaryWriterPath))
     Expect(indices.SequenceEqual(binaryIndices), "binary index arrays round-trip exact integer values");
     Expect(skinIndices.SequenceEqual(Enumerable.Range(0, 20)), "binary uint16 arrays round-trip exact integer values");
     Expect(document.RootElement.GetProperty("gravityDir").GetArrayLength() == 3, "small semantic vectors remain ordinary arrays");
+}
+
+var morphTangentWriterPath = Path.Combine(writerDir, "morph-tangent.json");
+var morphTangentDeltas = Enumerable.Range(0, 9).Select(index => index / 10f).ToArray();
+RuntimeJsonWriter.Write(
+    morphTangentWriterPath,
+    new
+    {
+        nativeMeshes = new
+        {
+            meshes = new[]
+            {
+                new
+                {
+                    morphTargets = new[]
+                    {
+                        new { tangentDeltas = morphTangentDeltas }
+                    }
+                }
+            }
+        }
+    },
+    new JsonSerializerOptions(),
+    binaryArraySchema: RuntimeBinaryArraySchema.PartRuntime
+);
+Expect(
+    ContainsRuntimeBinaryExtension(
+        ReadBrotliBytes(RuntimeJsonWriter.MessagePackBrotliPath(morphTangentWriterPath))),
+    "native morph tangent deltas are emitted as MessagePack float32 extensions"
+);
+using (var document = RuntimeJsonWriter.ReadJsonDocument(morphTangentWriterPath))
+{
+    var tangentDeltas = document.RootElement
+        .GetProperty("nativeMeshes").GetProperty("meshes")[0]
+        .GetProperty("morphTargets")[0].GetProperty("tangentDeltas")
+        .EnumerateArray().Select(item => item.GetSingle()).ToArray();
+    Expect(
+        tangentDeltas.SequenceEqual(morphTangentDeltas),
+        "native morph tangent deltas round-trip exact float32 values");
 }
 
 var genericValuesPath = Path.Combine(writerDir, "generic-values.json");
@@ -2244,9 +2209,9 @@ Expect(
     partPackageExporterSource.Contains("DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull"),
     "part package runtime metadata omits unknown optional shader fields"
 );
-Expect(partPackageExporterSource.Contains("partType is not (\"head\" or \"hair\")"), "incremental export invalidates only head and hair packages for controller metadata");
-Expect(partPackageExporterSource.Contains("coreVersion.GetString() == \"0415-part-core-3\""), "incremental export requires the camelCase material metadata core schema");
-Expect(partPackageExporterSource.Contains("version.GetString() != \"0415-part-delta-3\""), "incremental export keeps the stable part delta schema");
+Expect(partPackageExporterSource.Contains("partType is \"head\" or \"hair\" && !HasResolvedEyelashMasks"), "incremental export retains head-specific mask validation before checking every core schema");
+Expect(partPackageExporterSource.Contains("coreVersion.GetString() == \"0415-part-core-4\""), "incremental export requires the explicit morph channel core schema");
+Expect(partPackageExporterSource.Contains("version.GetString() != \"0415-part-delta-4\""), "incremental export requires the explicit morph channel schema");
 Expect(partPackageExporterSource.Contains("HasResolvedEyelashMasks(document.RootElement)"), "incremental export rejects head runtimes with unresolved through-hair masks");
 Expect(compiledPartCacheSource.Contains("part-runtime-core.msgpack.br"), "compiled part cache restores the final MessagePack Brotli corePath");
 Expect(nativeMeshExporterSource.Contains("AddTangent(tangents") && nativeMeshExporterSource.Contains("vertex.Tangent"), "native mesh export preserves the tangent basis for second normals");
@@ -2255,17 +2220,43 @@ Expect(nativeMeshExporterSource.Contains("AddUv(uv2, vertex, 2)"), "native mesh 
 Expect(nativeMeshExporterSource.Contains("if (hasUv1)"), "native mesh export leaves UV1 absent when the source channel is absent");
 Expect(nativeMeshExporterSource.Contains("if (hasUv2)"), "native mesh export leaves UV2 absent when the source channel is absent");
 Expect(
-    nativeMeshExporterSource.Contains("hasExactOrderedBinding") &&
-    nativeMeshExporterSource.Contains("Enumerable.Range(0, importedBoneCount)") &&
-    nativeMeshExporterSource.Contains("rendererBonePathIds[oldIndex]"),
+    nativeMeshExporterSource.Contains("rendererBonePaths,\n            rendererBonePathIds,\n            inverseBindMatrices") &&
+    !nativeMeshExporterSource.Contains("BoneIndexRemap"),
     "native mesh export preserves every exact ordered Unity skin slot, including unused and repeated Transform paths"
 );
 Expect(runtimeModelsSource.Contains("JsonPropertyName(\"tangents\")"), "runtime native mesh schema publishes tangents");
 Expect(runtimeModelsSource.Contains("JsonPropertyName(\"uv2\")"), "runtime native mesh schema publishes UV2");
+Expect(runtimeModelsSource.Contains("JsonPropertyName(\"hasPositionDeltas\")"), "native morph target explicitly declares position delta presence");
+Expect(runtimeModelsSource.Contains("JsonPropertyName(\"hasNormalDeltas\")"), "native morph target explicitly declares normal delta presence");
+Expect(runtimeModelsSource.Contains("JsonPropertyName(\"hasTangentDeltas\")"), "native morph target explicitly declares tangent delta presence");
+Expect(runtimeModelsSource.Contains("JsonPropertyName(\"tangentDeltas\")"), "native morph target publishes tangent deltas");
 Expect(runtimeWriterSource.Contains("\"nativeMeshes.meshes.tangents\""), "runtime binary codec stores tangents as float32");
 Expect(runtimeWriterSource.Contains("\"nativeMeshes.meshes.uv2\""), "runtime binary codec stores UV2 as float32");
-Expect(compiledPartCacheSource.Contains("delta[\"version\"] = \"0415-part-delta-3\""), "compiled part cache keeps the stable part delta schema version");
-Expect(compiledPartCacheSource.Contains("0415-compiled-part-9"), "compiled part cache invalidates compacted Unity skin bindings");
+Expect(runtimeWriterSource.Contains("\"nativeMeshes.meshes.morphTargets.tangentDeltas\""), "runtime binary codec stores morph tangent deltas as float32");
+Expect(nativeMeshExporterSource.Contains("channel.KeyframeList.Count != 1"), "native morph export fails closed on unimplemented multi-keyframe semantics");
+Expect(nativeMeshExporterSource.Contains("!seenIndices.Add(index)"), "native morph export fails closed on duplicate vertex indices");
+Expect(nativeMeshExporterSource.Contains("morphVertex.Index >= (uint)mesh.VertexList.Count"), "native morph export fails closed on invalid vertex indices");
+Expect(!nativeMeshExporterSource.Contains("positionDeltaByIndex"), "native morph export does not guess merge semantics by summing duplicate indices");
+Expect(!nativeMeshExporterSource.Contains("ScoreImportedMesh("), "native mesh export never ranks guessed path/name matches");
+Expect(!nativeMeshExporterSource.Contains("GroupBy(candidate => candidate.Path"), "native mesh export never keeps the first duplicate imported mesh");
+Expect(!nativeMeshExporterSource.Contains("EndsWith(meshPath"), "native morph export never guesses ownership by path suffix");
+Expect(!nativeMeshExporterSource.Contains("orderedUsedBoneIndices"), "native mesh export never drops or reorders source renderer bones");
+Expect(!nativeMeshExporterSource.Contains("ResolveImportedBonePathsByIndex"), "native mesh export never guesses bone identity by a transform path suffix");
+Expect(!nativeMeshExporterSource.Contains("new Vector3(0, 1, 0)"), "native mesh export never invents missing normals");
+Expect(!nativeMeshExporterSource.Contains("weights.Add((0, 1))"), "native mesh export never invents a rigid bone-zero skin binding");
+Expect(!nativeMeshExporterSource.Contains("Math.Clamp(weights[index].Index"), "native mesh export never clamps corrupt skin indices into a different bone");
+Expect(nativeMeshExporterSource.Contains("var hasUv0 ="), "native mesh export preserves absent UV0 instead of writing zero UVs");
+Expect(!nativeMeshExporterSource.Contains("warnings.Add(\"Body prefab graph is missing"), "native mesh export fails instead of delivering a body-less package");
+Expect(!nativeMeshExporterSource.Contains("warnings.Add(\"Head prefab graph is missing"), "native mesh export fails instead of delivering a head-less package");
+Expect(!nativeMeshExporterSource.Contains(" skipped:"), "native mesh export never reports a skipped Renderer and continues with a partial package");
+Expect(
+    partPackageExporterSource.Contains("ValidateNativeMeshesWithoutDeduplication") &&
+    !partPackageExporterSource.Contains("ScoreNativeMeshMaterialCompleteness") &&
+    !partPackageExporterSource.Contains("dropped material(s)"),
+    "part package export preserves every Renderer PathID instead of ranking and dropping meshes"
+);
+Expect(compiledPartCacheSource.Contains("delta[\"version\"] = \"0415-part-delta-4\""), "compiled part cache requires the explicit morph channel schema version");
+Expect(compiledPartCacheSource.Contains("0415-compiled-part-10"), "compiled part cache invalidates compacted Unity skin bindings");
 Expect(compiledPartCacheSource.Contains("resolved-eyelash-mask-v1"), "compiled part cache invalidates only head and hair entries without dependency masks");
 Expect(compiledPartCacheSource.Contains("ResolveExistingBundlePaths"), "compiled part fingerprints include dependency bundles");
 Expect(compiledPartCacheSource.Contains("PropertyNamingPolicy = JsonNamingPolicy.CamelCase"), "compiled part cache patches runtime metadata with camelCase keys");

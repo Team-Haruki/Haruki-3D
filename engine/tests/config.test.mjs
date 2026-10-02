@@ -306,14 +306,14 @@ test("engine outline shell follows the captured Sekai outline pass", () => {
   assert.ok(outlineSource.includes('readRawMaterialFloat(rawMaterial, "_Cutoff")'));
   assert.match(outlineSource, /diffuseColor\.rgb = mix\(/);
   assert.doesNotMatch(outlineSource, /uOutlineClipOffset|polygonOffset: true/);
-  assert.ok(outlineSource.includes("vec3 outlineWorldPosition = (modelMatrix * vec4(position, 1.0)).xyz;"));
+  assert.ok(outlineSource.includes("vec3 outlineWorldPosition = (modelMatrix * vec4(transformed, 1.0)).xyz;"));
   assert.ok(outlineSource.includes("float outlineDistance = length(outlineWorldPosition - cameraPosition);"));
   assert.ok(outlineSource.includes("float outlineDistanceFactor = clamp((outlineDistance - uSekaiOutlineFactor.x) * uSekaiOutlineFactor.y, 0.0, 1.0);"));
   assert.ok(outlineSource.includes("outlineDistanceFactor = min(outlineDistanceFactor * uSekaiOutlineFactor.z, 1.0);"));
   assert.ok(outlineSource.includes("float outlineWidth = mix(uSekaiOutlineWidth.x, uSekaiOutlineWidth.y, outlineDistanceFactor);"));
-  assert.ok(outlineSource.includes("vec3 outlineDirection = normalize(normal);"));
-  assert.ok(outlineSource.includes("vec3 outlineSecondBitangent = cross(normal, tangent.xyz) * tangent.w;"));
-  assert.ok(outlineSource.includes("vec3 outlineDirection = normalize(tangent.xyz * uv1.x + outlineSecondBitangent * uv1.y + normal * uv2.x);"));
+  assert.ok(outlineSource.includes("vec3 outlineDirection = normalize(outlineNormal);"));
+  assert.ok(outlineSource.includes("vec3 outlineSecondBitangent = cross(outlineNormal, outlineTangent) * tangent.w;"));
+  assert.ok(outlineSource.includes("vec3 outlineDirection = normalize(outlineTangent * uv1.x + outlineSecondBitangent * uv1.y + outlineNormal * uv2.x);"));
   assert.ok(prefabRuntimeSource.includes('geometry.setAttribute("tangent"'));
   assert.ok(prefabRuntimeSource.includes('geometry.setAttribute("uv2"'));
   assert.ok(!prefabRuntimeSource.includes('geometry.setAttribute("uv2", new THREE.Float32BufferAttribute(source.uv1!'));
@@ -917,7 +917,7 @@ test("part registry runtime path keeps role motion separate from part packages",
   );
 });
 
-test("unified prefab spring runtime retains force providers and official timeline controls", () => {
+test("unified prefab spring runtime retains force providers and spring simulation controls", () => {
   const springSource = fs.readFileSync(
     path.join(repoRoot, "src/engine/unityPrefabSpringRuntimeAdapter.ts"),
     "utf8"
@@ -936,11 +936,11 @@ test("unified prefab spring runtime retains force providers and official timelin
   assert.match(springSource, /computeWindVolumeOneSelfForce/);
   assert.match(springSource, /-Math\.cos\(THREE\.MathUtils\.degToRad\(provider\.additionalWindAngle\)\)/);
   assert.match(springSource, /bone\.windInfluence/);
-  assert.match(springSource, /setTimelineControl/);
-  assert.match(springSource, /clearTimelineControl/);
+  assert.match(springSource, /setSimulationControl/);
+  assert.match(springSource, /clearSimulationControl/);
   assert.doesNotMatch(springSource, /forceProviderCount:\s*0/);
   assert.match(composerSource, /remapRuntimeForceProviders/);
-  assert.match(engineSource, /setSpringTimelineControl/);
+  assert.match(engineSource, /setSpringSimulationControl/);
 });
 
 test("runtime shadow debug exposes projected and hair-shadow layers", () => {
@@ -1316,6 +1316,7 @@ test("Sekai ExtraBone runtime follows official rotation order and coefficient di
   assert.match(extraBoneSource, /"XYZ",\s+"XZY",\s+"YXZ",\s+"YZX",\s+"ZXY",\s+"ZYX"/s);
   assert.match(extraBoneSource, /setFromQuaternion\(this\.sourceUnityQuaternion, "ZXY"\)/);
   assert.match(extraBoneSource, /const sign = entry\.coefficient > 0 \? -1 : entry\.coefficient < 0 \? 1 : 0/);
+  assert.match(extraBoneSource, /setFromEuler\(this\.targetUnityEuler\)\.invert\(\)/);
   assert.match(extraBoneSource, /defaultQuaternion: readDefaultQuaternion\(entry\)/);
   assert.match(extraBoneSource, /function lerpQuaternion/);
   assert.match(extraBoneSource, /const sign = from\.dot\(to\) < 0 \? -1 : 1/);
@@ -1624,5 +1625,59 @@ test("preview rendering bypasses all post-processing and RCAS", () => {
   assert.doesNotMatch(sizingSource, /rcas/i);
   assert.doesNotMatch(sizingSource, /FullScreenQuad|WebGLRenderTarget|ShaderMaterial/);
   assert.doesNotMatch(engineSource, /SekaiPreviewPostProcessor|postProcessor\./);
-  assert.match(engineSource, /renderFrame\(\)\s*\{\s*this\.renderer\.render\(this\.scene, this\.camera\);/s);
+  assert.match(engineSource, /renderFrame\(\)\s*\{\s*updateNativeMorphTangents\(this\.characterRoot\);\s*this\.renderer\.render\(this\.scene, this\.camera\);/s);
+});
+
+test("part registry validation rejects duplicate identities and unsafe package paths", () => {
+  const source = fs.readFileSync(path.join(repoRoot, "src/runtime/runtimePackageLoader.ts"), "utf8");
+  const helper = source.match(/function normalizePartRegistry\([\s\S]*?\n\}/)?.[0];
+  assert.ok(helper);
+  const javascript = ts.transpileModule(helper, {
+    compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const normalize = new Function("runtimePartSlot", `${javascript}\nreturn normalizePartRegistry;`)(entry => entry.partType);
+  const entry = { characterId: 10, unit: "idol", partType: "body", costume3dId: 1, status: "planned", packagePath: "parts/body/10/idol/" };
+  assert.deepEqual(normalize([entry]), [entry]);
+  assert.throws(() => normalize([entry, { ...entry }]), /invalid or duplicated/);
+  assert.throws(() => normalize([{ ...entry, packagePath: "../part-runtime.msgpack.br" }]), /invalid or duplicated/);
+  assert.throws(() => normalize([entry, { ...entry, packagePath: "parts/body/10/idol" }]), /invalid or duplicated/);
+  assert.throws(() => normalize([{ ...entry, packagePath: "parts//body/" }]), /invalid or duplicated/);
+  assert.throws(() => normalize([]), /empty/);
+});
+
+test("candidate discovery tolerates only an absent package while selected loads and damaged packages fail", async () => {
+  const source = fs.readFileSync(path.join(repoRoot, "src/runtime/runtimePackageLoader.ts"), "utf8");
+  const names = ["fetchRuntimeMessagePack", "fetchPartRuntime", "fetchOptionalPartRuntime", "loadPartRuntimePackage"];
+  const helpers = names.map(name => {
+    const declaration = source.match(new RegExp(`(?:export )?async function ${name}\\([\\s\\S]*?\\n\\}`))?.[0];
+    assert.ok(declaration, name);
+    return declaration.replace(/^export /, "");
+  }).join("\n");
+  const javascript = ts.transpileModule(helpers, {
+    compilerOptions: { module: ts.ModuleKind.None, target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  let responses = new Map();
+  const runtime = new Function("fetch", "readMessagePackBrotliRuntime", "resolveRuntimePackageUrl", "mergePartRuntimeCore", "withPartRuntimePackagePath", `
+    const runtimeMetadataRequests = new Map();
+    ${javascript}
+    return { fetchOptionalPartRuntime, loadPartRuntimePackage };
+  `)(async url => responses.get(url) ?? { ok: false, status: 404 },
+    async response => { if (response.error) throw response.error; return response.value; },
+    (base, path) => base + path.replace(/\/+/g, "/"),
+    (part, core) => ({ ...core, ...part }), part => part);
+  const base = "https://example.test/";
+  const entry = { characterId: 10, partType: "body", status: "planned", packagePath: "parts/body/10/idol/" };
+  const url = `${base}parts/body/10/idol/part-runtime.msgpack.br`;
+  assert.equal(await runtime.fetchOptionalPartRuntime(base, entry), null);
+  await assert.rejects(runtime.loadPartRuntimePackage({ packages: new Map(), baseUrl: base }, entry), /HTTP 404/);
+  responses.set(url, { ok: false, status: 503 });
+  await assert.rejects(runtime.fetchOptionalPartRuntime(base, entry), /HTTP 503/);
+  responses.set(url, { ok: true, error: new Error("corrupt Brotli") });
+  await assert.rejects(runtime.fetchOptionalPartRuntime(base, entry), /corrupt Brotli/);
+  responses.set(url, { ok: true, value: { corePath: "parts/_cores/body/core.msgpack.br" } });
+  await assert.rejects(runtime.fetchOptionalPartRuntime(base, entry), /HTTP 404/);
+  responses.set(`${base}parts/_cores/body/core.msgpack.br`, { ok: true, value: { nativeMeshes: [] } });
+  assert.deepEqual(await runtime.fetchOptionalPartRuntime(base, entry), {
+    nativeMeshes: [], corePath: "parts/_cores/body/core.msgpack.br",
+  });
 });

@@ -1,4 +1,4 @@
-# Haruki 3D Runtime Package Contract
+# Haruki 3D Costume Runtime Package Contract
 
 Authoritative specification of the package format produced by `exporter/` (Haruki-3D-Exporter)
 and consumed by `engine/` (haruki-3d-engine). Every normative statement below is derived from the
@@ -31,6 +31,7 @@ RFC-2119 keywords (MUST, MUST NOT, MAY) are used with their usual meaning.
 | `parts/compat/by-unit/<unit>/head-hair-compatibility.msgpack.br` | `CostumeRegistryExporter.WriteScopedHeadHairCompatibilityIndexes` — rules filtered to `state == "not_available"` only | Engine, lazily on first custom selection (`runtimePackageLoader.ts` `ensureCompatibilityForSelection`). |
 | `parts/card-costume-unlocks.msgpack.br` | `CostumeRegistryExporter.Export` | Haruki Cloud (card unlock/source metadata). |
 | `parts/<partType>/<costume3dId>/<unit>/part-runtime.msgpack.br` | `exporter/Services/PartPackageExporter.cs` (delta package; path formula `BuildPackagePath` in `CostumeRegistryExporter.cs:807-810`) | Engine (`runtimePackageLoader.ts` `fetchPartRuntime`). |
+| `parts/_sources/<partType>/<sourceKey>/part-runtime.msgpack.br` | `CostumeRegistryExporter.BuildSourceIdentity` aliases resolved source bundles by SHA-256 of part type, base bundle path, and color-variation bundle path; `PartPackageExporter` writes the delta. | Engine follows the registry's `packagePath`. |
 | `parts/_cores/<partType>/<hash>/part-runtime-core.msgpack.br` | `PartPackageExporter.cs:505-527`; `<hash>` = lowercase SHA-256 hex of the part's shard key (`BaseSourceKey ?? SourceKey ?? PackagePath`, `ShardKey`/`BuildCoreKey`, lines 246-256) | Engine, fetched via the delta's `corePath` (`runtimePackageLoader.ts:316-322`). |
 | `parts/<partType>/<costume3dId>/<unit>/part-export-error.json` | `PartPackageExporter.cs:148-163` on a failed export; deleted on success | Operations only. |
 | `roles/<characterId>/<unit>/role-runtime.msgpack.br` | `exporter/Services/RoleRuntimeExporter.cs` (`BuildRoleRuntimeDirectory`, line 252-255) | Engine (`runtimePackageLoader.ts` `loadRoleRuntimePackages` / `ensureRoleRuntimePackage`). |
@@ -123,7 +124,7 @@ properties whose **path** matches the schema's allow-list (`RuntimeJsonWriter.cs
 
 | Schema | Element kind | Property paths |
 |---|---|---|
-| PartRuntime | float32 (1) | `nativeMeshes.meshes.positions`, `.normals`, `.tangents`, `.colors`, `.uv0`, `.uv1`, `.uv2`, `.skinWeights`, `.boneInverseBindMatrices`, `nativeMeshes.meshes.morphTargets.positionDeltas`, `.normalDeltas` |
+| PartRuntime | float32 (1) | `nativeMeshes.meshes.positions`, `.normals`, `.tangents`, `.colors`, `.uv0`, `.uv1`, `.uv2`, `.skinWeights`, `.boneInverseBindMatrices`, `nativeMeshes.meshes.morphTargets.positionDeltas`, `.normalDeltas`, `.tangentDeltas` |
 | PartRuntime | uint16/uint32 (2/3) | `nativeMeshes.meshes.skinIndices`, `nativeMeshes.meshes.submeshes.indices`, `nativeMeshes.meshes.morphTargets.indices` |
 | UnityMotion | float32 (1) | `clips.tracks.times`, `clips.tracks.values` |
 
@@ -160,8 +161,8 @@ object-graph encoder throws if a value is not uint32-representable (`Convert.ToU
 | Part registry | `version: 2` | `CostumeRegistryExporter.cs:273` | Not checked by the engine. |
 | Head/hair compatibility, card unlocks, part source map | `version: 1` | `CostumeRegistryExporter.cs:561,650,735` | Not checked by the engine. |
 | Compact registries | leading array element `1` (`CompactRegistrySchemaVersion`) | `CostumeRegistryExporter.cs:12,72,95` | Haruki Cloud. |
-| Part delta | `version: "0415-part-delta-3"`, `corePath` required | `PartPackageExporter.cs:528-530` | Engine checks only that `corePath` ends in `.msgpack.br` (`runtimePackageLoader.ts:316-318`); the version string is validated by the exporter's compiled-package cache (`PartPackageExporter.cs:1377-1379`). |
-| Part core | `version: "0415-part-core-3"` | `PartPackageExporter.cs:516` | Exporter cache only (`PartPackageExporter.cs:1443-1444`). |
+| Part delta | `version: "0415-part-delta-4"`, `corePath` required | `PartPackageExporter.cs` | Engine requires a `.msgpack.br` core path and validates the reconstructed mesh payload; the exporter also validates the delta version before reusing output. |
+| Part core | `version: "0415-part-core-4"` | `PartPackageExporter.cs` | Exporter validates the core version for every part before skipping a rebuild. |
 | Native mesh set (inside core) | `version: "0414"` | `exporter/Services/UnityRuntimeNativeMeshExporter.cs:18,72` | Engine requires `"0414"`/`414` (`engine/src/engine/unityPrefabRuntime.ts:230-247`). |
 | Role runtime | `version: "0414-role-1"` | `RoleRuntimeExporter.cs:205` | Not checked by the engine. |
 
@@ -270,13 +271,15 @@ existing role runtimes are kept, `RoleRuntimeExporter.cs:140-149`).
   - `"empty"` — a head_optional row representing the official *empty accessory slot*.
   Consumer semantics (`runtimePackageLoader.ts:656-662`): `missing` rows are unusable;
   `empty` rows are selectable but never loaded as packages; only remaining rows are load
-  candidates. Fetch failures on `planned` rows are tolerated during default-selection probing
-  (`fetchOptionalPartRuntime`). Note: `exporter/README.md` documents only planned/missing; `empty`
+  candidates. A missing candidate delta (HTTP 404) is tolerated during default-selection probing;
+  a missing shared core, decode failure, or other HTTP failure is not. Explicitly selected missing
+  parts fail. Note: `exporter/README.md` documents only planned/missing; `empty`
   is normative (see Issues).
-- `packagePath` is the directory prefix `parts/<partType>/<costume3dId>/<unit>/` (with trailing
-  slash from the producer; the engine appends `/part-runtime.msgpack.br` after its own
-  normalization). Color variants of one asset share a `packagePath` via the source-identity
-  aliasing recorded in `parts/part-source-map.msgpack.br`.
+- `packagePath` is a relative directory with a trailing slash. Resolved sources use
+  `parts/_sources/<partType>/<sourceKey>/`; entries without a source use the fallback
+  `parts/<partType>/<costume3dId>/<unit>/`. The engine accepts the producer's trailing slash,
+  normalizes it when appending `part-runtime.msgpack.br`, and rejects internal empty segments or
+  traversal. Source aliases are recorded in `parts/part-source-map.msgpack.br`.
 - There is no preset mode: role defaults and explicit selections use the same assembly and
   compatibility rules (`exporter/README.md`).
 
@@ -313,6 +316,39 @@ existing role runtimes are kept, `RoleRuntimeExporter.cs:140-149`).
   intact (`PartPackageExporter.cs:100-107`); compiled cores/deltas can be restored from the
   compiled content store when resolved input bundles are byte-identical, with the delta re-stamped
   for the current region (`CompiledPartCache`, `exporter/README.md`).
+
+The core/delta revision `4` carries complete native renderer bindings and explicit morph
+channel-presence flags. Revision `3` output MUST be regenerated. The compiled-part cache schema
+is `0415-compiled-part-10`; it participates in the input fingerprint so an older cached core
+cannot be restored under a new delta version (`CompiledPartCache.cs`). Catalog and registry
+versions are unchanged.
+
+### 4.7 Native mesh and morph fidelity
+
+- The prefab graph retains every serialized Renderer bone slot, including duplicate and unused
+  slots. The native mesh's `bonePaths`, `bonePathIds`, and inverse-bind matrices describe its
+  runtime skin palette, with exactly 16 matrix values per palette slot and unchanged vertex skin
+  indices. Normally the palette is the complete ordered Renderer slot sequence.
+- Some optimized source meshes have fewer bindposes than Renderer slots. Their complete mesh
+  palette MAY be resolved from the imported bone paths through exact prefab Transform identities,
+  but every positive-weight vertex slot MUST still resolve to the same Transform PathID as that
+  slot in the original Renderer. All mesh bindposes and unused mesh slots are retained; the
+  Renderer array remains intact in the prefab graph. Missing or ambiguous identities and weighted
+  disagreements fail export (`UnityRuntimeNativeMeshExporter.cs`).
+- Submeshes retain material-slot order and identity. Missing renderer transforms, invalid
+  geometry, incomplete skin arrays, or a missing material mapping are errors; a partial character
+  is not a successful import.
+- Every morph has a unique non-empty `name`, non-empty unique in-range `indices`, and explicit
+  `hasPositionDeltas`, `hasNormalDeltas`, and `hasTangentDeltas` booleans. Position presence MUST
+  be true. Each present channel contains three finite values per indexed vertex. An absent normal
+  or tangent channel is represented by its false flag and an empty array, not an omitted field.
+  The three delta arrays use the schema-scoped encoding in section 2.2.
+- The browser importer accepts position morphs and uniform normal/tangent-channel presence across
+  a mesh's morph targets. Three.js applies position and normal deltas on the GPU. The Costume
+  runtime applies tangent deltas before vertex-attribute upload as the authored tangent plus the
+  weighted relative deltas, preserving tangent handedness (`w`). Resetting influences to zero
+  restores the authored tangent; unchanged weights reuse the current buffer. Outline shells share
+  the source morph influences. Mixed normal/tangent presence is rejected.
 
 ---
 

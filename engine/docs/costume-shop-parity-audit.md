@@ -19,8 +19,6 @@ Status vocabulary:
 - **producer boundary**: the exporter/updater must encode the result; the
   browser consumes it.
 - **host boundary**: a caller owns the behavior; it is not part of rendering.
-- **not applicable**: the evidence belongs to Live/FUnit rather than
-  CostumeShop.
 - **bounded**: the evidence itself does not identify an exact value. The kernel
   must not invent one.
 
@@ -44,7 +42,6 @@ Status vocabulary:
 | Toe projected shadows | kernel | implemented |
 | UTJ/Sekai SpringBone and ExtraBone | exporter + kernel | implemented |
 | Parent/Aim/Rotation constraints | exporter + kernel | implemented |
-| Live timeline and FUnit replacement controls | Live/MV runtime | not applicable |
 | UI and cache policy | web host | host boundary |
 | Latest-wins part selection | kernel | implemented |
 
@@ -67,8 +64,7 @@ experimental renderer branches.
 | Eye/eyelash queues, stencil and overlay | Implemented for the single-character preview slot, including material-driven eyelash parameters. |
 | Outline C# writers and driver-final GPU variants | Implemented as an expanded Toon pass with exact fixed state, width, packed second normal and clip offset. |
 | Material and projected shadows | Kept as separate systems; only toe targets are accepted. |
-| UTJ/Sekai SpringBone, colliders, force providers and ExtraBone | Implemented in the CostumeShop runtime; FUnit simulation is not mixed into it. |
-| Live/streaming/FUnit replacement controls | Not applicable to the CostumeShop browser kernel. Their exported records remain metadata rather than a second simulator. |
+| UTJ/Sekai SpringBone, colliders, force providers and ExtraBone | Implemented in the CostumeShop runtime. |
 | Auxiliary MRT outputs | Not applicable to final browser color; the kernel does not fabricate unused GBuffer consumers. |
 
 ## Input, registry and package resolution
@@ -154,7 +150,7 @@ destruction of the temporary face wrapper, not a fixed node-count rule.
 
 | Official invariant | Implementation |
 | --- | --- |
-| CostumeShop uses UTJ/Sekai SpringBone, not FUnit SpringBone. | The composed setup is explicitly UTJ/Sekai; FUnit records remain metadata-only. |
+| CostumeShop uses UTJ/Sekai SpringBone. | The composed setup preserves native component metadata. |
 | Managers own depth-sorted active bones. | `unityPrefabSpringRuntimeAdapter.ts` rebuilds manager ownership and sorts active chains. |
 | Direct colliders and the six colliderFlag prefix groups are rebound after composition. | Composer rebuilds `colliderBindings`, manager caches and binding decisions. |
 | Sphere, capsule and panel collision are distinct. | `utjSpringBoneRuntime.ts` implements each shape and its local-space solve. |
@@ -162,10 +158,6 @@ destruction of the temporary face wrapper, not a fixed node-count rule.
 | Only serialized ExtraBone components execute; an `EX_*` node name is not enough. | `sekaiExtraBoneRuntime.ts` reads actual exported ExtraBone entries. |
 | Six arm/forearm/elbow helpers use the official rotation order. | ExtraBone runtime and its regression test cover the six-case conversion. |
 | Part replacement resets/settles the rebuilt simulation. | Character import disposes old managers, creates the new runtime and performs warm-up/reset. |
-
-Live MV slow/control tracks, streaming formation overrides and FUnit merge
-helpers are deliberately excluded. They are not called by CostumeShop and
-would create a second, conflicting spring implementation.
 
 ## Base character shading
 
@@ -278,7 +270,7 @@ The final package and WebGL platform leave these non-blocking boundaries:
 
 The kernel does not assign guessed material names or emulate unused GBuffer
 attachments. These boundaries do not justify extra color grading, FaceSphere,
-synthetic neck shadows, FUnit simulation or other heuristic branches.
+synthetic neck shadows or other heuristic branches.
 
 ## Regression surface
 
