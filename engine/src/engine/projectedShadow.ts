@@ -60,7 +60,7 @@ export const defaultProjectedShadowSettings: ProjectedShadowSettings = {
 };
 
 type CharacterProjectedShadowUpdate = {
-  targetWorldPositions: THREE.Vector3[];
+  targetWorldPositions: Array<THREE.Vector3 | null>;
   lightWorldPosition: THREE.Vector3 | null;
   characterModelScale: number;
   visible: boolean;
@@ -79,30 +79,30 @@ type ProjectedShadowPair = {
 export class CharacterProjectedShadowController {
   readonly group = new THREE.Group();
 
-  private readonly defaultDirection = new THREE.Vector3(-0.35, 0, 0.94).normalize();
+  private readonly defaultDirection = new THREE.Vector3(0, 0, 1);
   private settings = { ...defaultProjectedShadowSettings };
   private readonly pairs: ProjectedShadowPair[] = [];
 
   constructor() {
     const shadowTexture = createProjectedShadowTexture();
+    const directionalGeometry = createDirectionalShadowGeometry();
+    const crossGeometry = createCrossShadowGeometry();
     for (const boneName of projectedShadowTargetBoneNames) {
       const directionalMaterial = this.createShadowMaterial(shadowTexture, this.settings.opacity);
       const crossMaterial = this.createShadowMaterial(shadowTexture, this.settings.crossOpacity);
       const directionalAnchor = new THREE.Group();
       const crossAnchor = new THREE.Group();
 
-      const directionalMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), directionalMaterial);
+      const directionalMesh = new THREE.Mesh(directionalGeometry.clone(), directionalMaterial);
       directionalMesh.name = `CharacterDirectionalShadow_${boneName}`;
-      directionalMesh.rotation.x = -Math.PI / 2;
       directionalMesh.renderOrder = -100;
-      directionalMesh.scale.set(this.settings.width, this.settings.height, 1);
+      directionalMesh.scale.set(this.settings.width, 1, this.settings.height);
       directionalAnchor.add(directionalMesh);
 
-      const crossMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), crossMaterial);
+      const crossMesh = new THREE.Mesh(crossGeometry.clone(), crossMaterial);
       crossMesh.name = `CharacterCrossShadow_${boneName}`;
-      crossMesh.rotation.x = -Math.PI / 2;
       crossMesh.renderOrder = -99;
-      crossMesh.scale.set(this.settings.crossSize, this.settings.crossSize, 1);
+      crossMesh.scale.set(this.settings.crossSize, 1, this.settings.crossSize);
       crossAnchor.add(crossMesh);
 
       directionalAnchor.visible = this.settings.directionalShadow;
@@ -118,6 +118,8 @@ export class CharacterProjectedShadowController {
         directionalAlpha: this.settings.opacity,
       });
     }
+    directionalGeometry.dispose();
+    crossGeometry.dispose();
 
     this.group.name = "CharacterProjectedShadow";
     this.group.visible = false;
@@ -126,8 +128,8 @@ export class CharacterProjectedShadowController {
   setSettings(input: ProjectedShadowSettingsInput = {}) {
     this.settings = normalizeSettings(input, this.settings);
     for (const pair of this.pairs) {
-      pair.directionalAnchor.children[0]?.scale.set(this.settings.width, this.settings.height, 1);
-      pair.crossAnchor.children[0]?.scale.set(this.settings.crossSize, this.settings.crossSize, 1);
+      pair.directionalAnchor.children[0]?.scale.set(this.settings.width, 1, this.settings.height);
+      pair.crossAnchor.children[0]?.scale.set(this.settings.crossSize, 1, this.settings.crossSize);
       pair.directionalAnchor.visible = this.settings.directionalShadow;
       pair.crossAnchor.visible = !this.settings.directionalShadow;
     }
@@ -135,7 +137,7 @@ export class CharacterProjectedShadowController {
 
   update(state: CharacterProjectedShadowUpdate) {
     const targets = state.targetWorldPositions;
-    this.group.visible = state.visible && targets.length > 0;
+    this.group.visible = state.visible && targets.some((target) => target !== null);
     if (!this.group.visible) {
       for (const pair of this.pairs) {
         pair.initialToeHeight = null;
@@ -280,10 +282,32 @@ export class CharacterProjectedShadowController {
       0,
       targetWorldPosition.z - lightWorldPosition.z
     );
-    return direction.lengthSq() < 0.000001
-      ? this.defaultDirection.clone()
-      : direction.normalize();
+    return direction.lengthSq() < 0.000001 ? new THREE.Vector3() : direction.normalize();
   }
+}
+
+function createCrossShadowGeometry() {
+  return createShadowGeometry(
+    [-0.5, 0, 0.5, 0.5, 0, 0.5, -0.5, 0, -0.5, 0.5, 0, -0.5]
+  );
+}
+
+function createDirectionalShadowGeometry() {
+  return createShadowGeometry(
+    [-0.5, 0, 1, 0.5, 0, 1, -0.5, 0, 0, 0.5, 0, 0]
+  );
+}
+
+function createShadowGeometry(positions: number[]) {
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute(
+    "uv",
+    new THREE.Float32BufferAttribute([0, 1, 1, 1, 0, 0, 1, 0], 2)
+  );
+  geometry.setIndex([0, 1, 2, 1, 3, 2]);
+  geometry.computeVertexNormals();
+  return geometry;
 }
 
 function createProjectedShadowTexture(size = 128) {

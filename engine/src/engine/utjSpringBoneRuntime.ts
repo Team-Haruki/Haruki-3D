@@ -1,4 +1,5 @@
 import * as THREE from "three";
+import { rotateUnityVectorFloat32 } from "./unityCoordinateConversion";
 
 export enum UtjColliderStatus {
   NoCollision = 0,
@@ -199,38 +200,45 @@ export function computeAnimatedTipPosition(
     "headPosition" | "parentRotation" | "initialLocalRotation" | "boneAxis" | "springLength"
   >
 ): THREE.Vector3 {
-  const rotation = input.parentRotation.clone().multiply(input.initialLocalRotation);
-  const axis = input.boneAxis.clone().applyQuaternion(rotation);
-  return input.headPosition.clone().addScaledVector(axis, input.springLength);
+  const rotation = springRoundQuaternion(input.parentRotation.clone().multiply(input.initialLocalRotation));
+  const axis = rotateUnityVectorFloat32(input.boneAxis, rotation);
+  springRoundVector(axis.multiplyScalar(Math.fround(input.springLength)));
+  return springRoundVector(input.headPosition.clone().add(axis));
 }
 
 // UTJ.SpringBone.UpdateSpring RVA 0x0a59dbd8
 export function updateUtjSpring(state: UtjSpringBoneState, input: UtjSpringBoneUpdateInput): void {
+  const f = Math.fround;
+  springRoundVector(state.currTipPos);
+  springRoundVector(state.prevTipPos);
   const previousTip = state.currTipPos.clone();
   const animatedTip = computeAnimatedTipPosition(input);
-  const stiffness = animatedTip.sub(state.currTipPos).multiplyScalar(input.stiffnessForce);
-  const force = input.springForce.clone().add(input.externalForce).add(stiffness);
-  const velocity = state.currTipPos
-    .clone()
-    .sub(state.prevTipPos)
-    .multiplyScalar(1.0 - input.dragForce);
+  const stiffness = springRoundVector(springRoundVector(animatedTip.sub(state.currTipPos))
+    .multiplyScalar(f(input.stiffnessForce)));
+  const force = springRoundVector(springRoundVector(input.springForce.clone().add(input.externalForce)).add(stiffness));
+  const acceleration = springRoundVector(force.multiplyScalar(f(0.5 * f(input.deltaTime) * f(input.deltaTime))));
+  const velocity = springRoundVector(springRoundVector(state.currTipPos.clone().sub(state.prevTipPos))
+    .multiplyScalar(f(1 - f(input.dragForce))));
 
-  state.currTipPos.add(velocity).addScaledVector(force, input.deltaTime * input.deltaTime * 0.5);
+  springRoundVector(state.currTipPos.add(springRoundVector(acceleration.add(velocity))));
   state.prevTipPos.copy(previousTip);
-  enforceSpringLength(
-    state.currTipPos,
-    input.headPosition,
-    input.springLength,
-    input.lengthFallbackDirection ?? input.boneAxis
-  );
+  const head = springRoundVector(input.headPosition.clone());
+  const direction = springRoundVector(state.currTipPos.clone().sub(head));
+  if (Math.fround(direction.length()) <= SPRING_LENGTH_EPSILON) {
+    direction.copy(input.lengthFallbackDirection ?? input.boneAxis);
+  }
+  springNormalizeManaged(direction);
+  springRoundVector(direction.multiplyScalar(f(input.springLength)));
+  state.currTipPos.copy(springRoundVector(direction.add(head)));
 }
 
 export function cacheUtjSpringBonePosition(
   state: UtjSpringBoneState,
   headPosition: THREE.Vector3
 ): void {
-  state.cachedMovement.copy(headPosition).sub(state.cachedPosition);
-  state.cachedPosition.copy(headPosition);
+  const head = springRoundVector(headPosition.clone());
+  springRoundVector(state.cachedMovement.copy(head).sub(state.cachedPosition));
+  state.cachedPosition.copy(head);
 }
 
 // Length limits
@@ -338,14 +346,14 @@ export function checkUtjCollisions(
   }
 
   if (finalHitNormal) {
-    // Official SatisfyConstraints decomposes the response velocity from the
-    // POST-collision tip (currTipPos after all collider pushes), not the
-    // pre-collision tip.
+    // Native CheckForCollision (6.7.0 RVA 0xA614734) reflects the saved
+    // pre-push velocity. Its later excess-speed comparison uses pushed curr.
     applyUtjCollisionVelocityResponse(
       state,
       finalHitNormal,
       input.bounce,
-      input.friction
+      input.friction,
+      preCollisionTip
     );
   }
 
@@ -995,40 +1003,46 @@ export function constrainUtjAngleLimit(input: UtjConstrainVectorInput): boolean 
     return false;
   }
 
+  const f = Math.fround;
   const vector = input.vector;
-  const upLength = input.basisUp.dot(vector);
-  const upComponent = input.basisUp.clone().multiplyScalar(upLength);
-  const sideForward = vector.clone().sub(upComponent);
-  const sideForwardLength = sideForward.length();
+  const basisUp = springRoundVector(input.basisUp.clone());
+  const basisSide = springRoundVector(input.basisSide.clone());
+  const basisForward = springRoundVector(input.basisForward.clone());
+  springRoundVector(vector);
+  const upLength = f(basisUp.dot(vector));
+  const upComponent = springRoundVector(basisUp.multiplyScalar(upLength));
+  const sideForward = springRoundVector(vector.clone().sub(upComponent));
+  const sideForwardLength = f(sideForward.length());
   // Unity's normalized getter yields Vector3.zero for the degenerate plane
   // projection instead of Infinity/NaN.
   const sideForwardDirection = sideForwardLength <= EPSILON
     ? sideForward.set(0, 0, 0)
-    : sideForward.multiplyScalar(1.0 / sideForwardLength);
-  const rawSideDot = input.basisSide.dot(sideForwardDirection);
+    : sideForward.set(f(sideForward.x / sideForwardLength),
+      f(sideForward.y / sideForwardLength), f(sideForward.z / sideForwardLength));
+  const rawSideDot = f(basisSide.dot(sideForwardDirection));
   const sideDotMax = Number.isNaN(rawSideDot) ? 1.0 : Math.min(rawSideDot, 1.0);
   const sideDot = rawSideDot < -1.0 ? -1.0 : sideDotMax;
-  const angle = Math.asin(sideDot) * (180 / Math.PI);
-  const easedAngle = angle - angle * input.springStrength * input.deltaTime * input.deltaTime;
+  // The managed Asin result and Rad2Deg constant are float32; their product
+  // remains an intermediate until the relaxed angle crosses the Clamp call.
+  const angle = f(Math.asin(sideDot)) * f(180 / Math.PI);
+  const easedAngle = f(angle - angle * f(input.springStrength) * f(input.deltaTime) * f(input.deltaTime));
   const easedAtMostMax = easedAngle <= input.limit.max ? easedAngle : input.limit.max;
   const clampedAngle = easedAngle < input.limit.min ? input.limit.min : easedAtMostMax;
   const bound = clampedAngle >= 0 ? input.limit.max : input.limit.min;
   let ratio = 0;
   if (bound < -0.0001 || bound > 0.0001) {
-    const rawRatio = clampedAngle / bound;
+    const rawRatio = f(clampedAngle / bound);
     if (rawRatio >= 0) {
       ratio = Math.min(rawRatio, 1.0);
     }
   }
-  const limitedAngle = bound * ratio;
-  const radians = limitedAngle * (Math.PI / 180);
-  const limitedSideForward = input.basisSide
-    .clone()
-    .multiplyScalar(Math.sin(radians))
-    .addScaledVector(input.basisForward, Math.cos(radians))
-    .multiplyScalar(sideForwardLength);
+  const limitedAngle = f(bound * ratio);
+  const radians = f(bound * ratio * f(Math.PI / 180));
+  const limitedSideForward = springRoundVector(basisSide.multiplyScalar(f(Math.sin(radians))));
+  springRoundVector(limitedSideForward.add(springRoundVector(basisForward.multiplyScalar(f(Math.cos(radians))))));
+  springRoundVector(limitedSideForward.multiplyScalar(sideForwardLength));
 
-  vector.copy(upComponent).add(limitedSideForward);
+  springRoundVector(vector.copy(upComponent).add(limitedSideForward));
   return limitedAngle !== easedAngle;
 }
 
@@ -1044,7 +1058,7 @@ export function computeUtjWorldRotation(
   const baseRotation = parentRotation.clone().multiply(initialLocalRotation);
   const baseDirection = normalizeOrFallback(boneAxis.clone().applyQuaternion(baseRotation), FALLBACK_AXIS);
   const targetDirection = normalizeOrFallback(tailPosition.clone().sub(headPosition), baseDirection);
-  const delta = new THREE.Quaternion().setFromUnitVectors(baseDirection, targetDirection);
+  const delta = springFromToRotation(baseDirection, targetDirection);
   return delta.multiply(baseRotation).normalize();
 }
 
@@ -1055,20 +1069,124 @@ export function computeUtjLocalRotation(
   initialLocalRotation: THREE.Quaternion,
   boneAxis: THREE.Vector3
 ): THREE.Quaternion {
+  const f = Math.fround;
   const baseRotation = parentRotation.clone().multiply(initialLocalRotation);
-  const localTipDirection = tailPosition
-    .clone()
-    .sub(headPosition)
-    .applyQuaternion(baseRotation.clone().invert());
+  springRoundQuaternion(baseRotation);
+  const localTipDirection = rotateUnityVectorFloat32(new THREE.Vector3(
+    f(f(tailPosition.x) - f(headPosition.x)),
+    f(f(tailPosition.y) - f(headPosition.y)),
+    f(f(tailPosition.z) - f(headPosition.z))
+  ), baseRotation.invert());
   if (localTipDirection.lengthSq() <= EPSILON * EPSILON) {
     return initialLocalRotation.clone();
   }
-  localTipDirection.normalize();
-  const delta = new THREE.Quaternion().setFromUnitVectors(boneAxis.clone(), localTipDirection);
+  springNormalizeManaged(localTipDirection);
+  const delta = springFromToRotation(boneAxis, localTipDirection);
   return initialLocalRotation.clone().multiply(delta);
 }
 
 // Shared math helpers
+function springRoundVector(v: THREE.Vector3): THREE.Vector3 {
+  return v.set(Math.fround(v.x), Math.fround(v.y), Math.fround(v.z));
+}
+
+function springRoundQuaternion(q: THREE.Quaternion): THREE.Quaternion {
+  return q.set(Math.fround(q.x), Math.fround(q.y), Math.fround(q.z), Math.fround(q.w));
+}
+
+function springNormalizeManaged(v: THREE.Vector3): THREE.Vector3 {
+  springRoundVector(v);
+  const length = Math.fround(v.length());
+  return length > 0.00001
+    ? v.set(Math.fround(v.x / length), Math.fround(v.y / length), Math.fround(v.z / length))
+    : v.set(0, 0, 0);
+}
+
+
+function springFromToRotation(from: THREE.Vector3, to: THREE.Vector3): THREE.Quaternion {
+  const f = Math.fround;
+  const a = springNormalizeFloat32(from.clone());
+  const b = springNormalizeFloat32(to.clone());
+  const dot = springDotFloat32(a, b);
+  if (a.lengthSq() === 0 || b.lengthSq() === 0 || dot > 1 - 0.000001) {
+    return new THREE.Quaternion();
+  }
+
+  // Native FromToRotation constructs a float32 rotation matrix, then converts
+  // and normalizes it. A direct shortest-arc quaternion has different rounding.
+  const matrix = new Array<number>(9);
+  if (dot < -1 + 0.000001) {
+    let u = new THREE.Vector3(0, a.z, -a.y);
+    if (springDotFloat32(u, u) < 0.000001) u.set(-a.z, 0, a.x);
+    const inverseLength = f(1 / f(Math.sqrt(springDotFloat32(u, u))));
+    springRoundVector(u.multiplyScalar(inverseLength));
+    const w = springCrossFloat32(u, a);
+    const av = a.toArray(), uv = u.toArray(), wv = w.toArray();
+    for (let column = 0; column < 3; column++) {
+      for (let row = 0; row < 3; row++) {
+        matrix[column * 3 + row] = f(f(f(wv[row] * wv[column]) - f(av[row] * av[column]))
+          - f(uv[row] * uv[column]));
+      }
+    }
+  } else {
+    const v = springCrossFloat32(a, b);
+    const h = f(f(1 - dot) / springDotFloat32(v, v));
+    const hx = f(v.x * h), hy = f(v.y * h), hz = f(v.z * h);
+    const xy = f(v.y * hx), xz = f(v.z * hx), yz = f(v.y * hz);
+    matrix[0] = f(dot + f(v.x * hx));
+    matrix[1] = f(v.z + xy);
+    matrix[2] = f(xz - v.y);
+    matrix[3] = f(xy - v.z);
+    matrix[4] = f(dot + f(hy * v.y));
+    matrix[5] = f(v.x + yz);
+    matrix[6] = f(v.y + xz);
+    matrix[7] = f(yz - v.x);
+    matrix[8] = f(dot + f(v.z * hz));
+  }
+
+  const q = [0, 0, 0, 0];
+  const trace = f(f(matrix[0] + matrix[4]) + matrix[8]);
+  if (trace > 0) {
+    const root = f(Math.sqrt(f(trace + 1))), inverse = f(0.5 / root);
+    q[3] = f(root * 0.5);
+    q[0] = f(f(matrix[5] - matrix[7]) * inverse);
+    q[1] = f(f(matrix[6] - matrix[2]) * inverse);
+    q[2] = f(f(matrix[1] - matrix[3]) * inverse);
+  } else {
+    let i = matrix[4] > matrix[0] ? 1 : 0;
+    if (matrix[8] > matrix[i * 4]) i = 2;
+    const j = (i + 1) % 3, k = (j + 1) % 3;
+    const root = f(Math.sqrt(f(f(f(matrix[i * 4] - matrix[j * 4]) - matrix[k * 4]) + 1)));
+    const inverse = f(0.5 / root);
+    q[i] = f(root * 0.5);
+    q[3] = f(f(matrix[j * 3 + k] - matrix[k * 3 + j]) * inverse);
+    q[j] = f(f(matrix[i * 3 + j] + matrix[j * 3 + i]) * inverse);
+    q[k] = f(f(matrix[i * 3 + k] + matrix[k * 3 + i]) * inverse);
+  }
+  const length = f(Math.sqrt(f(f(f(f(q[0] * q[0]) + f(q[1] * q[1])) + f(q[2] * q[2])) + f(q[3] * q[3]))));
+  return new THREE.Quaternion(f(q[0] / length), f(q[1] / length), f(q[2] / length), f(q[3] / length));
+}
+
+function springCrossFloat32(a: THREE.Vector3, b: THREE.Vector3): THREE.Vector3 {
+  const f = Math.fround;
+  return new THREE.Vector3(f(f(a.y * b.z) - f(a.z * b.y)),
+    f(f(a.z * b.x) - f(a.x * b.z)), f(f(a.x * b.y) - f(a.y * b.x)));
+}
+
+function springDotFloat32(a: THREE.Vector3, b: THREE.Vector3): number {
+  const f = Math.fround;
+  return f(f(f(a.x * b.x) + f(a.y * b.y)) + f(a.z * b.z));
+}
+
+function springNormalizeFloat32(value: THREE.Vector3): THREE.Vector3 {
+  const f = Math.fround;
+  value.set(f(value.x), f(value.y), f(value.z));
+  const length = f(Math.sqrt(springDotFloat32(value, value)));
+  return length >= Math.fround(0.00001)
+    ? value.set(f(value.x / length), f(value.y / length), f(value.z / length))
+    : value.set(0, 0, 0);
+}
+
 function noCollision(tailPosition: THREE.Vector3): UtjCollisionResult {
   return {
     status: UtjColliderStatus.NoCollision,

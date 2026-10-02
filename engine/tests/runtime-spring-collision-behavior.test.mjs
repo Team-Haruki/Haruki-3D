@@ -8,6 +8,7 @@ import {
   checkLocalSphereCollisionAndReact,
   checkPanelCollisionAndReact,
 } from "../dist/haruki-3d-engine-internal.js";
+import { checkUtjCollisions, createUtjSpringBoneState } from "../dist/haruki-3d-engine-internal.js";
 
 // Character-height scaling puts a uniform world scale on the whole rig
 // (body/Position). Official UTJ colliders convert the WORLD tail radius into
@@ -54,6 +55,26 @@ function scaledCapsuleCollider(radius) {
 // 0.02 (raw 0.01 on the same scale-2 rig). Official combined reach = 0.08.
 const WORLD_TAIL_RADIUS = 0.02;
 const HEAD = new THREE.Vector3(0.2, 0, 0);
+
+test("collision response uses pre-push velocity and post-push distance as native UTJ does", () => {
+  // Native 6.7.0 CheckForCollision (0xA614734): velocity is saved curr - prev;
+  // the later speed comparison uses pushed curr - prev. Sphere pushes .1 to .2.
+  // Reflected velocity = (.19 - .1) * .4 = .036; excess = .036 - .01 = .026.
+  const state = createUtjSpringBoneState(new THREE.Vector3(), new THREE.Vector3(0.1, 0, 0));
+  state.prevTipPos.set(0.19, 0, 0);
+  const collider = scaledSphereCollider(0.15);
+  collider.localToWorldMatrix.identity();
+  collider.worldToLocalMatrix.identity();
+  collider.worldToLocalRadiusScale = 1;
+  collider.lossyScaleX = 1;
+  const status = checkUtjCollisions(state, {
+    headPosition: new THREE.Vector3(), springLength: 0.1, tailRadius: 0.05,
+    colliders: [collider], bounce: 0.4, friction: 0.2,
+  });
+  assert.equal(status, UtjColliderStatus.HeadIsEmbedded);
+  assert.ok(state.currTipPos.distanceTo(new THREE.Vector3(0.226, 0, 0)) < 1e-9);
+  assert.ok(state.prevTipPos.distanceTo(new THREE.Vector3(0.164, 0, 0)) < 1e-9);
+});
 
 test("scaled sphere collider keeps the official world reach (no scale double-count)", () => {
   const outside = checkLocalSphereCollisionAndReact(

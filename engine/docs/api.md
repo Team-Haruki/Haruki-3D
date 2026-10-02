@@ -5,14 +5,8 @@ runtime loading, character assembly, animation, SpringBone, camera state, and
 WebGL rendering. The product owns layout, controls, command parsing,
 localization, loading indicators, and user-facing errors.
 
-This API renders the CostumeShop-style single-character preview. The package
-also exposes explicit `base`, `costume_shop`, and `mv` subpaths. Full 3DMV is a
-separate original-Unity WebGL/WASM runtime; consumers must not treat the
-CostumeShop API as a translated 3DMV player.
-
-The CostumeShop browser interface does not accept raw Unity bundles and does
-not call the Docker capture service. The MV Host starts an original Unity build,
-which owns its StreamingAssets and AssetBundle loading.
+This API renders the CostumeShop-style single-character preview, with explicit
+`base` and `costume_shop` subpaths. It consumes exported runtime packages.
 
 ## Browser Requirements
 
@@ -20,8 +14,7 @@ which owns its StreamingAssets and AssetBundle loading.
 - WebGL 2
 - ES modules, `fetch`, WebAssembly, and `requestAnimationFrame`
 
-The CostumeShop engine uses Three.js/WebGL; MV uses Unity WebGL/WASM. Neither
-requires WebGPU. Feature-detect WebGL 2 before creating either runtime and show
+The CostumeShop engine uses Three.js/WebGL. Feature-detect WebGL 2 and show
 the product's own unsupported-browser message when it is unavailable.
 
 ## Install And Import
@@ -43,54 +36,16 @@ The public entry intentionally exports only the kernel factory, its public
 types, and the default preview light. Do not import from
 `haruki-3d-engine/internal` in a product page.
 
-Use the named entries when integrating more than one rendering context:
+Use the explicit CostumeShop entry:
 
 ```ts
 import {
   createCostumeShopKernel,
 } from "haruki-3d-engine/costume_shop";
-import {
-  createHarukiMvRuntime,
-  resolveUnityWebGLBuild,
-} from "haruki-3d-engine/mv";
 ```
 
 `haruki-3d-engine/base` is the shared assembly/runtime boundary. Product pages
-normally use `costume_shop` or `mv` rather than constructing Base directly.
-
-## 3DMV Integration
-
-The MV module can load Unity's generated loader itself or receive an already
-loaded `createUnityInstance` function. It does not invent a release identifier
-or translate the Unity scene into Three.js.
-
-```ts
-const build = resolveUnityWebGLBuild({
-  buildBaseUrl: "/mv/Build",
-  streamingAssetsUrl: "/mv/StreamingAssets",
-  buildName: "live",
-});
-const mv = createHarukiMvRuntime({
-  canvas,
-  loaderUrl: build.loaderUrl,
-  build: build.config,
-  onProgress(progress) {
-    console.log(progress);
-  },
-});
-
-await mv.prepare();
-mv.sendMessage(bridgeObjectName, loadMethodName, JSON.stringify(request));
-
-// On page/component disposal:
-await mv.destroy();
-```
-
-The Unity project's actual bridge object and method names remain its contract;
-the strings above only illustrate forwarding. `destroy()` calls Unity `Quit()`
-exactly once and waits for an in-flight initialization before releasing it.
-See [mv.md](mv.md) for the generated-build, hosting-header, and Unity-side
-coordinator contract.
+normally use `costume_shop` rather than constructing Base directly.
 
 ## Minimal Integration
 

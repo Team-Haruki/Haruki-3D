@@ -118,6 +118,38 @@ test("a missing toe never duplicates the remaining projected shadow", () => {
   shadow.dispose();
 });
 
+test("projected shadow keeps the official toe slots and quad geometry", () => {
+  installFakeCanvasDocument();
+  const shadow = new CharacterProjectedShadowController();
+  shadow.update({
+    targetWorldPositions: [null, new THREE.Vector3(0.1, 0.05, 0.2)],
+    lightWorldPosition: null,
+    characterModelScale: 1,
+    visible: true,
+  });
+
+  assert.equal(shadow.group.children[0].visible, false);
+  assert.equal(shadow.group.children[1].visible, false);
+  assert.equal(shadow.group.children[2].visible, false);
+  assert.equal(shadow.group.children[3].visible, true);
+  assert.deepEqual(shadow.getDebugSnapshot(1).targetPositions, [
+    { x: 0, y: 0, z: 0 },
+    { x: 0.1, y: 0.05, z: 0.2 },
+  ]);
+
+  const directionalMesh = shadow.group.children[2].children[0];
+  assert.deepEqual(Array.from(directionalMesh.geometry.attributes.position.array), [
+    -0.5, 0, 1, 0.5, 0, 1, -0.5, 0, 0, 0.5, 0, 0,
+  ]);
+  assert.deepEqual(
+    vector(new THREE.Vector3(0, 0, 1).applyQuaternion(shadow.group.children[2].quaternion)),
+    [0, 0, 1]
+  );
+  assert.deepEqual(vector(directionalMesh.scale), [0.72, 1, 1.06]);
+  assert.deepEqual(vector(shadow.group.children[3].children[0].scale), [0.46, 1, 0.46]);
+  shadow.dispose();
+});
+
 test("capture backgrounds retain deterministic dimensions and draw operations", () => {
   const firstLog = installFakeCanvasDocument();
   const first = createCaptureBackgroundTexture(700, 500);

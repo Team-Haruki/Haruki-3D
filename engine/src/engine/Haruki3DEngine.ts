@@ -1,3 +1,4 @@
+import { updateNativeMorphTangents } from "./nativeMorphTangentRuntime";
 import * as THREE from "three";
 import {
   ensureRoleRuntimePackage,
@@ -30,7 +31,7 @@ import {
 } from "./springRuntimeTypes";
 import {
   UnityPrefabSpringRuntime,
-  type SpringTimelineControl,
+  type SpringSimulationControl,
 } from "./unityPrefabSpringRuntimeAdapter";
 import { SekaiExtraBoneRuntime } from "./sekaiExtraBoneRuntime";
 import {
@@ -40,6 +41,7 @@ import {
 import {
   convertUnityAxisToThree,
   convertUnityPositionToThree,
+  getUnityWorldQuaternion,
   readUnityVector3,
   type UnityVectorLike,
 } from "./unityCoordinateConversion";
@@ -179,7 +181,7 @@ const FACE_SHADOW_HORIZONTAL_EPSILON = 0.00001;
 const UNITY_TRANSFORM_UP_LOCAL = convertUnityAxisToThree("up");
 
 type SpringRuntimeController = UnityPrefabSpringRuntime;
-export type SpringTimelineControlState = SpringTimelineControl;
+export type SpringSimulationControlState = SpringSimulationControl;
 
 export type PjskPresentationMode = "interactive" | "capture";
 
@@ -829,7 +831,7 @@ export class Haruki3DEngine {
   private currentSpringRuntime: SpringRuntimeController | null = null;
   private currentExtraBoneRuntime: SekaiExtraBoneRuntime | null = null;
   private currentConstraintRuntime: UnityConstraintRuntime | null = null;
-  private currentSpringTimelineControl: SpringTimelineControlState | null = null;
+  private currentSpringSimulationControl: SpringSimulationControlState | null = null;
   private currentPrefabSourceGraph: UnityPrefabSourceGraph | null = null;
   private currentPrefabHeadFollowDebug: PrefabHeadFollowDebug = {
     active: false,
@@ -1295,7 +1297,7 @@ export class Haruki3DEngine {
     ])?.node ?? root;
 
     facingNode.updateMatrixWorld(true);
-    facingNode.getWorldQuaternion(this.tempQuaternion);
+    getUnityWorldQuaternion(facingNode, this.tempQuaternion);
     this.tempVector.set(0, 0, 1).applyQuaternion(this.tempQuaternion);
     this.tempVector.y = 0;
     if (this.tempVector.lengthSq() < 0.000001) {
@@ -1619,18 +1621,18 @@ export class Haruki3DEngine {
       this.currentRuntimeExtension,
       root
     );
-    if (runtime && this.currentSpringTimelineControl) {
-      runtime.setTimelineControl(this.currentSpringTimelineControl);
+    if (runtime && this.currentSpringSimulationControl) {
+      runtime.setSimulationControl(this.currentSpringSimulationControl);
     }
     return runtime;
   }
 
-  setSpringTimelineControl(control: SpringTimelineControlState | null) {
-    this.currentSpringTimelineControl = control ? { ...control } : null;
-    if (this.currentSpringTimelineControl) {
-      this.currentSpringRuntime?.setTimelineControl(this.currentSpringTimelineControl);
+  setSpringSimulationControl(control: SpringSimulationControlState | null) {
+    this.currentSpringSimulationControl = control ? { ...control } : null;
+    if (this.currentSpringSimulationControl) {
+      this.currentSpringRuntime?.setSimulationControl(this.currentSpringSimulationControl);
     } else {
-      this.currentSpringRuntime?.clearTimelineControl();
+      this.currentSpringRuntime?.clearSimulationControl();
     }
   }
 
@@ -1744,8 +1746,7 @@ export class Haruki3DEngine {
     root.updateMatrixWorld(true);
     const toePositions = projectedShadowTargetBoneNames
       .map((name) => this.findNodeByImportedName(root, name))
-      .filter((node): node is THREE.Object3D => node !== null)
-      .map((node) => node.getWorldPosition(new THREE.Vector3()));
+      .map((node) => node?.getWorldPosition(new THREE.Vector3()) ?? null);
     return toePositions;
   }
 
@@ -1784,6 +1785,7 @@ export class Haruki3DEngine {
   }
 
   renderFrame() {
+    updateNativeMorphTangents(this.characterRoot);
     this.renderer.render(this.scene, this.camera);
   }
 
@@ -2406,6 +2408,7 @@ export class Haruki3DEngine {
         hairController: readCharacterHairMaterialController(characterAsset.runtimeExtension),
       }),
     ]);
+    this.assertNoPlaceholderMaterials(prefabSourceGraph.root);
     this.installSekaiOutlineShells(prefabSourceGraph.root);
     return {
       root: prefabSourceGraph.root,
@@ -2416,6 +2419,25 @@ export class Haruki3DEngine {
       skinnedMeshCount: nativeResult.skinnedMeshCount,
       prefabSourceGraph,
     };
+  }
+
+  private assertNoPlaceholderMaterials(root: THREE.Object3D) {
+    const unresolved: string[] = [];
+    root.traverse((node) => {
+      const mesh = node as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+      for (const material of materials) {
+        if (!material || material.userData.pjskPlaceholderMaterial === true) {
+          unresolved.push(`${mesh.name}:${material?.name ?? "<null>"}`);
+        }
+      }
+    });
+    if (unresolved.length > 0) {
+      throw new Error(
+        `Unity runtime material binding left ${unresolved.length} placeholder slot(s): ${unresolved.slice(0, 8).join(", ")}`
+      );
+    }
   }
 
   private installSekaiOutlineShells(root: THREE.Object3D) {
@@ -2457,6 +2479,8 @@ export class Haruki3DEngine {
     const outline = mesh instanceof THREE.SkinnedMesh
       ? new THREE.SkinnedMesh(mesh.geometry, outlineMaterial)
       : new THREE.Mesh(mesh.geometry, outlineMaterial);
+    outline.morphTargetDictionary = mesh.morphTargetDictionary;
+    outline.morphTargetInfluences = mesh.morphTargetInfluences;
     outline.name = `${mesh.name}_outline`;
     outline.renderOrder = Math.max(mesh.renderOrder - 2, 0);
     outline.frustumCulled = mesh.frustumCulled;
@@ -2645,7 +2669,7 @@ export class Haruki3DEngine {
       this.findNodeByImportedName(this.headSlot, "Head") ??
       this.currentBodyAnimationRoot ??
       this.characterRoot;
-    headNode.getWorldQuaternion(this.tempQuaternion);
+    getUnityWorldQuaternion(headNode, this.tempQuaternion);
     headNode.getWorldPosition(this.faceHeadWorldPosition);
     // Unity's face-shadow action reads headTransform.up. The imported
     // Object3D already has a mirrored Three quaternion, so transform the

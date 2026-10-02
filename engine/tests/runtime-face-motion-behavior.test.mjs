@@ -101,3 +101,19 @@ test("embedded face motion is read from the exported motion package", () => {
   }), faceMotion);
   assert.equal(readEmbeddedRuntimeFaceMotion({}), null);
 });
+
+test("original character 07 gaze curve binds even with legacy exported FNV metadata", () => {
+  const { root, mesh } = createMorphRoot();
+  mesh.morphTargetDictionary = { "BS_look.look_left": 0 };
+  const runtime = new FaceMotionRuntime();
+  runtime.bind(root, {
+    morphChannelBindings: [{ name: "BS_look.look_left", curveHash: 2422719223 }],
+  });
+  // Original 07_00 face_loop: this is a constant curve, not a streamed key.
+  runtime.setMotion({ clips: [{ name: "face_loop", sampleRate: 60, duration: 5,
+    curves: [{ curveHash: 3240688866, keyframes: [
+      { time: 0, value: 43.632144927978516 }, { time: 5, value: 43.632144927978516 },
+    ] }],
+  }] }, "face_loop", null);
+  assert.equal(mesh.morphTargetInfluences[0], 0.43632144927978516);
+});

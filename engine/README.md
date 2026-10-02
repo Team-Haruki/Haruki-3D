@@ -2,19 +2,15 @@
 
 Runtime engine for rendering converted Project SEKAI 3D character packages in a browser.
 
-This package is not a product GUI. It is split into three runtime modules:
+This package is not a product GUI. It is split into two runtime modules:
 
 - `haruki-3d-engine/base` owns shared package loading, character assembly,
   animation, constraints, SpringBone, and browser lifecycle behavior.
 - `haruki-3d-engine/costume_shop` owns the Three.js single-character preview,
   including its camera, height, lighting, outline, and capture policy.
-- `haruki-3d-engine/mv` hosts the original Unity WebGL/WASM 3DMV player.
 
 The default public entry remains the CostumeShop kernel for compatibility. The
 capture stack uses a separate internal adapter around that implementation.
-
-Full 3DMV playback is deliberately not reimplemented in the CostumeShop
-Three.js renderer.
 
 The engine does not parse Unity bundles. It loads only the final, role-scoped
 Haruki runtime package:
@@ -62,11 +58,9 @@ New integrations may make the context explicit:
 
 ```ts
 import { createCostumeShopKernel } from "haruki-3d-engine/costume_shop";
-import { createHarukiMvRuntime } from "haruki-3d-engine/mv";
 ```
 
 The complete browser integration contract is in [docs/api.md](docs/api.md).
-The original-Unity MV host contract is in [docs/mv.md](docs/mv.md).
 The buildable canvas-only consumer in `examples/minimal` verifies package,
 Worker, Brotli WASM, and Basis transcoder delivery without defining product UI:
 

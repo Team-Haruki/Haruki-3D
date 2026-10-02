@@ -50,8 +50,8 @@ test("runtime texture loading deduplicates in flight requests and recovers after
   resolveTexture(new THREE.Texture());
   await noColor;
   const failing = { loadAsync: async () => { throw new Error("missing"); } };
-  assert.equal(await loadRuntimeTexture(failing, "missing.ktx2"), null);
-  assert.equal(await loadRuntimeTexture(failing, "missing.ktx2"), null);
+  await assert.rejects(loadRuntimeTexture(failing, "missing.ktx2"), /missing/);
+  await assert.rejects(loadRuntimeTexture(failing, "missing.ktx2"), /missing/);
 });
 
 test("body clone accepts explicit lighting overrides and source-uniform fallbacks", () => {

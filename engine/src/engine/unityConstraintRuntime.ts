@@ -3,6 +3,7 @@ import {
   convertUnityDirectionToThree,
   convertUnityPositionToThree,
   convertUnityQuaternionToThree,
+  getUnityWorldQuaternion,
   readUnityVector3,
 } from "./unityCoordinateConversion";
 
@@ -115,7 +116,6 @@ type ResolvedRuntimeConstraint = {
 
 const TEMP_SOURCE_POSITION = new THREE.Vector3();
 const TEMP_SOURCE_QUATERNION = new THREE.Quaternion();
-const TEMP_SOURCE_SCALE = new THREE.Vector3();
 const TEMP_TARGET_POSITION = new THREE.Vector3();
 const TEMP_TARGET_QUATERNION = new THREE.Quaternion();
 const TEMP_PARENT_QUATERNION = new THREE.Quaternion();
@@ -444,7 +444,8 @@ function applyParentConstraint(owner: THREE.Object3D, sources: AppliedConstraint
       continue;
     }
     source.node.updateMatrixWorld(true);
-    source.node.matrixWorld.decompose(TEMP_SOURCE_POSITION, TEMP_SOURCE_QUATERNION, TEMP_SOURCE_SCALE);
+    source.node.getWorldPosition(TEMP_SOURCE_POSITION);
+    getUnityWorldQuaternion(source.node, TEMP_SOURCE_QUATERNION);
     const weightedPosition = TEMP_SOURCE_POSITION.clone().add(
       (source.translationOffset ?? new THREE.Vector3()).clone().applyQuaternion(TEMP_SOURCE_QUATERNION)
     );
@@ -676,7 +677,7 @@ function applyWorldPositionRotation(
   if (node.parent) {
     node.parent.updateMatrixWorld(true);
     node.parent.worldToLocal(localPosition);
-    node.parent.getWorldQuaternion(TEMP_PARENT_QUATERNION);
+    getUnityWorldQuaternion(node.parent, TEMP_PARENT_QUATERNION);
     localQuaternion.premultiply(TEMP_PARENT_QUATERNION.invert());
   }
   node.position.copy(localPosition);
@@ -715,7 +716,7 @@ function weightedSourceRotation(sources: AppliedConstraintSource[]) {
       continue;
     }
     source.node.updateMatrixWorld(true);
-    source.node.getWorldQuaternion(TEMP_SOURCE_QUATERNION);
+    getUnityWorldQuaternion(source.node, TEMP_SOURCE_QUATERNION);
     blendedRotation = blendWeightedQuaternion(
       blendedRotation,
       TEMP_SOURCE_QUATERNION,
@@ -757,7 +758,7 @@ function asUnityDirection(value: UnityVectorLike | undefined | null, fallback: T
 
 function readWorldDirection(node: THREE.Object3D, localDirection: THREE.Vector3) {
   node.updateMatrixWorld(true);
-  node.getWorldQuaternion(TEMP_TARGET_QUATERNION);
+  getUnityWorldQuaternion(node, TEMP_TARGET_QUATERNION);
   return localDirection.clone().applyQuaternion(TEMP_TARGET_QUATERNION);
 }
 

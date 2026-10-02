@@ -15,6 +15,9 @@ and could drift silently:
   `parts/by-role/<characterId>/<unit>/` catalog layout, as emitted by the
   production exporter and as expected/validated by the production engine
   loader.
+- the **part registry rows** — planned source aliases, missing models, and empty optional-head
+  slots produced by `CostumeRegistryExporter.ExportInMemory` must pass the engine's registry
+  validation, including the producer's trailing-slash directory paths.
 
 Both sides run their **production** code — nothing is reimplemented in the
 tests.
@@ -37,6 +40,7 @@ tests.
      the fixture, computes every `roleRuntimePath` with the production
      formula, and writes the root + 31 scoped `runtime-role-catalog.msgpack.br`
      files with the production `parts/by-role/...` layout into `out/package/`;
+   - adds a small synthetic costume master fixture and emits the actual production part registry;
    - writes `out/exporter-parity.json` with the exporter-side results.
 2. `rolldown.config.mjs` bundles the engine's production
    `src/runtime/runtimePackageLoader.ts` **in place** with the engine's own
@@ -56,6 +60,8 @@ tests.
    - every exporter-emitted `parts/by-role/...` catalog path and
      `roles/...` role-runtime path must match the engine's runtime-metadata
      URL patterns (`isCacheableRuntimeMetadataUrl`), with a negative control.
+   - exporter-generated registry rows pass `normalizePartRegistry` without changing their
+     statuses, source-alias paths, or empty-slot semantics.
 
 The engine functions under test are exported from `runtimePackageLoader.ts`
 solely for this harness (marked in the source); the exports change no runtime

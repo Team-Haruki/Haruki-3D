@@ -90,8 +90,21 @@ if (scopedCatalogPaths.Count != identities.Count)
     );
 }
 
+// 4. Registry parity: resolve synthetic master rows and on-disk bundle names
+// through the real producer. No package paths or registry entries are fabricated.
+var assetDirectory = Path.Combine(outDirectory, "asset-fixture");
+ResetDirectory(assetDirectory);
+WritePartFixture(masterDirectory, assetDirectory);
+var partRegistry = CostumeRegistryExporter.ExportInMemory(masterDirectory, assetDirectory).PartRegistry;
+foreach (var status in new[] { "planned", "missing", "empty" })
+{
+    if (!partRegistry.Entries.Any(entry => entry.Status == status))
+        throw new InvalidDataException($"Production fixture did not exercise registry status '{status}'.");
+}
+
 var parity = new JsonObject
 {
+    ["partRegistry"] = JsonSerializer.SerializeToNode(partRegistry),
     ["unitSegment"] = unitSegment,
     ["roleIdentity"] = roleIdentity,
     ["catalog"] = new JsonObject
@@ -166,4 +179,54 @@ static void WriteMasterFixture(string masterDirectory, IReadOnlyList<(int RoleId
 static void WriteJsonFile(string path, JsonNode value)
 {
     File.WriteAllText(path, value.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+}
+
+static void WritePartFixture(string masterDirectory, string assetDirectory)
+{
+    var costumes = new JsonArray();
+    foreach (var (id, partType, name) in new[] {
+        (1001, "body", "parity planned body"),
+        (3001, "hair", "parity planned hair"),
+        (9001, "body", "parity missing model"),
+        (1, "head", "parity empty optional slot"),
+    })
+    {
+        costumes.Add(new JsonObject {
+            ["id"] = id, ["costume3dGroupId"] = id, ["partType"] = partType,
+            ["characterId"] = 1, ["colorId"] = 1, ["colorName"] = "original",
+            ["name"] = name, ["costume3dType"] = "normal",
+            ["assetbundleName"] = id == 1 ? "head_default_01" : "parity",
+        });
+    }
+    WriteJsonFile(Path.Combine(masterDirectory, "costume3ds.json"), costumes);
+    WriteJsonFile(Path.Combine(masterDirectory, "costume3dModels.json"), new JsonArray(
+        new JsonObject {
+            ["costume3dId"] = 1001, ["unit"] = "light_sound",
+            ["assetbundleName"] = "01/parity",
+        },
+        new JsonObject {
+            ["costume3dId"] = 3001, ["unit"] = "light_sound",
+            ["assetbundleName"] = "01/parity",
+        },
+        new JsonObject {
+            ["costume3dId"] = 1, ["unit"] = "light_sound",
+            ["headCostume3dAssetbundleType"] = "head_only",
+            ["thumbnailAssetbundleName"] = "head_default_01",
+        }
+    ));
+    foreach (var table in new[] {
+        "cards", "cardCostume3ds", "costume3dModelNotAvailablePatterns", "costume3dModelDefaultHairs",
+    })
+        WriteJsonFile(Path.Combine(masterDirectory, table + ".json"), new JsonArray());
+
+    // Registry generation only checks existence; it does not decode these files.
+    foreach (var relativePath in new[] {
+        "live_pv/model/characterv2/body/01/parity/normal.bundle",
+        "live_pv/model/characterv2/face/01/parity.bundle",
+    })
+    {
+        var path = Path.Combine(assetDirectory, relativePath);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, Array.Empty<byte>());
+    }
 }

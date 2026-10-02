@@ -30,5 +30,5 @@ export {
 } from "../engine/animationPlaybackRuntime";
 export {
   UnityPrefabSpringRuntime,
-  type SpringTimelineControl,
+  type SpringSimulationControl,
 } from "../engine/unityPrefabSpringRuntimeAdapter";

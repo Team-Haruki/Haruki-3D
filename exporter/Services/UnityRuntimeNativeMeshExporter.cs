@@ -42,21 +42,25 @@ public sealed class UnityRuntimeNativeMeshExporter
 
         if (bodyGraph is null)
         {
-            warnings.Add("Body prefab graph is missing; native body meshes were not exported.");
+            throw new InvalidDataException("Body prefab graph is missing.");
         }
-        else
-        {
-            meshes.AddRange(ExportPart("Body", bodyImported, bodyGraph, runtimeUnitySetup.ActiveRootProfile.ActiveRoots, warnings));
-        }
+        meshes.AddRange(ExportPart(
+            "Body",
+            bodyImported,
+            bodyGraph,
+            runtimeUnitySetup.ActiveRootProfile.ActiveRoots,
+            warnings));
 
         if (headGraph is null)
         {
-            warnings.Add("Head prefab graph is missing; native head meshes were not exported.");
+            throw new InvalidDataException("Head prefab graph is missing.");
         }
-        else
-        {
-            meshes.AddRange(ExportPart("Head", headImported, headGraph, runtimeUnitySetup.ActiveRootProfile.ActiveRoots, warnings));
-        }
+        meshes.AddRange(ExportPart(
+            "Head",
+            headImported,
+            headGraph,
+            runtimeUnitySetup.ActiveRootProfile.ActiveRoots,
+            warnings));
 
         if (accessoryImported is not null)
         {
@@ -86,8 +90,11 @@ public sealed class UnityRuntimeNativeMeshExporter
         List<string> warnings
     )
     {
-        var transformPaths = runtimeUnitySetup.PrefabGraphs
+        var transforms = runtimeUnitySetup.PrefabGraphs
             .SelectMany(graph => graph.Transforms)
+            .Where(transform => !string.IsNullOrWhiteSpace(transform.TransformPath))
+            .ToList();
+        var transformPaths = transforms
             .Select(transform => transform.TransformPath)
             .Where(path => !string.IsNullOrWhiteSpace(path))
             .Select(path => path!)
@@ -96,20 +103,27 @@ public sealed class UnityRuntimeNativeMeshExporter
         var attachPath = ResolveAccessoryAttachPath(transformPaths, attachNodeName);
         if (attachPath is null)
         {
-            warnings.Add($"Accessory meshes skipped: attach node '{attachNodeName ?? "<none>"}' was not found in runtime prefab transforms.");
-            return Array.Empty<PjskUnityRuntimeNativeMesh>();
+            throw new InvalidDataException(
+                $"Accessory attach node '{attachNodeName ?? "<none>"}' was not found in runtime prefab transforms.");
         }
 
         var morphMap = BuildMorphMap(imported.MorphList);
+        var consumedMorphPaths = new HashSet<string>(StringComparer.Ordinal);
         var result = new List<PjskUnityRuntimeNativeMesh>();
         foreach (var mesh in imported.MeshList
             .Where(mesh => !string.IsNullOrWhiteSpace(mesh.Path))
-            .OrderBy(mesh => mesh.Path, StringComparer.OrdinalIgnoreCase))
+            .OrderBy(mesh => mesh.Path, StringComparer.Ordinal))
         {
-            if (!TryResolveSkinBinding(mesh, transformPaths, null, transformPaths, out var skinBinding, out var skinFailure))
+            var accessoryBones = ResolveExactImportedBones(mesh, transforms);
+            if (!TryResolveSkinBinding(
+                    mesh,
+                    accessoryBones.Paths,
+                    accessoryBones.PathIds,
+                    out var skinBinding,
+                    out var skinFailure))
             {
-                warnings.Add($"Accessory mesh '{mesh.Path}' exported without skin binding: {skinFailure}");
-                skinBinding = EmptySkinBinding;
+                throw new InvalidDataException(
+                    $"Accessory mesh '{mesh.Path}' has an invalid skin binding: {skinFailure}");
             }
 
             var renderer = new SpringPrefabRenderer(
@@ -138,19 +152,20 @@ public sealed class UnityRuntimeNativeMeshExporter
                 attachPath,
                 rootBonePath: null,
                 skinBinding,
-                ResolveMorphTargets(mesh.Path, morphMap)
+                ResolveMorphTargets(mesh.Path, morphMap, consumedMorphPaths)
             ));
         }
 
         if (result.Count == 0)
         {
-            warnings.Add("Accessory imported model had no mesh paths; native accessory meshes were not exported.");
+            throw new InvalidDataException("Accessory imported model has no mesh paths.");
         }
+        RequireAllMorphsConsumed(morphMap, consumedMorphPaths);
 
         return result;
     }
 
-    private static List<PjskUnityRuntimeNativeMesh> ExportPart(
+    private static IReadOnlyList<PjskUnityRuntimeNativeMesh> ExportPart(
         string partKind,
         IImported imported,
         SpringPrefabGraph graph,
@@ -168,6 +183,7 @@ public sealed class UnityRuntimeNativeMeshExporter
             .Where(renderer => renderer.Enabled && IsActiveRenderer(renderer, activeRoots))
             .ToList();
         var morphMap = BuildMorphMap(imported.MorphList);
+        var consumedMorphPaths = new HashSet<string>(StringComparer.Ordinal);
         var result = new List<PjskUnityRuntimeNativeMesh>();
 
         var meshLookup = BuildImportedMeshLookupMap(imported.MeshList
@@ -175,104 +191,72 @@ public sealed class UnityRuntimeNativeMeshExporter
 
         foreach (var renderer in activeRenderers)
         {
-            if (TryBuildPartNativeMesh(
-                    partKind,
-                    renderer,
-                    meshLookup,
-                    transformPaths,
-                    transformPathByPathId,
-                    morphMap,
-                    out var nativeMesh,
-                    out var warning
-                ))
+            if (string.IsNullOrWhiteSpace(renderer.TransformPath))
             {
-                result.Add(nativeMesh!);
+                throw new InvalidDataException(
+                    $"{partKind} renderer {renderer.PathId} has no transform path.");
             }
-            else
+
+            if (!TryResolveImportedMesh(renderer, meshLookup, out var mesh, out var failure))
             {
-                warnings.Add(warning);
+                throw new InvalidDataException(
+                    $"{partKind} renderer '{renderer.TransformPath}' cannot resolve its mesh: {failure}");
             }
-        }
 
-        return result;
-    }
+            var rendererBonePaths = new List<string>();
+            var missingBone = false;
+            foreach (var pathId in renderer.SkinnedMeshBones)
+            {
+                if (!transformPathByPathId.TryGetValue(pathId, out var bonePath))
+                {
+                    missingBone = true;
+                    break;
+                }
+                rendererBonePaths.Add(bonePath);
+            }
 
-    private static bool TryBuildPartNativeMesh(
-        string partKind,
-        SpringPrefabRenderer renderer,
-        Dictionary<string, IReadOnlyList<ImportedMesh>> meshLookup,
-        List<string> transformPaths,
-        Dictionary<long, string> transformPathByPathId,
-        Dictionary<string, ImportedMorph> morphMap,
-        out PjskUnityRuntimeNativeMesh? nativeMesh,
-        out string warning
-    )
-    {
-        nativeMesh = null;
-        if (string.IsNullOrWhiteSpace(renderer.TransformPath))
-        {
-            warning = $"{partKind} renderer {renderer.PathId} skipped: renderer has no transform path.";
-            return false;
-        }
+            if (missingBone)
+            {
+                throw new InvalidDataException(
+                    $"{partKind} mesh '{mesh.Path}' renderer {renderer.PathId} has unresolved skinned bone PathIDs.");
+            }
 
-        if (!TryResolveImportedMesh(renderer, meshLookup, transformPaths, transformPathByPathId, out var mesh, out var failure))
-        {
-            warning = $"{partKind} renderer '{renderer.TransformPath}' skipped: {failure}";
-            return false;
-        }
+            var skinBones = ResolveSkinBoneReferences(
+                mesh, rendererBonePaths, renderer.SkinnedMeshBones, graph.Transforms);
+            if (!TryResolveSkinBinding(
+                    mesh,
+                    skinBones.Paths,
+                    skinBones.PathIds,
+                    out var skinBinding,
+                    out var skinFailure))
+            {
+                throw new InvalidDataException(
+                    $"{partKind} mesh '{mesh.Path}' has an invalid skin binding: {skinFailure}");
+            }
 
-        if (!TryResolveRendererBonePaths(renderer, transformPathByPathId, out var rendererBonePaths))
-        {
-            warning = $"{partKind} mesh '{mesh.Path}' skipped: renderer {renderer.PathId} has unresolved skinned bone PathIDs.";
-            return false;
-        }
+            var rootBonePath = renderer.RootBonePathId is long rootBonePathId &&
+                transformPathByPathId.TryGetValue(rootBonePathId, out var resolvedRootBonePath)
+                ? resolvedRootBonePath
+                : null;
 
-        if (!TryResolveSkinBinding(
+            result.Add(BuildNativeMesh(
+                partKind,
                 mesh,
-                rendererBonePaths,
-                renderer.SkinnedMeshBones,
-                transformPaths,
-                out var skinBinding,
-                out var skinFailure
-            ))
-        {
-            warning = $"{partKind} mesh '{mesh.Path}' skipped: {skinFailure}";
-            return false;
+                renderer,
+                renderer.TransformPath,
+                rootBonePath,
+                skinBinding,
+                ResolveMorphTargets(mesh.Path, morphMap, consumedMorphPaths)
+            ));
         }
 
-        var rootBonePath = renderer.RootBonePathId is long rootBonePathId &&
-            transformPathByPathId.TryGetValue(rootBonePathId, out var resolvedRootBonePath)
-            ? resolvedRootBonePath
-            : null;
-        nativeMesh = BuildNativeMesh(
-            partKind,
-            mesh,
-            renderer,
-            renderer.TransformPath,
-            rootBonePath,
-            skinBinding,
-            ResolveMorphTargets(mesh.Path, morphMap)
-        );
-        warning = string.Empty;
-        return true;
-    }
-
-    private static bool TryResolveRendererBonePaths(
-        SpringPrefabRenderer renderer,
-        Dictionary<long, string> transformPathByPathId,
-        out List<string> rendererBonePaths
-    )
-    {
-        rendererBonePaths = new List<string>();
-        foreach (var pathId in renderer.SkinnedMeshBones)
+        if (result.Count == 0)
         {
-            if (!transformPathByPathId.TryGetValue(pathId, out var bonePath))
-            {
-                return false;
-            }
-            rendererBonePaths.Add(bonePath);
+            throw new InvalidDataException(
+                $"{partKind} prefab graph has no active renderer to export.");
         }
-        return true;
+        RequireAllMorphsConsumed(morphMap, consumedMorphPaths);
+        return result;
     }
 
     private static bool IsActiveRenderer(
@@ -341,203 +325,71 @@ public sealed class UnityRuntimeNativeMeshExporter
 
     private static bool TryResolveImportedMesh(
         SpringPrefabRenderer renderer,
-        Dictionary<string, IReadOnlyList<ImportedMesh>> meshLookup,
-        IReadOnlyList<string> transformPaths,
-        Dictionary<long, string> transformPathByPathId,
+        IReadOnlyDictionary<string, ImportedMesh> meshLookup,
         out ImportedMesh mesh,
         out string failure
     )
     {
-        var candidates = BuildPrefabMeshLookupKeys(renderer)
-            .SelectMany(key => meshLookup.TryGetValue(key, out var meshes)
-                ? meshes
-                : Array.Empty<ImportedMesh>())
-            .GroupBy(candidate => candidate.Path, StringComparer.OrdinalIgnoreCase)
-            .Select(group => group.First())
-            .Select(candidate => new
-            {
-                Mesh = candidate,
-                Score = ScoreImportedMesh(renderer, candidate),
-            })
-            .ToList();
-
-        var compatible = candidates
-            .Where(candidate => IsSkinCompatible(renderer, candidate.Mesh, transformPaths, transformPathByPathId))
-            .OrderBy(candidate => candidate.Score)
-            .ThenBy(candidate => candidate.Mesh.Path, StringComparer.OrdinalIgnoreCase)
-            .ToList();
-
-        if (compatible.Count > 0)
+        if (string.IsNullOrWhiteSpace(renderer.TransformPath))
         {
-            mesh = compatible[0].Mesh;
-            failure = string.Empty;
-            return true;
-        }
-
-        mesh = null!;
-        if (candidates.Count == 0)
-        {
-            failure = "no imported mesh matched prefab renderer path/name.";
+            mesh = null!;
+            failure = "renderer has no exact transform path.";
             return false;
         }
-
-        var rendererBonePaths = renderer.SkinnedMeshBones
-            .Select(pathId => transformPathByPathId.TryGetValue(pathId, out var path) ? path : null)
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Select(path => path!)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var candidateSummary = candidates
-            .OrderBy(candidate => candidate.Score)
-            .ThenBy(candidate => candidate.Mesh.Path, StringComparer.OrdinalIgnoreCase)
-            .Select(candidate =>
-            {
-                var importedBoneCount = candidate.Mesh.BoneList?.Count ?? 0;
-                var resolvedBoneCount = ResolveImportedBonePathsByIndex(candidate.Mesh, transformPaths, rendererBonePaths).Count;
-                var usedBoneCount = CollectUsedBoneIndices(candidate.Mesh).Count;
-                return $"{candidate.Mesh.Path}:imported={importedBoneCount},used={usedBoneCount},resolved={resolvedBoneCount}";
-            })
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(8);
-        failure = $"imported mesh candidates matched by path/name but their skin bones did not resolve to the renderer prefab bones; renderer bones={renderer.SkinnedMeshBones.Count}, unique paths={rendererBonePaths.Count}; candidates={string.Join(", ", candidateSummary)}.";
-        return false;
-    }
-
-    private static int ScoreImportedMesh(SpringPrefabRenderer renderer, ImportedMesh mesh)
-    {
-        if (string.Equals(renderer.TransformPath, mesh.Path, StringComparison.OrdinalIgnoreCase))
+        if (!meshLookup.TryGetValue(renderer.TransformPath, out mesh!))
         {
-            return 0;
+            failure = $"no imported mesh has the exact renderer transform path '{renderer.TransformPath}'.";
+            return false;
         }
-
-        var rendererWithoutRoot = DropFirstPathSegment(renderer.TransformPath);
-        var meshWithoutRoot = DropFirstPathSegment(mesh.Path);
-        if (!string.IsNullOrWhiteSpace(rendererWithoutRoot) &&
-            string.Equals(rendererWithoutRoot, mesh.Path, StringComparison.OrdinalIgnoreCase))
-        {
-            return 1;
-        }
-
-        if (!string.IsNullOrWhiteSpace(meshWithoutRoot) &&
-            string.Equals(renderer.TransformPath, meshWithoutRoot, StringComparison.OrdinalIgnoreCase))
-        {
-            return 2;
-        }
-
-        if (!string.IsNullOrWhiteSpace(rendererWithoutRoot) &&
-            !string.IsNullOrWhiteSpace(meshWithoutRoot) &&
-            string.Equals(rendererWithoutRoot, meshWithoutRoot, StringComparison.OrdinalIgnoreCase))
-        {
-            return 3;
-        }
-
-        var meshLeaf = Path.GetFileName(mesh.Path);
-        if (!string.IsNullOrWhiteSpace(renderer.MeshName) &&
-            string.Equals(renderer.MeshName, meshLeaf, StringComparison.OrdinalIgnoreCase))
-        {
-            return 4;
-        }
-
-        var rendererLeaf = LastPathSegment(renderer.TransformPath);
-        if (!string.IsNullOrWhiteSpace(rendererLeaf) &&
-            string.Equals(rendererLeaf, meshLeaf, StringComparison.OrdinalIgnoreCase))
-        {
-            return 5;
-        }
-
-        return 1000;
+        failure = string.Empty;
+        return true;
     }
 
     private sealed record NativeSkinBinding(
         IReadOnlyList<string> BonePaths,
         IReadOnlyList<long> BonePathIds,
-        IReadOnlyDictionary<int, int> BoneIndexRemap,
         IReadOnlyList<float> BoneInverseBindMatrices
-    );
-
-    private sealed record NativeVertexBuffers(
-        IReadOnlyList<float> Positions,
-        IReadOnlyList<float> Normals,
-        IReadOnlyList<float> Tangents,
-        IReadOnlyList<float> Uv0,
-        IReadOnlyList<float> Uv1,
-        IReadOnlyList<float> Uv2,
-        IReadOnlyList<float> Colors,
-        IReadOnlyList<ushort> SkinIndices,
-        IReadOnlyList<float> SkinWeights
     );
 
     private static readonly NativeSkinBinding EmptySkinBinding = new(
         Array.Empty<string>(),
         Array.Empty<long>(),
-        new Dictionary<int, int>(),
         Array.Empty<float>()
     );
 
-    private static bool IsSkinCompatible(
-        SpringPrefabRenderer renderer,
-        ImportedMesh mesh,
-        IReadOnlyList<string> transformPaths,
-        Dictionary<long, string> transformPathByPathId
-    )
-    {
-        var importedBoneCount = mesh.BoneList?.Count ?? 0;
-        if (importedBoneCount == 0)
-        {
-            return renderer.SkinnedMeshBones.Count == 0;
-        }
-
-        if (MaxSkinBoneIndex(mesh) >= importedBoneCount)
-        {
-            return false;
-        }
-
-        var rendererBonePaths = renderer.SkinnedMeshBones
-            .Select(pathId => transformPathByPathId.TryGetValue(pathId, out var path) ? path : null)
-            .Where(path => !string.IsNullOrWhiteSpace(path))
-            .Select(path => path!)
-            .ToList();
-        if (rendererBonePaths.Count != renderer.SkinnedMeshBones.Count)
-        {
-            return false;
-        }
-        // Unity skin arrays may intentionally reference the same Transform more than once.
-        // Keep their ordered slots here: uniqueness is not a validity requirement.
-        return TryResolveSkinBinding(
-            mesh,
-            rendererBonePaths,
-            null,
-            transformPaths,
-            out _,
-            out _
-        );
-    }
+    private sealed record ExactBoneReferences(
+        IReadOnlyList<string> Paths,
+        IReadOnlyList<long> PathIds
+    );
 
     private static bool TryResolveSkinBinding(
         ImportedMesh mesh,
-        List<string> rendererBonePaths,
-        IReadOnlyList<long>? rendererBonePathIds,
-        IReadOnlyList<string> transformPaths,
+        IReadOnlyList<string> rendererBonePaths,
+        IReadOnlyList<long> rendererBonePathIds,
         out NativeSkinBinding binding,
         out string failure
     )
     {
-        if (!TryBuildRendererBonePathIdLookup(
-                rendererBonePaths, rendererBonePathIds, out var rendererBonePathIdsByPath, out failure))
+        if (rendererBonePaths.Count != rendererBonePathIds.Count)
         {
             binding = EmptySkinBinding;
+            failure = $"renderer has {rendererBonePaths.Count} bone paths but " +
+                $"{rendererBonePathIds.Count} bone PathIDs.";
             return false;
         }
-
         var importedBoneCount = mesh.BoneList?.Count ?? 0;
+        if (importedBoneCount != rendererBonePaths.Count)
+        {
+            binding = EmptySkinBinding;
+            failure = $"mesh has {importedBoneCount} bindposes but renderer has " +
+                $"{rendererBonePaths.Count} bone slots.";
+            return false;
+        }
         if (importedBoneCount == 0)
         {
-            List<string> rigidBonePaths = rendererBonePaths.Count == 0
-                ? []
-                : rendererBonePaths;
             binding = new NativeSkinBinding(
-                rigidBonePaths,
-                rendererBonePathIds ?? Array.Empty<long>(),
-                new Dictionary<int, int>(),
+                rendererBonePaths,
+                rendererBonePathIds,
                 Array.Empty<float>()
             );
             failure = string.Empty;
@@ -545,238 +397,88 @@ public sealed class UnityRuntimeNativeMeshExporter
         }
 
         var maxSkinBoneIndex = MaxSkinBoneIndex(mesh);
-        if (maxSkinBoneIndex >= importedBoneCount)
+        if (maxSkinBoneIndex >= importedBoneCount ||
+            maxSkinBoneIndex >= rendererBonePaths.Count)
         {
             binding = EmptySkinBinding;
-            failure = $"vertex skin index {maxSkinBoneIndex} exceeds imported skin bone count {importedBoneCount}.";
+            failure = $"vertex skin index {maxSkinBoneIndex} exceeds bindpose count " +
+                $"{importedBoneCount} or renderer bone count {rendererBonePaths.Count}.";
             return false;
         }
 
-        var rendererBonePathSet = rendererBonePaths.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var resolvedBonePathsByImportedIndex = ResolveImportedBonePathsByIndex(mesh, transformPaths, rendererBonePathSet);
-        var hasExactOrderedBinding = rendererBonePathIds is not null &&
-            rendererBonePaths.Count == importedBoneCount &&
-            Enumerable.Range(0, importedBoneCount).All(index =>
-                resolvedBonePathsByImportedIndex.TryGetValue(index, out var resolvedPath) &&
-                string.Equals(resolvedPath, rendererBonePaths[index], StringComparison.OrdinalIgnoreCase));
-        var usedBoneIndices = CollectUsedBoneIndices(mesh);
-        var unresolvedUsedBoneIndices = usedBoneIndices
-            .Where(index => !resolvedBonePathsByImportedIndex.TryGetValue(index, out var path) ||
-                string.IsNullOrWhiteSpace(path) ||
-                !rendererBonePathSet.Contains(path))
-            .Take(8)
-            .ToList();
-        if (unresolvedUsedBoneIndices.Count > 0)
+        var inverseBindMatrices = new List<float>(importedBoneCount * 16);
+        for (var index = 0; index < importedBoneCount; index += 1)
         {
-            var missing = unresolvedUsedBoneIndices
-                .Select(index => $"{index}:{mesh.BoneList![index].Path}");
-            binding = EmptySkinBinding;
-            failure = $"used imported skin bones did not resolve to renderer m_Bones; imported={importedBoneCount}, used={usedBoneIndices.Count}, resolved={resolvedBonePathsByImportedIndex.Count}, sampleMissing=[{string.Join(", ", missing)}].";
-            return false;
+            AddMatrix(inverseBindMatrices, mesh.BoneList![index].Matrix);
         }
 
-        // Once the imported bind poses are proven to match Unity's renderer slots,
-        // preserve that entire ordered array. Compacting it to only the currently
-        // weighted slots rewrites Unity skin indices and loses the exact binding
-        // contract used by some legacy costume meshes.
-        var orderedBoneIndices = hasExactOrderedBinding
-            ? Enumerable.Range(0, importedBoneCount).ToList()
-            : usedBoneIndices.OrderBy(index => index).ToList();
-        if (orderedBoneIndices.Count == 0)
-        {
-            orderedBoneIndices.Add(0);
-        }
-
-        return TryBuildResolvedSkinBinding(
-            mesh,
+        binding = new NativeSkinBinding(
+            rendererBonePaths,
             rendererBonePathIds,
-            rendererBonePathIdsByPath,
-            resolvedBonePathsByImportedIndex,
-            orderedBoneIndices,
-            hasExactOrderedBinding,
-            out binding,
-            out failure
-        );
-    }
-
-    private static bool TryBuildRendererBonePathIdLookup(
-        List<string> rendererBonePaths,
-        IReadOnlyList<long>? rendererBonePathIds,
-        out Dictionary<string, IReadOnlyList<long>>? lookup,
-        out string failure
-    )
-    {
-        lookup = null;
+            inverseBindMatrices);
         failure = string.Empty;
-        if (rendererBonePathIds is null)
-        {
-            return true;
-        }
-        if (rendererBonePathIds.Count != rendererBonePaths.Count)
-        {
-            failure = $"renderer has {rendererBonePaths.Count} bone paths but {rendererBonePathIds.Count} bone PathIDs.";
-            return false;
-        }
-        lookup = rendererBonePaths
-            .Select((path, index) => new { Path = path, PathId = rendererBonePathIds[index] })
-            .GroupBy(item => item.Path, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(
-                group => group.Key,
-                group => (IReadOnlyList<long>)group.Select(item => item.PathId).Distinct().ToList(),
-                StringComparer.OrdinalIgnoreCase
-            );
         return true;
     }
 
-    private static bool TryBuildResolvedSkinBinding(
+    private static ExactBoneReferences ResolveExactImportedBones(
         ImportedMesh mesh,
-        IReadOnlyList<long>? rendererBonePathIds,
-        IReadOnlyDictionary<string, IReadOnlyList<long>>? rendererBonePathIdsByPath,
-        Dictionary<int, string> resolvedBonePathsByImportedIndex,
-        List<int> orderedBoneIndices,
-        bool hasExactOrderedBinding,
-        out NativeSkinBinding binding,
-        out string failure
-    )
-    {
-        var remap = new Dictionary<int, int>();
-        var bonePaths = new List<string>(orderedBoneIndices.Count);
-        var bonePathIds = new List<long>(orderedBoneIndices.Count);
-        var inverseBindMatrices = new List<float>(orderedBoneIndices.Count * 16);
-        for (var newIndex = 0; newIndex < orderedBoneIndices.Count; newIndex += 1)
-        {
-            var oldIndex = orderedBoneIndices[newIndex];
-            remap[oldIndex] = newIndex;
-            var bonePath = resolvedBonePathsByImportedIndex[oldIndex];
-            bonePaths.Add(bonePath);
-            if (!TryAddResolvedBonePathId(
-                    rendererBonePathIds, rendererBonePathIdsByPath, hasExactOrderedBinding,
-                    oldIndex, bonePath, bonePathIds, out failure))
-            {
-                binding = EmptySkinBinding;
-                return false;
-            }
-            AddMatrix(inverseBindMatrices, mesh.BoneList![oldIndex].Matrix);
-        }
-        binding = new NativeSkinBinding(bonePaths, bonePathIds, remap, inverseBindMatrices);
-        failure = string.Empty;
-        return true;
-    }
-
-    private static bool TryAddResolvedBonePathId(
-        IReadOnlyList<long>? rendererBonePathIds,
-        IReadOnlyDictionary<string, IReadOnlyList<long>>? rendererBonePathIdsByPath,
-        bool hasExactOrderedBinding,
-        int oldIndex,
-        string bonePath,
-        List<long> bonePathIds,
-        out string failure
-    )
-    {
-        failure = string.Empty;
-        if (rendererBonePathIds is null)
-        {
-            return true;
-        }
-        if (hasExactOrderedBinding)
-        {
-            bonePathIds.Add(rendererBonePathIds[oldIndex]);
-            return true;
-        }
-        if (rendererBonePathIdsByPath is null ||
-            !rendererBonePathIdsByPath.TryGetValue(bonePath, out var matchingPathIds) ||
-            matchingPathIds.Count == 0)
-        {
-            failure = $"resolved bone '{bonePath}' has no matching renderer PathID.";
-            return false;
-        }
-        if (matchingPathIds.Count > 1)
-        {
-            failure = $"resolved bone '{bonePath}' has {matchingPathIds.Count} possible renderer PathIDs and no exact ordered binding.";
-            return false;
-        }
-        bonePathIds.Add(matchingPathIds[0]);
-        return true;
-    }
-
-    private static Dictionary<int, string> ResolveImportedBonePathsByIndex(
-        ImportedMesh mesh,
-        IReadOnlyList<string> transformPaths,
-        IReadOnlySet<string> preferredPaths
-    )
+        IReadOnlyList<SpringPrefabTransform> transforms)
     {
         if (mesh.BoneList is not { Count: > 0 })
         {
-            return new Dictionary<int, string>();
+            return new ExactBoneReferences(Array.Empty<string>(), Array.Empty<long>());
         }
-
-        var result = new Dictionary<int, string>();
-        for (var index = 0; index < mesh.BoneList.Count; index += 1)
+        var paths = new List<string>(mesh.BoneList.Count);
+        var pathIds = new List<long>(mesh.BoneList.Count);
+        foreach (var bone in mesh.BoneList)
         {
-            var bone = mesh.BoneList[index];
-            var resolvedPath = ResolveTransformPath(bone.Path, transformPaths, preferredPaths);
-            if (resolvedPath is null)
+            var matches = transforms
+                .Where(transform => string.Equals(
+                    transform.TransformPath,
+                    bone.Path,
+                    StringComparison.Ordinal))
+                .ToArray();
+            if (string.IsNullOrWhiteSpace(bone.Path) || matches.Length != 1)
             {
-                continue;
+                throw new InvalidDataException(
+                    $"Imported mesh '{mesh.Path}' bone '{bone.Path}' resolves to " +
+                    $"{matches.Length} exact runtime Transform PathIDs.");
             }
-            result[index] = resolvedPath;
+            paths.Add(bone.Path);
+            pathIds.Add(matches[0].PathId);
         }
-
-        return result;
+        return new ExactBoneReferences(paths, pathIds);
     }
 
-    private static string? ResolveTransformPath(
-        string? path,
-        IReadOnlyList<string> transformPaths,
-        IReadOnlySet<string> preferredPaths
-    )
+    private static ExactBoneReferences ResolveSkinBoneReferences(
+        ImportedMesh mesh,
+        IReadOnlyList<string> rendererBonePaths,
+        IReadOnlyList<long> rendererBonePathIds,
+        IReadOnlyList<SpringPrefabTransform> transforms)
     {
-        if (string.IsNullOrWhiteSpace(path))
+        var bindPoseCount = mesh.BoneList?.Count ?? 0;
+        if (bindPoseCount == 0 || bindPoseCount >= rendererBonePaths.Count ||
+            rendererBonePaths.Count != rendererBonePathIds.Count)
         {
-            return null;
+            return new ExactBoneReferences(rendererBonePaths, rendererBonePathIds);
         }
 
-        var directPreferred = preferredPaths.FirstOrDefault(candidate =>
-            string.Equals(candidate, path, StringComparison.OrdinalIgnoreCase));
-        if (directPreferred is not null)
+        // Some official face meshes retain fewer bindposes than renderer slots.
+        // AssetStudio resolves that mesh palette through its bone-name hashes.
+        // Keep every mesh bindpose, plus the complete renderer array in the prefab
+        // graph, but never accept a different transform for a weighted source slot.
+        var palette = ResolveExactImportedBones(mesh, transforms);
+        foreach (var index in CollectUsedBoneIndices(mesh))
         {
-            return directPreferred;
-        }
-
-        var direct = transformPaths.FirstOrDefault(candidate =>
-            string.Equals(candidate, path, StringComparison.OrdinalIgnoreCase));
-        if (direct is not null)
-        {
-            return direct;
-        }
-
-        var withoutRoot = DropFirstPathSegment(path);
-        if (!string.IsNullOrWhiteSpace(withoutRoot))
-        {
-            var preferredByRelativePath = preferredPaths.FirstOrDefault(candidate =>
-                string.Equals(DropFirstPathSegment(candidate), withoutRoot, StringComparison.OrdinalIgnoreCase));
-            if (preferredByRelativePath is not null)
+            if (index < 0 || index >= palette.PathIds.Count ||
+                palette.PathIds[index] != rendererBonePathIds[index])
             {
-                return preferredByRelativePath;
-            }
-
-            var byRelativePath = transformPaths.FirstOrDefault(candidate =>
-                string.Equals(DropFirstPathSegment(candidate), withoutRoot, StringComparison.OrdinalIgnoreCase));
-            if (byRelativePath is not null)
-            {
-                return byRelativePath;
+                throw new InvalidDataException(
+                    $"Mesh '{mesh.Path}' weighted skin slot {index} does not match " +
+                    "the original renderer bone PathID.");
             }
         }
-
-        var preferredBySuffix = preferredPaths.FirstOrDefault(candidate =>
-            candidate.EndsWith("/" + path, StringComparison.OrdinalIgnoreCase));
-        if (preferredBySuffix is not null)
-        {
-            return preferredBySuffix;
-        }
-
-        return transformPaths.FirstOrDefault(candidate =>
-            candidate.EndsWith("/" + path, StringComparison.OrdinalIgnoreCase));
+        return palette;
     }
 
     private static int MaxSkinBoneIndex(ImportedMesh mesh)
@@ -790,7 +492,7 @@ public sealed class UnityRuntimeNativeMeshExporter
         return max;
     }
 
-    private static HashSet<int> CollectUsedBoneIndices(ImportedMesh mesh)
+    private static IReadOnlySet<int> CollectUsedBoneIndices(ImportedMesh mesh)
     {
         var result = new HashSet<int>();
         foreach (var vertex in mesh.VertexList)
@@ -814,58 +516,20 @@ public sealed class UnityRuntimeNativeMeshExporter
         return result;
     }
 
-    private static Dictionary<string, IReadOnlyList<ImportedMesh>> BuildImportedMeshLookupMap(
+    private static IReadOnlyDictionary<string, ImportedMesh> BuildImportedMeshLookupMap(
         IEnumerable<ImportedMesh> meshes
     )
     {
-        var result = new Dictionary<string, List<ImportedMesh>>(StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, ImportedMesh>(StringComparer.Ordinal);
         foreach (var mesh in meshes)
         {
-            foreach (var key in new[]
+            if (string.IsNullOrWhiteSpace(mesh.Path) || !result.TryAdd(mesh.Path, mesh))
             {
-                mesh.Path,
-                DropFirstPathSegment(mesh.Path),
-                LastPathSegment(mesh.Path),
-                Path.GetFileName(mesh.Path),
-            })
-            {
-                if (string.IsNullOrWhiteSpace(key))
-                {
-                    continue;
-                }
-
-                if (!result.TryGetValue(key, out var bucket))
-                {
-                    bucket = new List<ImportedMesh>();
-                    result[key] = bucket;
-                }
-                bucket.Add(mesh);
+                throw new InvalidDataException(
+                    $"Imported model has an empty or duplicate mesh path '{mesh.Path}'.");
             }
         }
-
-        return result.ToDictionary(
-            pair => pair.Key,
-            pair => (IReadOnlyList<ImportedMesh>)pair.Value,
-            StringComparer.OrdinalIgnoreCase
-        );
-    }
-
-    private static IEnumerable<string> BuildPrefabMeshLookupKeys(SpringPrefabRenderer renderer)
-    {
-        foreach (var key in new[]
-        {
-            renderer.TransformPath,
-            DropFirstPathSegment(renderer.TransformPath),
-            LastPathSegment(renderer.TransformPath),
-            renderer.MeshName,
-            renderer.Name,
-        })
-        {
-            if (!string.IsNullOrWhiteSpace(key))
-            {
-                yield return key;
-            }
-        }
+        return result;
     }
 
     private static PjskUnityRuntimeNativeMesh BuildNativeMesh(
@@ -878,7 +542,7 @@ public sealed class UnityRuntimeNativeMeshExporter
         IReadOnlyList<ImportedMorph> morphs
     )
     {
-        var buffers = BuildNativeVertexBuffers(mesh, skinBinding.BoneIndexRemap);
+        var buffers = BuildNativeVertexBuffers(mesh);
         var submeshes = BuildNativeSubmeshes(partKind, mesh, renderer);
         return new PjskUnityRuntimeNativeMesh(
             PartKind: partKind,
@@ -906,10 +570,14 @@ public sealed class UnityRuntimeNativeMeshExporter
         );
     }
 
-    private static NativeVertexBuffers BuildNativeVertexBuffers(
-        ImportedMesh mesh,
-        IReadOnlyDictionary<int, int> boneIndexRemap
-    )
+    private sealed record NativeVertexBuffers(
+        IReadOnlyList<float> Positions, IReadOnlyList<float> Normals,
+        IReadOnlyList<float> Tangents, IReadOnlyList<float> Uv0,
+        IReadOnlyList<float> Uv1, IReadOnlyList<float> Uv2,
+        IReadOnlyList<float> Colors, IReadOnlyList<ushort> SkinIndices,
+        IReadOnlyList<float> SkinWeights);
+
+    private static NativeVertexBuffers BuildNativeVertexBuffers(ImportedMesh mesh)
     {
         var positions = new List<float>(mesh.VertexList.Count * 3);
         var normals = new List<float>(mesh.VertexList.Count * 3);
@@ -920,18 +588,41 @@ public sealed class UnityRuntimeNativeMeshExporter
         var colors = new List<float>(mesh.VertexList.Count * 4);
         var skinIndices = new List<ushort>(mesh.VertexList.Count * 4);
         var skinWeights = new List<float>(mesh.VertexList.Count * 4);
+        var hasUv0 = mesh.VertexList.Count > 0 && mesh.VertexList.All(vertex => HasUv(vertex, 0));
         var hasUv1 = mesh.VertexList.Count > 0 && mesh.VertexList.All(vertex => HasUv(vertex, 1));
         var hasUv2 = mesh.VertexList.Count > 0 && mesh.VertexList.All(vertex => HasUv(vertex, 2));
+        var hasAnySkin = mesh.VertexList.Any(vertex =>
+            vertex.BoneIndices is not null || vertex.Weights is not null);
+        var hasCompleteSkin = mesh.VertexList.All(vertex =>
+            vertex.BoneIndices is { Length: 4 } && vertex.Weights is { Length: 4 });
+        if (hasAnySkin != hasCompleteSkin)
+        {
+            throw new InvalidDataException(
+                $"Mesh '{mesh.Path}' has mixed or incomplete four-weight skin data.");
+        }
 
         foreach (var vertex in mesh.VertexList)
         {
+            if (!IsFinite(vertex.Vertex) ||
+                (mesh.hasNormal && !IsFinite(vertex.Normal)) ||
+                (mesh.hasTangent && !IsFinite(vertex.Tangent)))
+            {
+                throw new InvalidDataException(
+                    $"Mesh '{mesh.Path}' has non-finite vertex data.");
+            }
             AddVector3(positions, vertex.Vertex);
-            AddVector3(normals, mesh.hasNormal ? vertex.Normal : new Vector3(0, 1, 0));
+            if (mesh.hasNormal)
+            {
+                AddVector3(normals, vertex.Normal);
+            }
             if (mesh.hasTangent)
             {
                 AddTangent(tangents, vertex.Tangent);
             }
-            AddUv(uv0, vertex, 0);
+            if (hasUv0)
+            {
+                AddUv(uv0, vertex, 0);
+            }
             if (hasUv1)
             {
                 AddUv(uv1, vertex, 1);
@@ -947,24 +638,18 @@ public sealed class UnityRuntimeNativeMeshExporter
                 colors.Add(vertex.Color.B);
                 colors.Add(vertex.Color.A);
             }
-            else
+            if (hasCompleteSkin)
             {
-                colors.Add(1);
-                colors.Add(1);
-                colors.Add(1);
-                colors.Add(1);
+                AddSkin(vertex, skinIndices, skinWeights);
             }
-            AddSkin(vertex, boneIndexRemap, skinIndices, skinWeights);
         }
+
         return new NativeVertexBuffers(
             positions, normals, tangents, uv0, uv1, uv2, colors, skinIndices, skinWeights);
     }
 
     private static List<PjskUnityRuntimeNativeSubmesh> BuildNativeSubmeshes(
-        string partKind,
-        ImportedMesh mesh,
-        SpringPrefabRenderer renderer
-    )
+        string partKind, ImportedMesh mesh, SpringPrefabRenderer renderer)
     {
         var indexCursor = 0;
         var submeshes = new List<PjskUnityRuntimeNativeSubmesh>();
@@ -1006,6 +691,7 @@ public sealed class UnityRuntimeNativeMeshExporter
             ));
             indexCursor += indices.Count;
         }
+
         return submeshes;
     }
 
@@ -1056,10 +742,16 @@ public sealed class UnityRuntimeNativeMeshExporter
         }
 
         var result = new List<PjskUnityRuntimeNativeMorphTarget>();
+        var targetNames = new HashSet<string>(StringComparer.Ordinal);
         foreach (var morph in morphs)
         {
             foreach (var channel in morph.Channels)
             {
+                if (string.IsNullOrWhiteSpace(channel.Name) || !targetNames.Add(channel.Name))
+                {
+                    throw new InvalidDataException(
+                        $"Mesh '{mesh.Path}' has an empty or duplicate morph target name '{channel.Name}'.");
+                }
                 result.Add(BuildMorphTarget(mesh, channel));
             }
         }
@@ -1067,95 +759,143 @@ public sealed class UnityRuntimeNativeMeshExporter
         return result;
     }
 
+    private static bool IsFinite(Vector3 value) =>
+        float.IsFinite(value.X) && float.IsFinite(value.Y) && float.IsFinite(value.Z);
+
+    private static bool IsFinite(Vector4 value) =>
+        float.IsFinite(value.X) && float.IsFinite(value.Y) &&
+        float.IsFinite(value.Z) && float.IsFinite(value.W);
+
     private static PjskUnityRuntimeNativeMorphTarget BuildMorphTarget(
-        ImportedMesh mesh,
-        ImportedMorphChannel channel
-    )
+        ImportedMesh mesh, ImportedMorphChannel channel)
     {
-        var positionDeltaByIndex = new Dictionary<int, Vector3>();
-        var normalDeltaByIndex = new Dictionary<int, Vector3>();
-        var hasNormals = false;
-        foreach (var keyframe in channel.KeyframeList)
+        if (channel.KeyframeList.Count != 1)
         {
-            hasNormals |= AddMorphKeyframeDeltas(
-                mesh, keyframe, positionDeltaByIndex, normalDeltaByIndex);
+            throw new InvalidDataException(
+                $"Morph target '{channel.Name}' on mesh '{mesh.Path}' has " +
+                $"{channel.KeyframeList.Count} keyframes; multi-keyframe interpolation " +
+                "semantics are not implemented without loss.");
         }
-        var indices = positionDeltaByIndex.Keys.OrderBy(index => index).ToList();
-        var positionDeltas = BuildMorphDeltaBuffer(indices, positionDeltaByIndex);
-        var normalDeltas = hasNormals ? BuildMorphDeltaBuffer(indices, normalDeltaByIndex) : null;
+
+        var keyframe = channel.KeyframeList[0];
+        if (keyframe.VertexList.Count == 0)
+        {
+            throw new InvalidDataException(
+                $"Morph target '{channel.Name}' on mesh '{mesh.Path}' has no vertices.");
+        }
+        if (keyframe.hasNormals && !mesh.hasNormal)
+        {
+            throw new InvalidDataException(
+                $"Morph target '{channel.Name}' has normal deltas but mesh '{mesh.Path}' has no base normals.");
+        }
+        if (keyframe.hasTangents && !mesh.hasTangent)
+        {
+            throw new InvalidDataException(
+                $"Morph target '{channel.Name}' has tangent deltas but mesh '{mesh.Path}' has no base tangents.");
+        }
+
+        var indices = new List<int>(keyframe.VertexList.Count);
+        var positionDeltas = new List<float>(keyframe.VertexList.Count * 3);
+        var normalDeltas = new List<float>(
+            keyframe.hasNormals ? keyframe.VertexList.Count * 3 : 0);
+        var tangentDeltas = new List<float>(
+            keyframe.hasTangents ? keyframe.VertexList.Count * 3 : 0);
+        var seenIndices = new HashSet<int>();
+        foreach (var morphVertex in keyframe.VertexList)
+        {
+            if (morphVertex.Index >= (uint)mesh.VertexList.Count)
+            {
+                throw new InvalidDataException(
+                    $"Morph target '{channel.Name}' on mesh '{mesh.Path}' references " +
+                    $"invalid vertex index {morphVertex.Index} for {mesh.VertexList.Count} vertices.");
+            }
+            var index = (int)morphVertex.Index;
+            if (!seenIndices.Add(index))
+            {
+                throw new InvalidDataException(
+                    $"Morph target '{channel.Name}' on mesh '{mesh.Path}' repeats vertex index {index}.");
+            }
+
+            var positionDelta = morphVertex.Vertex.Vertex - mesh.VertexList[index].Vertex;
+            if (!IsFinite(positionDelta) ||
+                (keyframe.hasNormals && !IsFinite(morphVertex.Vertex.Normal)) ||
+                (keyframe.hasTangents && !IsFinite(morphVertex.Vertex.Tangent)))
+            {
+                throw new InvalidDataException(
+                    $"Morph target '{channel.Name}' on mesh '{mesh.Path}' contains non-finite deltas at vertex index {index}.");
+            }
+
+            indices.Add(index);
+            AddVector3(positionDeltas, positionDelta);
+            if (keyframe.hasNormals)
+            {
+                AddVector3(normalDeltas, morphVertex.Vertex.Normal);
+            }
+            if (keyframe.hasTangents)
+            {
+                AddVector3(tangentDeltas, new Vector3(
+                    morphVertex.Vertex.Tangent.X,
+                    morphVertex.Vertex.Tangent.Y,
+                    morphVertex.Vertex.Tangent.Z));
+            }
+        }
+
         return new PjskUnityRuntimeNativeMorphTarget(
             Name: channel.Name,
             Indices: indices,
+            HasPositionDeltas: true,
             PositionDeltas: positionDeltas,
-            NormalDeltas: normalDeltas
+            HasNormalDeltas: keyframe.hasNormals,
+            NormalDeltas: normalDeltas,
+            HasTangentDeltas: keyframe.hasTangents,
+            TangentDeltas: tangentDeltas
         );
     }
 
-    private static bool AddMorphKeyframeDeltas(
-        ImportedMesh mesh,
-        ImportedMorphKeyframe keyframe,
-        Dictionary<int, Vector3> positionDeltaByIndex,
-        Dictionary<int, Vector3> normalDeltaByIndex
-    )
-    {
-        foreach (var morphVertex in keyframe.VertexList)
-        {
-            var index = (int)morphVertex.Index;
-            if (index < 0 || index >= mesh.VertexList.Count)
-            {
-                continue;
-            }
-            var baseVertex = mesh.VertexList[index];
-            AddMorphDelta(positionDeltaByIndex, index, morphVertex.Vertex.Vertex - baseVertex.Vertex);
-            if (keyframe.hasNormals)
-            {
-                AddMorphDelta(normalDeltaByIndex, index, morphVertex.Vertex.Normal - baseVertex.Normal);
-            }
-        }
-        return keyframe.hasNormals;
-    }
-
-    private static void AddMorphDelta(Dictionary<int, Vector3> deltas, int index, Vector3 delta)
-    {
-        deltas[index] = deltas.TryGetValue(index, out var existing) ? existing + delta : delta;
-    }
-
-    private static List<float> BuildMorphDeltaBuffer(
-        List<int> indices,
-        Dictionary<int, Vector3> deltas
-    )
-    {
-        var values = new List<float>(indices.Count * 3);
-        foreach (var index in indices)
-        {
-            AddVector3(values, deltas.TryGetValue(index, out var delta) ? delta : new Vector3());
-        }
-        return values;
-    }
-
-    private static Dictionary<string, ImportedMorph> BuildMorphMap(
+    private static IReadOnlyDictionary<string, ImportedMorph> BuildMorphMap(
         IReadOnlyList<ImportedMorph> morphList
     )
     {
-        return morphList
-            .GroupBy(morph => morph.Path, StringComparer.OrdinalIgnoreCase)
-            .ToDictionary(group => group.Key, group => group.First(), StringComparer.OrdinalIgnoreCase);
+        var result = new Dictionary<string, ImportedMorph>(StringComparer.Ordinal);
+        foreach (var morph in morphList)
+        {
+            if (string.IsNullOrWhiteSpace(morph.Path) || !result.TryAdd(morph.Path, morph))
+            {
+                throw new InvalidDataException(
+                    $"Imported model has an empty or duplicate morph path '{morph.Path}'.");
+            }
+        }
+        return result;
     }
 
     private static IReadOnlyList<ImportedMorph> ResolveMorphTargets(
         string meshPath,
-        Dictionary<string, ImportedMorph> morphMap
+        IReadOnlyDictionary<string, ImportedMorph> morphMap,
+        ISet<string> consumedPaths
     )
     {
         if (morphMap.TryGetValue(meshPath, out var morph))
         {
+            consumedPaths.Add(meshPath);
             return new[] { morph };
         }
+        return Array.Empty<ImportedMorph>();
+    }
 
-        return morphMap
-            .Where(pair => pair.Key.EndsWith(meshPath, StringComparison.OrdinalIgnoreCase))
-            .Select(pair => pair.Value)
-            .ToList();
+    private static void RequireAllMorphsConsumed(
+        IReadOnlyDictionary<string, ImportedMorph> morphMap,
+        IReadOnlySet<string> consumedPaths)
+    {
+        var missing = morphMap.Keys
+            .Where(path => !consumedPaths.Contains(path))
+            .OrderBy(path => path, StringComparer.Ordinal)
+            .ToArray();
+        if (missing.Length != 0)
+        {
+            throw new InvalidDataException(
+                $"Imported model has {missing.Length} morph path(s) without an exact exported mesh: " +
+                string.Join(", ", missing.Take(8)));
+        }
     }
 
     private static void AddVector3(List<float> values, Vector3 vector)
@@ -1197,45 +937,27 @@ public sealed class UnityRuntimeNativeMeshExporter
 
     private static void AddSkin(
         ImportedVertex vertex,
-        IReadOnlyDictionary<int, int> boneIndexRemap,
         List<ushort> skinIndices,
         List<float> skinWeights
     )
     {
-        var weights = new List<(int Index, float Weight)>();
-        if (vertex.BoneIndices is not null && vertex.Weights is not null)
+        if (vertex.BoneIndices is not { Length: 4 } ||
+            vertex.Weights is not { Length: 4 })
         {
-            for (var index = 0; index < Math.Min(vertex.BoneIndices.Length, vertex.Weights.Length); index += 1)
-            {
-                if (vertex.Weights[index] <= 0)
-                {
-                    continue;
-                }
-                var sourceIndex = vertex.BoneIndices[index];
-                var targetIndex = boneIndexRemap.TryGetValue(sourceIndex, out var remappedIndex)
-                    ? remappedIndex
-                    : sourceIndex;
-                weights.Add((targetIndex, vertex.Weights[index]));
-            }
+            throw new InvalidDataException(
+                "Native mesh skin data does not contain exactly four source influences.");
         }
-
-        if (weights.Count == 0)
-        {
-            weights.Add((0, 1));
-        }
-
         for (var index = 0; index < 4; index += 1)
         {
-            if (index < weights.Count)
+            var sourceIndex = vertex.BoneIndices[index];
+            var sourceWeight = vertex.Weights[index];
+            if (sourceIndex < 0 || sourceIndex > ushort.MaxValue || !float.IsFinite(sourceWeight))
             {
-                skinIndices.Add((ushort)Math.Clamp(weights[index].Index, 0, ushort.MaxValue));
-                skinWeights.Add(weights[index].Weight);
+                throw new InvalidDataException(
+                    $"Native mesh skin influence {index} is outside its exact runtime representation.");
             }
-            else
-            {
-                skinIndices.Add(0);
-                skinWeights.Add(0);
-            }
+            skinIndices.Add((ushort)sourceIndex);
+            skinWeights.Add(sourceWeight);
         }
     }
 

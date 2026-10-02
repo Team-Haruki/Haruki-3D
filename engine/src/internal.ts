@@ -173,7 +173,7 @@ export {
   UnityPrefabSpringRuntime,
   computeUtjAverageChildTailPosition,
   unityPrefabSpringRuntimeInternals,
-  type SpringTimelineControl,
+  type SpringSimulationControl,
 } from "./engine/unityPrefabSpringRuntimeAdapter";
 export { SekaiExtraBoneRuntime } from "./engine/sekaiExtraBoneRuntime";
 export {
@@ -235,3 +235,6 @@ export {
 export { createSekaiBodyMaterial } from "./materials/sekaiBodyMaterial";
 export { createSekaiFaceMaterial } from "./materials/sekaiFaceMaterial";
 export { createSekaiLayerMaterial } from "./materials/sekaiCharacterShader";
+export { getUnityWorldPosition, getUnityWorldQuaternion, normalizeUnityLocalQuaternion, inverseUnityTransformPoint, lerpUnityQuaternionFloat32, transformUnityDirectionToWorld } from "./engine/unityCoordinateConversion";
+
+export { updateNativeMorphTangents } from "./engine/nativeMorphTangentRuntime";

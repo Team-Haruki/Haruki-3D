@@ -41,7 +41,7 @@ dotnet run -- \
   --out /path/to/output
 ```
 
-The CostumeShop asset root must contain `live_pv/model/characterv2`. Its runtime metadata is always emitted as `.msgpack.br`; JSON, gzip, self-contained part runtimes, legacy `character` roots, and direct VRM/GLB full exports are not supported by that preview pipeline. `--emit-mv-source-set` is separate and preserves the dependency-closed 3DMV selection, including per-part `characterv2` choices and any legacy `character` fallback selected by the official runtime rule.
+The CostumeShop asset root must contain `live_pv/model/characterv2`. Its runtime metadata is always emitted as `.msgpack.br`; JSON, gzip, self-contained part runtimes, legacy `character` roots, and direct VRM/GLB full exports are not supported by that preview pipeline.
 
 ## Build
 
@@ -67,6 +67,20 @@ When building outside Docker against a local AssetStudio checkout, pass its path
 ```bash
 ./scripts/dotnet.sh build -p:AssetStudioRoot=<AssetStudio-Haruki-directory>
 ```
+
+Validate metadata, exact skin bindings, morph deltas, and cache invalidation against
+that same prepared dependency:
+
+```bash
+dotnet run --project Tests/AssetStudioMetadata -c Release \
+  -p:AssetStudioRoot=<AssetStudio-Haruki-directory> -- --synthetic-only
+```
+
+Replace `--synthetic-only` with original costume bundle paths to compare binary
+material and texture readers against TypeTree metadata. This check uses the
+public pinned dependency; it does not require unpublished TypeTree reader changes.
+Core/delta schema version 4 and compiled cache version 10 rebuild older packages
+so explicit morph channels and preserved skin slots reach existing outputs.
 
 Publish the Linux x64 runtime directory used by Haruki-Sekai-Asset-Updater external mounts:
 
@@ -143,8 +157,7 @@ Mode selectors:
   the full incremental set.
 - `--emit-role-runtimes` writes `roles/<characterId>/<unit>/role-runtime.msgpack.br`
   packages with motion metadata.
-- `--emit-mv-source-set` validates and stages a manifest-selected MV bundle
-  closure; it needs `--asset-root` and `--mv-manifest` but no `--master`.
+
 - `--export-face-motion` writes `face_motion.json` from a `costume_setting`
   bundle or decoded AnimationClip JSON.
 - `--optimize-texture-store` runs the standalone lossless texture-store
@@ -223,11 +236,6 @@ Flags shared by every mode:
   motion metadata.
 - `--part-package-process-concurrency <n>` (and its aliases) also splits role
   runtime export across worker processes.
-
-`--emit-mv-source-set` flags:
-
-- `--mv-manifest <manifest.json>` selects the dependency-closed MV bundle
-  closure to validate and stage.
 
 `--export-face-motion` flags:
 
@@ -372,24 +380,6 @@ property names remain ordinary MessagePack arrays.
 The viewer must merge the active part SpringBone records, rebind current
 body colliders, and reset simulation whenever body/head/hair/accessory selection
 changes.
-
-## Stage a 3DMV source bundle set
-
-Use a dependency-closed MV manifest to validate and stage updater output or the
-game's wrapped source bundles. The known 0x10 wrapper is normalized to UnityFS:
-
-```bash
-dotnet run -- \
-  --emit-mv-source-set \
-  --mv-manifest /path/to/mv-0112-manifest.json \
-  --asset-root /path/to/raw-bundles \
-  --out /path/to/mv-0112-source
-```
-
-The output contains `mv-source-set.json`, ClauseKAI-shaped `deps.json`, and the
-logical bundle tree below `source_bundles/`. These are source-platform bundles,
-not browser bundles. A Unity WebGL rebuild/conversion step is required before
-serving them to `UnityWebRequestAssetBundle` in a browser.
 
 ## Masterdata Audit
 

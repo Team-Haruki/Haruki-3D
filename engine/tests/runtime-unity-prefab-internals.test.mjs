@@ -184,7 +184,7 @@ test("native mesh validation reports ambiguity, mismatched ids, missing parents,
   ] }, geometry);
   assert.equal(materials[0].vertexColors, true);
   assert.equal(materials[0].userData.pjskMaterialKey, "key");
-  assert.equal(prefab.buildNativeMeshMaterials({}, geometry).length, 1);
+  assert.equal(prefab.buildNativeMeshMaterials({}, geometry).length, 0);
   assert.equal(prefab.resolveNativeMeshBones(graph, ["body/Bone"], []).length, 1);
   assert.equal(prefab.resolveNativeMeshBones(graph, ["ignored"], [2]).length, 1);
 });
@@ -198,12 +198,12 @@ test("native geometry covers optional attributes, submeshes, morphs, invalid del
     uv0: [0, 0, 1, 0], uv1: [0, 0, 1, 0], uv2: [0, 0, 1, 0],
     colors: [1, 1, 1, 1, 1, 1, 1, 1],
     skinIndices: [0, 0, 0, 0, 0, 0, 0, 0], skinWeights: [1, 0, 0, 0, 1, 0, 0, 0],
-    submeshes: [{ indices: [0, 1] }, {}],
+    submeshes: [{ indices: [0, 1] }, { indices: [1, 0] }],
     morphTargets: [
-      { name: "ok", indices: [0, 9], positionDeltas: [1, 2, 3, 4, 5, 6], normalDeltas: [0, 1, 0, 0, 1, 0] },
-      { indices: [], positionDeltas: [] },
-      { indices: [0], positionDeltas: [1] },
-      { name: "no-normal", indices: [1], positionDeltas: [1, 1, 1] },
+      { name: "ok", hasPositionDeltas: true, hasNormalDeltas: true, hasTangentDeltas: false,
+        indices: [0, 1], positionDeltas: [1, 2, 3, 4, 5, 6], normalDeltas: [0, 1, 0, 0, 1, 0], tangentDeltas: [] },
+      { name: "second", hasPositionDeltas: true, hasNormalDeltas: true, hasTangentDeltas: false,
+        indices: [1], positionDeltas: [1, 1, 1], normalDeltas: [0, 0, 0], tangentDeltas: [] },
     ],
   };
   const geometry = prefab.buildUnityRuntimeNativeGeometry(source);
@@ -212,14 +212,13 @@ test("native geometry covers optional attributes, submeshes, morphs, invalid del
   }
   assert.equal(geometry.groups.length, 2);
   assert.equal(geometry.morphAttributes.position.length, 2);
-  assert.equal(geometry.morphAttributes.normal, undefined);
+  assert.equal(geometry.morphAttributes.normal.length, 2);
 
-  const output = new Float32Array(6);
-  prefab.copyNativeMorphDelta(undefined, 0, 2, [1, 2, 3], output);
-  prefab.copyNativeMorphDelta(-1, 0, 2, [1, 2, 3], output);
-  prefab.copyNativeMorphDelta(2, 0, 2, [1, 2, 3], output);
-  prefab.copyNativeMorphDelta(1, 0, 2, [1, undefined, 3], output);
-  assert.deepEqual([...output], [0, 0, 0, 1, 0, 3]);
+  assert.throws(() => prefab.buildUnityRuntimeNativeGeometry({ ...source, submeshes: [{}] }), /invalid submesh indices/);
+  assert.throws(() => prefab.buildUnityRuntimeNativeGeometry({ ...source, morphTargets: [
+    { ...source.morphTargets[0], indices: [0, 9] },
+  ] }), /invalid vertex index/);
+  assert.throws(() => prefab.buildUnityRuntimeNativeGeometry({ ...source, normals: [1] }), /attribute 'normals'/);
 
   const emptyGeometry = new THREE.BufferGeometry();
   prefab.addFloatGeometryAttribute(emptyGeometry, "normal", [1, 2], 3, 1);
@@ -240,9 +239,9 @@ test("bind matrices, mounting, rest spread, and debug path helpers cover edge ca
   const identityValues = [...new THREE.Matrix4().elements];
   const warnings = [];
   assert.deepEqual(prefab.buildUnityRuntimeBoneInverseBindMatrices({}, 0, warnings), []);
-  assert.deepEqual(prefab.buildUnityRuntimeBoneInverseBindMatrices({ boneInverseBindMatrices: [] }, 1, warnings), []);
-  assert.deepEqual(prefab.buildUnityRuntimeBoneInverseBindMatrices({ boneInverseBindMatrices: [1, 2] }, 1, warnings), []);
-  assert.equal(warnings.length, 1);
+  assert.throws(() => prefab.buildUnityRuntimeBoneInverseBindMatrices({ boneInverseBindMatrices: [] }, 1, warnings), /missing/);
+  assert.throws(() => prefab.buildUnityRuntimeBoneInverseBindMatrices({ boneInverseBindMatrices: [1, 2] }, 1, warnings), /expected 16/);
+  assert.equal(warnings.length, 0);
   const matrices = prefab.buildUnityRuntimeBoneInverseBindMatrices({ boneInverseBindMatrices: identityValues }, 1, warnings);
   prefab.convertUnityBindMatricesToThree([], new THREE.Matrix4());
   prefab.convertUnityBindMatricesToThree(matrices, new THREE.Matrix4().makeTranslation(1, 0, 0));

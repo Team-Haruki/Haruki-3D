@@ -36,6 +36,11 @@ decodes it through the real codec, and both compare against the same
   `0`..`65535`, stays narrow.
 - **ext-42 uint32 index array** (`nativeMeshes.meshes.submeshes.indices`):
   contains `65536` and `4294967295`, forcing the wide encoding.
+- **Complete bone slots**: repeated bone paths and PathIDs retain their original order, and
+  distinct inverse-bind matrices survive float32 encoding without slot compaction.
+- **Morph channels**: explicit presence flags, position and tangent float32 delta arrays,
+  uint16 sparse indices, and an absent normal channel represented by an empty array. This checks
+  transport fidelity; the engine's tangent morph tests cover application before vertex upload.
 - **Empty array on an ext path** (`nativeMeshes.meshes.normals`): the
   production encoder only ext-encodes arrays of at least 8 floats (or 16
   indexes), so empty and below-threshold arrays — the encoder never emits an

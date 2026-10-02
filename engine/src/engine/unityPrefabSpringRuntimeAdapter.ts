@@ -22,6 +22,12 @@ import type {
 } from "./springRuntimeTypes";
 import {
   convertUnityAxisToThree,
+  getUnityWorldQuaternion,
+  lerpUnityQuaternionFloat32,
+  normalizeUnityLocalQuaternion,
+  getUnityWorldPosition,
+  inverseUnityTransformPoint,
+  transformUnityDirectionToWorld,
   convertUnityDirectionToThree,
   readUnityVector3,
   type UnityVectorLike,
@@ -255,23 +261,6 @@ type RuntimeColliderBinding = {
 
 type RuntimeSetupDiagnostics = NonNullable<UtjSpringBoneRuntimeSnapshot["setupDiagnostics"]>;
 
-type RuntimeBoneBuildContext = {
-  setup: RuntimeUnitySetup0414;
-  resolution: NodeResolution;
-  graphIndex: PrefabGraphIndex;
-  activeRoots: ReadonlySet<string>;
-  colliderByIndex: ReadonlyMap<number, RuntimeCollider>;
-  bindingByBonePathId: ReadonlyMap<number, RuntimeColliderBindingSource>;
-  decisionByBonePathId: ReadonlyMap<number, RuntimeBindingDecisionSource>;
-  managerCacheByPathId: ReadonlyMap<number, RuntimeManagerColliderCacheBinding>;
-  boneByPathId: ReadonlyMap<number, RuntimeBoneSource>;
-  springComponents: RuntimeSpringComponentIndex;
-  setupDiagnostics: RuntimeSetupDiagnostics;
-  missingNodes: string[];
-  controlledNodes: Set<THREE.Object3D>;
-  forceProviderCache: Map<string, RuntimeForceProvider>;
-};
-
 type RuntimeSpringComponentIndex = {
   hasComponentMetadata: boolean;
   pathIds: ReadonlySet<number>;
@@ -328,8 +317,6 @@ type RuntimeBone = {
   initialLocalRotation: THREE.Quaternion;
   initialLocalScale: THREE.Vector3;
   skinAnimationLocalRotation: THREE.Quaternion;
-  lastAppliedLocalRotation: THREE.Quaternion;
-  hasAppliedLocalRotation: boolean;
   boneAxis: THREE.Vector3;
   boneAxisSource: RuntimeBoneAxisSource;
   springLength: number;
@@ -400,12 +387,22 @@ type RuntimeWindVolumeOneSelf = RuntimeForceProviderBase & {
   additionalWindStrength: number;
 };
 
-export type SpringTimelineControl = {
+export type SpringSimulationControl = {
   stiffnessForce?: number | null;
   dragForce?: number | null;
   windInfluence?: number | null;
   slowMotionScale?: number | null;
   paused?: boolean | null;
+};
+
+type RuntimeManagerBatch = {
+  source: RuntimeManagerSource;
+  bones: RuntimeBone[];
+  animatedBones: Set<RuntimeBone>;
+  gravity: THREE.Vector3;
+  forceProviders: RuntimeForceProvider[];
+  slowMotionScale: number;
+  isPaused: boolean;
 };
 
 type RuntimeBoneAxisSource =
@@ -423,13 +420,13 @@ export class UnityPrefabSpringRuntime {
   private readonly parentRotation = new THREE.Quaternion();
   private readonly headPosition = new THREE.Vector3();
   private readonly localRotation = new THREE.Quaternion();
-  private readonly skinAnimationLocalRotation = new THREE.Quaternion();
   private readonly colliderLocalToWorld = new THREE.Matrix4();
   private readonly colliderWorldToLocal = new THREE.Matrix4();
   private readonly frameColliderCache = new Map<RuntimeCollider, UtjCollider>();
   private readonly angleVector = new THREE.Vector3();
   private readonly debugAnimatedTip = new THREE.Vector3();
   private readonly providerForce = new THREE.Vector3();
+  private readonly providerRotation = new THREE.Quaternion();
   private readonly providerWorldToLocal = new THREE.Matrix4();
   private readonly waveAxis = new THREE.Vector3();
   private readonly providerRight = new THREE.Vector3();
@@ -440,10 +437,12 @@ export class UnityPrefabSpringRuntime {
   private traceFilters: string[] = [];
   private traceMaxEvents = 240;
   private traceSequence = 0;
+  private updateManagerPathId: number | null = null;
   private readonly traceEvents: RuntimeTraceEvent[] = [];
 
   private constructor(
     private readonly bones: RuntimeBone[],
+    private readonly managerBatches: RuntimeManagerBatch[],
     private readonly missingNodes: string[],
     private readonly skinnedBones: Set<THREE.Object3D>,
     private readonly setupDiagnostics: RuntimeSetupDiagnostics
@@ -471,22 +470,85 @@ export class UnityPrefabSpringRuntime {
     const boneByPathId = buildBoneMap(setup);
     const springComponents = buildRuntimeSpringComponentIndex(setup);
     const setupDiagnostics = buildSetupDiagnostics(setup, activeRoots, springComponents);
-    const controlledNodes = new Set<THREE.Object3D>();
+    const boneByNode = new Map<THREE.Object3D, RuntimeBone>();
+    const sourceByNode = new Map<THREE.Object3D, RuntimeBoneSource>();
     const forceProviderCache = new Map<string, RuntimeForceProvider>();
-    const bones: RuntimeBone[] = [];
-
-    const buildContext: RuntimeBoneBuildContext = {
-      setup, resolution, graphIndex, activeRoots, colliderByIndex, bindingByBonePathId,
-      decisionByBonePathId, managerCacheByPathId, boneByPathId, springComponents,
-      setupDiagnostics, missingNodes, controlledNodes, forceProviderCache,
-    };
-    for (const manager of setup.managers ?? []) {
-      addRuntimeManagerBones(manager, buildContext, bones);
+    const nodeOrder = new Map<THREE.Object3D, number>();
+    root.traverse(node => nodeOrder.set(node, nodeOrder.size));
+    const sourceNodes = new Map<RuntimeBoneSource, THREE.Object3D | null>();
+    for (const sourceBone of boneByPathId.values()) {
+      sourceNodes.set(sourceBone, resolveNodeForPart(resolution, sourceBone.nodePath, sourceBone.runtimePartIndex));
     }
+    const managerEntries = (setup.managers ?? [])
+      .filter(manager => isRuntimePathActive(manager.nodePath ?? manager.poseRoot, activeRoots))
+      .map(source => ({ source, node: resolveNodeForPart(resolution, source.nodePath, source.runtimePartIndex), nodes: [] as THREE.Object3D[] }))
+      .sort((a, b) => (nodeOrder.get(a.node!) ?? 0) - (nodeOrder.get(b.node!) ?? 0));
 
+    for (const entry of managerEntries) {
+      const manager = entry.source;
+      const forceProviders = resolveForceProviders(resolution, manager, forceProviderCache);
+      // FindSpringBones runs after ModelCombineSetup. A parent manager includes
+      // nested managers' bones; per-part exported lists alone lose those calls.
+      // Legacy inputs without a resolvable manager transform retain their list.
+      const sources = entry.node
+        ? [...sourceNodes].filter(([source, node]) => node
+          ? isNodeWithin(node, entry.node!)
+          : source.pathId !== undefined && manager.bonePathIds?.includes(source.pathId))
+          .sort((a, b) => (nodeOrder.get(a[1]!) ?? Infinity) - (nodeOrder.get(b[1]!) ?? Infinity))
+          .map(([source]) => source)
+        : (manager.bonePathIds ?? []).map(id => boneByPathId.get(id));
+      for (const sourceBone of sources) {
+        if (!sourceBone || !isRuntimePathActive(sourceBone.nodePath, activeRoots)) {
+          continue;
+        }
+        const bonePathId = sourceBone.pathId;
+        if (!isVerifiedRuntimeSpringBone(sourceBone, springComponents)) {
+          setupDiagnostics.rejectedUnverifiedBoneSourceCount += 1;
+          continue;
+        }
+        const node = sourceNodes.get(sourceBone);
+        if (!node) {
+          missingNodes.push(sourceBone.nodePath ?? sourceBone.nodeName ?? `bone:${bonePathId}`);
+          continue;
+        }
+        entry.nodes.push(node);
+        sourceByNode.set(node, sourceBone);
+        const tailBinding = computeUnityPrefabChildPosition(sourceBone, node, graphIndex, resolution);
+        const pivotNode = resolveNodeForPart(resolution, sourceBone.pivotNodePath, sourceBone.runtimePartIndex);
+        const colliderBinding = resolveColliderBinding(
+          setup,
+          manager,
+          sourceBone,
+          bonePathId !== undefined ? bindingByBonePathId.get(bonePathId) : undefined,
+          bonePathId !== undefined ? decisionByBonePathId.get(bonePathId) : undefined,
+          manager.pathId !== undefined ? managerCacheByPathId.get(manager.pathId) : undefined,
+          colliderByIndex
+        );
+        const runtimeBone = createRuntimeBone(
+          manager, sourceBone, node, tailBinding, pivotNode,
+          resolveLengthLimitTargets(resolution, sourceBone), forceProviders, colliderBinding
+        );
+        // The last native Initialize(manager) owns constraint settings, while
+        // every manager's update list references this same physical bone state.
+        if (runtimeBone) boneByNode.set(node, runtimeBone);
+      }
+    }
+    const bones = [...boneByNode.values()];
     bones.sort((a, b) => getObjectDepth(a.node) - getObjectDepth(b.node));
+    const managerBatches = managerEntries.map(entry => {
+      const members = [...new Set(entry.nodes)].map(node => boneByNode.get(node)!)
+        .sort((a, b) => getObjectDepth(a.node) - getObjectDepth(b.node));
+      return {
+        source: entry.source, bones: members,
+        animatedBones: new Set(members.filter(bone => isBoneAnimated(sourceByNode.get(bone.node)!, bone.node, entry.source))),
+        gravity: vectorFromUnity(entry.source.rawGravity),
+        forceProviders: resolveForceProviders(resolution, entry.source, forceProviderCache),
+        slowMotionScale: readFiniteNumber(entry.source.slowMotionScale) ?? 1,
+        isPaused: entry.source.isPaused === true,
+      };
+    });
     return bones.length > 0
-      ? new UnityPrefabSpringRuntime(bones, missingNodes, skinnedBones, setupDiagnostics)
+      ? new UnityPrefabSpringRuntime(bones, managerBatches, missingNodes, skinnedBones, setupDiagnostics)
       : null;
   }
 
@@ -512,9 +574,12 @@ export class UnityPrefabSpringRuntime {
     };
   }
 
-  // Mirrors the three official timeline paths: global SpringBoneControl,
-  // manager SpringBoneSlow, and CharacterModel.PauseSpringBone.
-  setTimelineControl(control: SpringTimelineControl): void {
+  // Apply spring force, speed and pause controls to the active managers.
+  setSimulationControl(control: SpringSimulationControl): void {
+    for (const batch of this.managerBatches) {
+      batch.slowMotionScale = finiteOverride(control.slowMotionScale, 1);
+      batch.isPaused = control.paused ?? false;
+    }
     for (const bone of this.bones) {
       bone.stiffnessForce = finiteOverride(control.stiffnessForce, bone.originalStiffnessForce);
       bone.dragForce = finiteOverride(control.dragForce, bone.originalDragForce);
@@ -524,16 +589,12 @@ export class UnityPrefabSpringRuntime {
     }
   }
 
-  clearTimelineControl(): void {
-    this.setTimelineControl({});
+  clearSimulationControl(): void {
+    this.setSimulationControl({});
   }
 
   // UTJ.SpringManager.UpdateDynamics RVA 0x0a59fe18
   update(deltaTime: number): void {
-    if (this.bones.some((bone) => bone.automaticUpdates && bone.enabled && !bone.isPaused)) {
-      this.preUpdateColliders();
-    }
-
     const windProviders = this.collectWindVolumeOneSelfProviders();
     const lateUpdateManagerIds = new Set(
       windProviders
@@ -546,29 +607,30 @@ export class UnityPrefabSpringRuntime {
         .map((provider) => provider.springManagerPathId as number)
     );
 
-    for (const bone of this.bones) {
-      if (!bone.automaticUpdates || !bone.enabled) {
-        continue;
+    for (const batch of this.managerBatches) {
+      const manager = batch.source;
+      if (manager.enabled === false || manager.automaticUpdates === false) continue;
+      this.updateManagerPathId = readFiniteNumber(manager.pathId);
+      if (!batch.isPaused) this.preUpdateColliders(batch.bones);
+      const sumsForces = this.updateManagerPathId !== null && windManagedSumIds.has(this.updateManagerPathId)
+        ? true : manager.isSumOfForcesOnBone !== false;
+      for (const bone of batch.bones) {
+        if (!bone.enabled) continue;
+        getUnityWorldQuaternion(bone.node.parent, this.parentRotation);
+        getUnityWorldPosition(bone.node, this.headPosition);
+        const dynamicRatio = batch.animatedBones.has(bone)
+          ? THREE.MathUtils.clamp(readFiniteNumber(manager.dynamicRatio) ?? 0.5, 0, 1) : 1;
+        if (batch.isPaused) {
+          bone.skinAnimationLocalRotation.copy(bone.node.quaternion);
+          this.applyBoneRotation(bone, dynamicRatio);
+          continue;
+        }
+        if (!sumsForces || (this.updateManagerPathId !== null && lateUpdateManagerIds.has(this.updateManagerPathId))) continue;
+        this.computeExternalForce(bone, deltaTime, batch);
+        this.updateBoneSpringAndRotation(bone,
+          calcUtjManagerTimeStep(deltaTime, readFiniteNumber(manager.simulationFrameRate) ?? 60, batch.slowMotionScale),
+          this.externalForce, dynamicRatio);
       }
-      bone.node.parent?.getWorldQuaternion(this.parentRotation);
-      bone.node.getWorldPosition(this.headPosition);
-      if (bone.isPaused) {
-        this.applyBoneRotation(bone, getEffectiveDynamicRatio(bone));
-        continue;
-      }
-      const managerSumsForces = bone.managerPathId !== null && windManagedSumIds.has(bone.managerPathId)
-        ? true
-        : bone.isSumOfForcesOnBone;
-      if (!managerSumsForces || (bone.managerPathId !== null && lateUpdateManagerIds.has(bone.managerPathId))) {
-        continue;
-      }
-      this.computeExternalForce(bone, deltaTime);
-      this.updateBoneSpringAndRotation(
-        bone,
-        calcUtjManagerTimeStep(deltaTime, bone.simulationFrameRate, bone.slowMotionScale),
-        this.externalForce,
-        getEffectiveDynamicRatio(bone)
-      );
     }
 
     for (const provider of windProviders) {
@@ -580,8 +642,8 @@ export class UnityPrefabSpringRuntime {
 
   private collectWindVolumeOneSelfProviders(): RuntimeWindVolumeOneSelf[] {
     const providers = new Set<RuntimeWindVolumeOneSelf>();
-    for (const bone of this.bones) {
-      for (const provider of bone.forceProviders) {
+    for (const batch of this.managerBatches) {
+      for (const provider of batch.forceProviders) {
         if (provider.kind === "WindVolumeOneSelf") {
           providers.add(provider);
         }
@@ -598,24 +660,28 @@ export class UnityPrefabSpringRuntime {
       return;
     }
     const dt = provider.simulationFrameRate > 0 ? 1 / provider.simulationFrameRate : deltaTime;
-    for (const bone of this.bones) {
-      if (bone.managerPathId !== provider.springManagerPathId || !bone.automaticUpdates || !bone.enabled || bone.isPaused) {
+    const batch = this.managerBatches.find(batch => batch.source.pathId === provider.springManagerPathId);
+    if (!batch || batch.source.enabled === false || batch.source.automaticUpdates === false || batch.isPaused) return;
+    this.updateManagerPathId = provider.springManagerPathId;
+    this.preUpdateColliders(batch.bones);
+    for (const bone of batch.bones) {
+      if (!bone.enabled) {
         continue;
       }
       this.computeWindVolumeOneSelfForce(provider, bone, deltaTime);
-      this.externalForce.copy(bone.gravity).add(this.providerForce);
+      this.externalForce.copy(batch.gravity).add(this.providerForce);
       this.updateBoneSpringAndRotation(
         bone,
         dt,
         this.externalForce,
-        bone.isAnimated ? provider.dynamicRatio : 1
+        batch.animatedBones.has(bone) ? provider.dynamicRatio : 1
       );
     }
   }
 
-  private computeExternalForce(bone: RuntimeBone, deltaTime: number): THREE.Vector3 {
-    this.externalForce.copy(bone.gravity);
-    for (const provider of bone.forceProviders) {
+  private computeExternalForce(bone: RuntimeBone, deltaTime: number, batch: RuntimeManagerBatch): THREE.Vector3 {
+    this.externalForce.copy(batch.gravity);
+    for (const provider of batch.forceProviders) {
       this.externalForce.add(this.computeForceProvider(provider, bone, deltaTime));
     }
     return this.externalForce;
@@ -628,9 +694,10 @@ export class UnityPrefabSpringRuntime {
   ): THREE.Vector3 {
     if (provider.kind === "ForceVolume") {
       provider.node.updateMatrixWorld(true);
+      getUnityWorldQuaternion(provider.node, this.providerRotation);
       return this.providerForce
         .set(0, 0, 1)
-        .transformDirection(provider.node.matrixWorld)
+        .applyQuaternion(this.providerRotation)
         .multiplyScalar(provider.strength);
     }
     if (provider.kind === "WindVolume") {
@@ -645,6 +712,7 @@ export class UnityPrefabSpringRuntime {
       return this.providerForce.set(0, 0, 0);
     }
     provider.node.updateMatrixWorld(true);
+    getUnityWorldQuaternion(provider.node, this.providerRotation);
     bone.node.getWorldPosition(this.localBonePosition).applyMatrix4(
       this.providerWorldToLocal.copy(provider.node.matrixWorld).invert()
     );
@@ -656,7 +724,7 @@ export class UnityPrefabSpringRuntime {
     );
     return this.providerForce
       .set(0, 0, 1)
-      .transformDirection(provider.node.matrixWorld)
+      .applyQuaternion(this.providerRotation)
       .addScaledVector(provider.offsetVector, wave)
       .normalize()
       .multiplyScalar(baseStrength * bone.windInfluence);
@@ -674,12 +742,13 @@ export class UnityPrefabSpringRuntime {
     provider.currentTime = addPeriodically(provider.currentTime, deltaTime, provider.period);
     const phase = provider.currentTime * Math.PI * 2 / provider.period;
     provider.node.updateMatrixWorld(true);
-    this.waveAxis.set(0, 1, 0).transformDirection(provider.node.matrixWorld);
+    getUnityWorldQuaternion(provider.node, this.providerRotation);
+    this.waveAxis.set(0, 1, 0).applyQuaternion(this.providerRotation);
     if (Math.abs(provider.spinPeriod) > 0.001) {
       provider.spinTime = addPeriodically(provider.spinTime, deltaTime, provider.spinPeriod);
       const spinPhase = provider.spinTime * Math.PI * 2 / provider.spinPeriod;
-      this.providerRight.copy(UNITY_RIGHT_LOCAL).transformDirection(provider.node.matrixWorld);
-      this.providerUp.set(0, 1, 0).transformDirection(provider.node.matrixWorld);
+      this.providerRight.copy(UNITY_RIGHT_LOCAL).applyQuaternion(this.providerRotation);
+      this.providerUp.set(0, 1, 0).applyQuaternion(this.providerRotation);
       this.waveAxis.copy(this.providerRight).multiplyScalar(Math.cos(spinPhase)).addScaledVector(
         this.providerUp,
         Math.sin(spinPhase)
@@ -697,7 +766,7 @@ export class UnityPrefabSpringRuntime {
       Math.cos(waveScale * this.localBonePosition.z)
     );
     this.mainWindDirection.set(0, 0, 1)
-      .transformDirection(provider.node.matrixWorld)
+      .applyQuaternion(this.providerRotation)
       .addScaledVector(this.waveAxis, provider.amplitude * wave)
       .normalize();
     // Official: Quaternion.Euler(0, angle, 0) * Vector3.right. Mirror Unity's
@@ -727,8 +796,6 @@ export class UnityPrefabSpringRuntime {
     for (const bone of this.bones) {
       bone.node.quaternion.copy(bone.initialLocalRotation);
       bone.skinAnimationLocalRotation.copy(bone.initialLocalRotation);
-      bone.lastAppliedLocalRotation.copy(bone.initialLocalRotation);
-      bone.hasAppliedLocalRotation = false;
       bone.node.scale.copy(bone.initialLocalScale);
       bone.node.updateMatrix();
       bone.node.updateMatrixWorld(true);
@@ -737,8 +804,8 @@ export class UnityPrefabSpringRuntime {
 
   resetStateToCurrentPose(): void {
     for (const bone of this.bones) {
-      bone.node.parent?.getWorldQuaternion(this.parentRotation);
-      bone.node.getWorldPosition(this.headPosition);
+      getUnityWorldQuaternion(bone.node.parent, this.parentRotation);
+      getUnityWorldPosition(bone.node, this.headPosition);
       bone.skinAnimationLocalRotation.copy(bone.node.quaternion);
       this.debugAnimatedTip.copy(computeAnimatedTipPosition({
         headPosition: this.headPosition,
@@ -752,8 +819,6 @@ export class UnityPrefabSpringRuntime {
       bone.state.cachedPosition.copy(this.headPosition);
       bone.state.cachedMovement.set(0, 0, 0);
       bone.state.hitNormal.set(0, 0, 0);
-      bone.lastAppliedLocalRotation.copy(bone.node.quaternion);
-      bone.hasAppliedLocalRotation = false;
     }
   }
 
@@ -772,8 +837,8 @@ export class UnityPrefabSpringRuntime {
       for (const collider of bone.colliders) {
         colliderIndexes.add(collider);
       }
-      bone.node.parent?.getWorldQuaternion(this.parentRotation);
-      bone.node.getWorldPosition(this.headPosition);
+      getUnityWorldQuaternion(bone.node.parent, this.parentRotation);
+      getUnityWorldPosition(bone.node, this.headPosition);
       this.debugAnimatedTip.copy(computeAnimatedTipPosition({
         headPosition: this.headPosition,
         parentRotation: this.parentRotation,
@@ -850,7 +915,7 @@ export class UnityPrefabSpringRuntime {
           tailBinding: tailBindingSnapshot(bone.tailBinding),
           offset,
           appliedRotationDegrees: THREE.MathUtils.radToDeg(
-            bone.skinAnimationLocalRotation.angleTo(bone.node.quaternion)
+            bone.skinAnimationLocalRotation.clone().normalize().angleTo(bone.node.quaternion.clone().normalize())
           ),
           colliderCount: bone.colliders.length,
           lastCollisionStatus: bone.lastCollisionStatus,
@@ -892,7 +957,7 @@ export class UnityPrefabSpringRuntime {
     return {
       runtimeMode: "unity-prefab",
       enabled,
-      springCount: new Set(this.bones.map((bone) => bone.springName)).size,
+      springCount: this.managerBatches.length,
       boneCount: this.bones.length,
       colliderCount: colliderIndexes.size,
       missingNodeCount: this.missingNodes.length,
@@ -923,8 +988,8 @@ export class UnityPrefabSpringRuntime {
     externalForce: THREE.Vector3,
     dynamicRatio: number
   ): void {
-    bone.node.parent?.getWorldQuaternion(this.parentRotation);
-    bone.node.getWorldPosition(this.headPosition);
+    getUnityWorldQuaternion(bone.node.parent, this.parentRotation);
+    getUnityWorldPosition(bone.node, this.headPosition);
     const traceEvent = this.shouldTraceBone(bone)
       ? this.createTraceEvent(bone, deltaTime, externalForce, dynamicRatio)
       : null;
@@ -934,7 +999,7 @@ export class UnityPrefabSpringRuntime {
       traceEvent.stateAfterLengthLimits = stateSnapshot(bone.state);
     }
 
-    // Official SpringBone passes TransformDirection(radius,0,0).magnitude —
+    // Official SpringBone passes TransformVector(radius,0,0).magnitude —
     // the WORLD tail radius. The rig carries the character-height scale, so
     // the serialized radius must be scaled here (each collider converts it
     // back into its own local units).
@@ -959,7 +1024,7 @@ export class UnityPrefabSpringRuntime {
     externalForce: THREE.Vector3,
     traceEvent: RuntimeTraceEvent | null
   ): void {
-    this.captureSkinAnimationLocalRotation(bone);
+    bone.skinAnimationLocalRotation.copy(bone.node.quaternion);
     if (traceEvent) {
       traceEvent.skinAnimationLocalRotation = quaternionSnapshot(bone.skinAnimationLocalRotation);
     }
@@ -973,7 +1038,8 @@ export class UnityPrefabSpringRuntime {
       initialLocalRotation: bone.initialLocalRotation,
       boneAxis: bone.boneAxis,
       lengthFallbackDirection: bone.boneAxis.clone().applyQuaternion(
-        bone.node.getWorldQuaternion(new THREE.Quaternion())),
+        getUnityWorldQuaternion(bone.node, new THREE.Quaternion())
+      ),
       springLength: bone.springLength,
       stiffnessForce: bone.stiffnessForce,
       dragForce: bone.dragForce,
@@ -998,7 +1064,8 @@ export class UnityPrefabSpringRuntime {
         tailRadius,
         groundHeight: bone.groundHeight,
         lengthFallbackDirection: bone.boneAxis.clone().applyQuaternion(
-          bone.node.getWorldQuaternion(new THREE.Quaternion())),
+          getUnityWorldQuaternion(bone.node, new THREE.Quaternion())
+        ),
         bounce: bone.bounce,
         friction: bone.friction,
       })
@@ -1068,7 +1135,7 @@ export class UnityPrefabSpringRuntime {
       return;
     }
     const targets: UtjLengthLimitTarget[] = bone.lengthLimitTargets.map((target) => ({
-      position: target.node.getWorldPosition(new THREE.Vector3()),
+      position: getUnityWorldPosition(target.node, new THREE.Vector3()),
       initialLength: target.initialLength,
     }));
     applyUtjLengthLimits({
@@ -1091,11 +1158,12 @@ export class UnityPrefabSpringRuntime {
 
     pivot.updateMatrixWorld(true);
     this.angleVector.copy(bone.state.currTipPos).sub(bone.state.cachedPosition);
+    this.angleVector.set(Math.fround(this.angleVector.x), Math.fround(this.angleVector.y), Math.fround(this.angleVector.z));
     // F5 names these basis vectors in Unity space. Convert the named Unity axes
-    // once before applying the viewer-space pivot matrix.
-    const forward = UTJ_PIVOT_FORWARD_LOCAL.clone().transformDirection(pivot.matrixWorld);
-    const back = UTJ_PIVOT_BACK_LOCAL.clone().transformDirection(pivot.matrixWorld);
-    const down = UTJ_PIVOT_DOWN_LOCAL.clone().transformDirection(pivot.matrixWorld);
+    // once before applying the scale-independent Unity pivot rotation.
+    const forward = transformUnityDirectionToWorld(pivot, UTJ_PIVOT_FORWARD_LOCAL.clone());
+    const back = transformUnityDirectionToWorld(pivot, UTJ_PIVOT_BACK_LOCAL.clone());
+    const down = transformUnityDirectionToWorld(pivot, UTJ_PIVOT_DOWN_LOCAL.clone());
     if (trace) {
       trace.enabled = true;
       trace.hasPivot = true;
@@ -1142,6 +1210,8 @@ export class UnityPrefabSpringRuntime {
     }
 
     bone.state.currTipPos.copy(bone.state.cachedPosition).add(this.angleVector);
+    bone.state.currTipPos.set(Math.fround(bone.state.currTipPos.x),
+      Math.fround(bone.state.currTipPos.y), Math.fround(bone.state.currTipPos.z));
     if (trace) {
       trace.vectorAfter = vectorSnapshot(this.angleVector);
     }
@@ -1159,26 +1229,13 @@ export class UnityPrefabSpringRuntime {
         bone.boneAxis
       )
     );
-    bone.node.quaternion.copy(lerpQuaternionNormalized(
+    bone.node.quaternion.copy(normalizeUnityLocalQuaternion(lerpUnityQuaternionFloat32(
       bone.skinAnimationLocalRotation,
       this.localRotation,
       dynamicRatio
-    ));
-    bone.lastAppliedLocalRotation.copy(bone.node.quaternion);
-    bone.hasAppliedLocalRotation = true;
+    )));
     bone.node.updateMatrix();
     bone.node.updateMatrixWorld(true);
-  }
-
-  private captureSkinAnimationLocalRotation(bone: RuntimeBone): void {
-    this.skinAnimationLocalRotation.copy(bone.node.quaternion);
-    if (
-      bone.hasAppliedLocalRotation &&
-      quaternionsAlmostEqual(this.skinAnimationLocalRotation, bone.lastAppliedLocalRotation)
-    ) {
-      return;
-    }
-    bone.skinAnimationLocalRotation.copy(this.skinAnimationLocalRotation);
   }
 
   private resetInvalidTipPosition(bone: RuntimeBone): void {
@@ -1234,6 +1291,7 @@ export class UnityPrefabSpringRuntime {
       pivotResolvedPath: bone.pivotResolvedPath,
       tailBinding: tailBindingSnapshot(bone.tailBinding),
       managerPathId: bone.managerPathId,
+      updateManagerPathId: this.updateManagerPathId,
       deltaTime,
       dynamicRatio,
       automaticUpdates: bone.automaticUpdates,
@@ -1299,10 +1357,10 @@ export class UnityPrefabSpringRuntime {
   }
 
   // UTJ.SpringManager.PreUpdateCollider RVA 0x0a5a0010
-  private preUpdateColliders(): void {
+  private preUpdateColliders(bones = this.bones): void {
     this.frameColliderCache.clear();
     const uniqueColliders = new Set<RuntimeCollider>();
-    for (const bone of this.bones) {
+    for (const bone of bones) {
       for (const collider of bone.colliders) {
         uniqueColliders.add(collider);
       }
@@ -1339,7 +1397,7 @@ export class UnityPrefabSpringRuntime {
         localToWorldMatrix: this.colliderLocalToWorld.clone(),
         worldToLocalMatrix: this.colliderWorldToLocal.clone(),
         worldToLocalRadiusScale: matrixXDirectionLength(this.colliderWorldToLocal),
-        localToWorldNormalMatrix: makeNormalDirectionMatrix(this.colliderLocalToWorld),
+        localToWorldNormalMatrix: new THREE.Matrix4().makeRotationFromQuaternion(getUnityWorldQuaternion(collider.node, new THREE.Quaternion())),
         lossyScaleX: worldScaleX(collider.node),
       };
     }
@@ -1360,7 +1418,7 @@ export class UnityPrefabSpringRuntime {
         localToWorldMatrix: this.colliderLocalToWorld.clone(),
         worldToLocalMatrix: this.colliderWorldToLocal.clone(),
         worldToLocalRadiusScale: matrixXDirectionLength(this.colliderWorldToLocal),
-        localToWorldNormalMatrix: makeNormalDirectionMatrix(this.colliderLocalToWorld),
+        localToWorldNormalMatrix: new THREE.Matrix4().makeRotationFromQuaternion(getUnityWorldQuaternion(collider.node, new THREE.Quaternion())),
         lossyScaleX: worldScaleX(collider.node),
       };
     }
@@ -1381,75 +1439,12 @@ export class UnityPrefabSpringRuntime {
         worldToLocalMatrix: this.colliderWorldToLocal.clone(),
         worldToLocalRadiusScale: matrixXDirectionLength(this.colliderWorldToLocal),
         worldToLocalLengthScale: matrixXDirectionLength(this.colliderWorldToLocal),
-        localToWorldNormalMatrix: makeNormalDirectionMatrix(this.colliderLocalToWorld),
+        localToWorldNormalMatrix: new THREE.Matrix4().makeRotationFromQuaternion(getUnityWorldQuaternion(collider.node, new THREE.Quaternion())),
       };
     }
 
     return null;
   }
-}
-
-function addRuntimeManagerBones(
-  manager: RuntimeManagerSource,
-  context: RuntimeBoneBuildContext,
-  bones: RuntimeBone[]
-) {
-  if (!isRuntimePathActive(manager.nodePath ?? manager.poseRoot, context.activeRoots)) {
-    return;
-  }
-  const forceProviders = resolveForceProviders(
-    context.resolution, manager, context.forceProviderCache);
-  for (const bonePathId of manager.bonePathIds ?? []) {
-    const runtimeBone = tryCreateManagedRuntimeBone(manager, bonePathId, forceProviders, context);
-    if (runtimeBone) {
-      bones.push(runtimeBone);
-      context.controlledNodes.add(runtimeBone.node);
-    }
-  }
-}
-
-function tryCreateManagedRuntimeBone(
-  manager: RuntimeManagerSource,
-  bonePathId: number,
-  forceProviders: RuntimeForceProvider[],
-  context: RuntimeBoneBuildContext
-): RuntimeBone | null {
-  const { resolution } = context;
-  const sourceBone = context.boneByPathId.get(bonePathId);
-  if (!sourceBone || !isRuntimePathActive(sourceBone.nodePath, context.activeRoots)) {
-    return null;
-  }
-  if (!isVerifiedRuntimeSpringBone(sourceBone, context.springComponents)) {
-    context.setupDiagnostics.rejectedUnverifiedBoneSourceCount += 1;
-    return null;
-  }
-  const node = resolveNodeForPart(resolution, sourceBone.nodePath, sourceBone.runtimePartIndex);
-  if (!node) {
-    context.missingNodes.push(sourceBone.nodePath ?? sourceBone.nodeName ?? `bone:${bonePathId}`);
-    return null;
-  }
-  if (context.controlledNodes.has(node)) {
-    return null;
-  }
-  const colliderBinding = resolveColliderBinding(
-    context.setup,
-    manager,
-    sourceBone,
-    context.bindingByBonePathId.get(bonePathId),
-    context.decisionByBonePathId.get(bonePathId),
-    manager.pathId !== undefined ? context.managerCacheByPathId.get(manager.pathId) : undefined,
-    context.colliderByIndex
-  );
-  return createRuntimeBone(
-    manager,
-    sourceBone,
-    node,
-    computeUnityPrefabChildPosition(sourceBone, node, context.graphIndex, context.resolution),
-    resolveNodeForPart(resolution, sourceBone.pivotNodePath, sourceBone.runtimePartIndex),
-    resolveLengthLimitTargets(context.resolution, sourceBone),
-    forceProviders,
-    colliderBinding
-  );
 }
 
 function buildControlledPartDiagnostics(
@@ -1520,15 +1515,16 @@ function createRuntimeBone(
   colliderBinding: RuntimeColliderBinding
 ): RuntimeBone | null {
   const tailPosition = tailBinding.tailPosition;
-  const headPosition = node.getWorldPosition(new THREE.Vector3());
+  const headPosition = getUnityWorldPosition(node, new THREE.Vector3());
   const direction = tailPosition.clone().sub(headPosition);
-  const springLength = direction.length();
+  direction.set(Math.fround(direction.x), Math.fround(direction.y), Math.fround(direction.z));
+  const springLength = Math.fround(direction.length());
   const initialLocalRotation = node.quaternion.clone();
   const boneAxisResolution = resolveRuntimeBoneAxis(node, tailPosition);
   const dynamicRatio = THREE.MathUtils.clamp(readFiniteNumber(manager.dynamicRatio) ?? 0.5, 0, 1);
   const initializedLengthLimitTargets = lengthLimitTargets.map((target) => ({
     node: target.node,
-    initialLength: target.node.getWorldPosition(new THREE.Vector3()).distanceTo(tailPosition),
+    initialLength: getUnityWorldPosition(target.node, new THREE.Vector3()).distanceTo(tailPosition),
   }));
   const stiffnessForce = sourceBone.rawStiffnessForce ?? 300;
   const dragForce = sourceBone.rawDragForce ?? sourceBone.dragForce ?? 0.4;
@@ -1549,7 +1545,7 @@ function createRuntimeBone(
     pivotResolvedPath: pivotNode ? getObjectPath(pivotNode) : null,
     tailBinding,
     automaticUpdates: manager.automaticUpdates !== false,
-    enabled: manager.enabled !== false && sourceBone.enabled !== false,
+    enabled: sourceBone.enabled !== false,
     enableLengthLimits: manager.enableLengthLimits !== false,
     enableAngleLimits: manager.enableAngleLimits !== false,
     enableCollision: manager.enableCollision !== false,
@@ -1564,8 +1560,6 @@ function createRuntimeBone(
     initialLocalRotation,
     initialLocalScale: node.scale.clone(),
     skinAnimationLocalRotation: initialLocalRotation.clone(),
-    lastAppliedLocalRotation: initialLocalRotation.clone(),
-    hasAppliedLocalRotation: false,
     boneAxis: boneAxisResolution.axis,
     boneAxisSource: boneAxisResolution.source,
     springLength,
@@ -1879,9 +1873,13 @@ function computeUnityPrefabChildPosition(
   resolution: NodeResolution
 ): RuntimeTailBindingDiagnostic {
   node.updateMatrixWorld(true);
-  const headPosition = node.getWorldPosition(new THREE.Vector3());
-  const right = convertUnityAxisToThree("right").transformDirection(node.matrixWorld);
-  const fallback = headPosition.clone().addScaledVector(right, -0.1);
+  const headPosition = getUnityWorldPosition(node, new THREE.Vector3());
+  const right = transformUnityDirectionToWorld(node, convertUnityAxisToThree("right"));
+  const f = Math.fround;
+  const fallback = new THREE.Vector3(
+    f(headPosition.x - f(right.x * f(0.1))), f(headPosition.y - f(right.y * f(0.1))),
+    f(headPosition.z - f(right.z * f(0.1)))
+  );
   const transform = bone.nodePath
     ? resolvePrefabTransformForPart(graphIndex, bone.nodePath, bone.runtimePartIndex)
     : undefined;
@@ -1909,19 +1907,23 @@ function computeUnityPrefabChildPosition(
       childNames,
       childPaths,
       childSources: validChildren.map((child) => child.source),
-      tailPosition: validChildren[0].node.getWorldPosition(new THREE.Vector3()),
+      tailPosition: getUnityWorldPosition(validChildren[0].node, new THREE.Vector3()),
     };
   }
 
   const averagePosition = new THREE.Vector3();
   let averageDistance = 0;
   for (const child of validChildren) {
-    const childPosition = child.node.getWorldPosition(new THREE.Vector3());
+    const childPosition = getUnityWorldPosition(child.node, new THREE.Vector3());
     averagePosition.add(childPosition);
-    averageDistance += childPosition.distanceTo(headPosition);
+    averagePosition.set(f(averagePosition.x), f(averagePosition.y), f(averagePosition.z));
+    const difference = childPosition.clone().sub(headPosition);
+    difference.set(f(difference.x), f(difference.y), f(difference.z));
+    averageDistance = f(averageDistance + f(difference.length()));
   }
-  averagePosition.multiplyScalar(1 / validChildren.length);
-  averageDistance /= validChildren.length;
+  averagePosition.set(f(averagePosition.x / validChildren.length), f(averagePosition.y / validChildren.length),
+    f(averagePosition.z / validChildren.length));
+  averageDistance = f(averageDistance / validChildren.length);
   const tailPosition = computeUtjAverageChildTailPosition(
     headPosition,
     averagePosition,
@@ -1942,7 +1944,9 @@ export function computeUtjAverageChildTailPosition(
   averageChildPosition: THREE.Vector3,
   averageDistance: number
 ): THREE.Vector3 {
+  const f = Math.fround;
   const direction = averageChildPosition.clone().sub(headPosition);
+  direction.set(f(direction.x), f(direction.y), f(direction.z));
   if (direction.lengthSq() <= 0.00001 * 0.00001) {
     // ComputeChildPosition preserves the average child distance and falls back
     // to Unity Vector3.right when symmetric children cancel each other out.
@@ -1950,9 +1954,11 @@ export function computeUtjAverageChildTailPosition(
     // whole branch visually.
     direction.copy(UNITY_RIGHT_LOCAL);
   } else {
-    direction.normalize();
+    const length = f(direction.length());
+    direction.set(f(direction.x / length), f(direction.y / length), f(direction.z / length));
   }
-  return headPosition.clone().addScaledVector(direction, averageDistance);
+  return new THREE.Vector3(f(headPosition.x + f(direction.x * f(averageDistance))),
+    f(headPosition.y + f(direction.y * f(averageDistance))), f(headPosition.z + f(direction.z * f(averageDistance))));
 }
 
 function collectUnityPrefabTailChildren(
@@ -2487,20 +2493,10 @@ function isBoneAnimated(
   if (names.size === 0) {
     return false;
   }
-  return containsAnimatedBoneName(node.name, names) ||
-    (typeof bone.nodeName === "string" && containsAnimatedBoneName(bone.nodeName, names));
-}
-
-function containsAnimatedBoneName(nodeName: string, animatedBoneNames: ReadonlySet<string>): boolean {
-  if (animatedBoneNames.has(nodeName)) {
-    return true;
-  }
-  for (const animatedBoneName of animatedBoneNames) {
-    if (animatedBoneName.length > 0 && nodeName.includes(animatedBoneName)) {
-      return true;
-    }
-  }
-  return false;
+  // Native UpdateBoneIsAnimatedStates calls ICollection<string>.Contains
+  // with Object.name. A partial match incorrectly suppresses sibling dynamics.
+  return names.has(node.name) ||
+    (typeof bone.nodeName === "string" && names.has(bone.nodeName));
 }
 
 function readStringSet(value: unknown): ReadonlySet<string> {
@@ -2700,7 +2696,7 @@ function resolveRuntimeBoneAxis(
   tailPosition: THREE.Vector3
 ): { axis: THREE.Vector3; source: RuntimeBoneAxisSource } {
   node.updateMatrixWorld(true);
-  const localTipPosition = node.worldToLocal(tailPosition.clone());
+  const localTipPosition = inverseUnityTransformPoint(node, tailPosition.clone());
   const axis = normalizeRuntimeAxis(localTipPosition);
   if (!axis) {
     // Official Initialize falls back to Vector3.right for a degenerate tip; a
@@ -2711,7 +2707,10 @@ function resolveRuntimeBoneAxis(
 }
 
 function normalizeRuntimeAxis(axis: THREE.Vector3): THREE.Vector3 | null {
-  return axis.lengthSq() <= 0.00001 * 0.00001 ? null : axis.clone().normalize();
+  const length = Math.fround(axis.length());
+  return length <= 0.00001 ? null : new THREE.Vector3(
+    Math.fround(axis.x / length), Math.fround(axis.y / length), Math.fround(axis.z / length)
+  );
 }
 
 function readRawNumber(raw: UnknownRecord, key: string, fallback: number): number {
@@ -2821,12 +2820,6 @@ function matrixXDirectionLength(matrix: THREE.Matrix4): number {
   );
 }
 
-function makeNormalDirectionMatrix(matrix: THREE.Matrix4): THREE.Matrix4 {
-  const normalMatrix = matrix.clone();
-  normalMatrix.setPosition(0, 0, 0);
-  return normalMatrix.invert().transpose();
-}
-
 function getObjectDepth(node: THREE.Object3D): number {
   let depth = 0;
   let current: THREE.Object3D | null = node;
@@ -2837,35 +2830,11 @@ function getObjectDepth(node: THREE.Object3D): number {
   return depth;
 }
 
-function lerpQuaternionNormalized(
-  from: THREE.Quaternion,
-  to: THREE.Quaternion,
-  t: number
-): THREE.Quaternion {
-  const amount = THREE.MathUtils.clamp(t, 0, 1);
-  let toX = to.x;
-  let toY = to.y;
-  let toZ = to.z;
-  let toW = to.w;
-  if (from.dot(to) < 0) {
-    toX = -toX;
-    toY = -toY;
-    toZ = -toZ;
-    toW = -toW;
+function isNodeWithin(node: THREE.Object3D, ancestor: THREE.Object3D): boolean {
+  for (let current: THREE.Object3D | null = node; current; current = current.parent) {
+    if (current === ancestor) return true;
   }
-  return new THREE.Quaternion(
-    from.x + (toX - from.x) * amount,
-    from.y + (toY - from.y) * amount,
-    from.z + (toZ - from.z) * amount,
-    from.w + (toW - from.w) * amount
-  ).normalize();
-}
-
-function quaternionsAlmostEqual(a: THREE.Quaternion, b: THREE.Quaternion): boolean {
-  return Math.abs(a.x - b.x) < 0.000001 &&
-    Math.abs(a.y - b.y) < 0.000001 &&
-    Math.abs(a.z - b.z) < 0.000001 &&
-    Math.abs(a.w - b.w) < 0.000001;
+  return false;
 }
 
 /** Pure runtime helpers exposed only through the package's internal entry. */
@@ -2906,7 +2875,6 @@ export const unityPrefabSpringRuntimeInternals = {
   angleLimitFromSource,
   getEffectiveDynamicRatio,
   isBoneAnimated,
-  containsAnimatedBoneName,
   readStringSet,
   calcUtjManagerTimeStep,
   readRuntimeUnitySetup0414,
@@ -2932,8 +2900,5 @@ export const unityPrefabSpringRuntimeInternals = {
   worldScaleX,
   matrixWorldXScale,
   matrixXDirectionLength,
-  makeNormalDirectionMatrix,
   getObjectDepth,
-  lerpQuaternionNormalized,
-  quaternionsAlmostEqual,
 };

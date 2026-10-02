@@ -10,7 +10,7 @@ namespace PjskBundle2Parts.Services;
 
 public sealed class CompiledPartCache
 {
-    private const string Schema = "0415-compiled-part-9";
+    private const string Schema = "0415-compiled-part-10";
     private static readonly JsonSerializerOptions RuntimeJsonOptions = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -96,7 +96,7 @@ public sealed class CompiledPartCache
             restoredKtx2 ? Array.Empty<string>() : cached.TextureHashes
         );
 
-        delta["version"] = "0415-part-delta-3";
+        delta["version"] = "0415-part-delta-4";
         delta["corePath"] = coreRelativePath;
         delta["part"] = JsonSerializer.SerializeToNode(BuildIdentity(entry), RuntimeJsonOptions);
         var logicalBundleName = BundleDependencyIndex.LogicalName(assetRoot, input.ResolvedBundlePath);

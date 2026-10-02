@@ -146,9 +146,12 @@ public sealed record PjskUnityRuntimeNativeSubmesh(
 public sealed record PjskUnityRuntimeNativeMorphTarget(
     [property: JsonPropertyName("name")] string Name,
     [property: JsonPropertyName("indices")] IReadOnlyList<int> Indices,
+    [property: JsonPropertyName("hasPositionDeltas")] bool HasPositionDeltas,
     [property: JsonPropertyName("positionDeltas")] IReadOnlyList<float> PositionDeltas,
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-    [property: JsonPropertyName("normalDeltas")] IReadOnlyList<float>? NormalDeltas
+    [property: JsonPropertyName("hasNormalDeltas")] bool HasNormalDeltas,
+    [property: JsonPropertyName("normalDeltas")] IReadOnlyList<float> NormalDeltas,
+    [property: JsonPropertyName("hasTangentDeltas")] bool HasTangentDeltas,
+    [property: JsonPropertyName("tangentDeltas")] IReadOnlyList<float> TangentDeltas
 );
 
 public sealed record PjskUnityRuntimeCoordinateSpace(

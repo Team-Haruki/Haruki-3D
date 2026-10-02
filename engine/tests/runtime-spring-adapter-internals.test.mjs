@@ -267,14 +267,11 @@ test("miscellaneous spring helpers normalize serialized values and quaternion ma
   assert.deepEqual(runtime.angleLimitFromSource({ active: true, min: -2, max: 3 }), { active: true, min: -2, max: 3 });
   assert.equal(runtime.readStringSet("bad").size, 0);
   assert.deepEqual([...runtime.readStringSet(["Hair", 1, "", "Hair"])], ["Hair", ""]);
-  assert.equal(runtime.containsAnimatedBoneName("LongHairA", new Set(["Hair"])), true);
-  assert.equal(runtime.containsAnimatedBoneName("Hair", new Set(["Hair"])), true);
-  assert.equal(runtime.containsAnimatedBoneName("Bone", new Set(["", "Hair"])), false);
   const node = new THREE.Group();
   node.name = "LongHairA";
   assert.equal(runtime.isBoneAnimated({}, node, { animatedBoneNames: [] }), false);
-  assert.equal(runtime.isBoneAnimated({}, node, { animatedBoneNames: ["Hair"] }), true);
-  assert.equal(runtime.isBoneAnimated({ nodeName: "HairSource" }, new THREE.Group(), { animatedBoneNames: ["Hair"] }), true);
+  assert.equal(runtime.isBoneAnimated({}, node, { animatedBoneNames: ["Hair"] }), false);
+  assert.equal(runtime.isBoneAnimated({ nodeName: "HairSource" }, new THREE.Group(), { animatedBoneNames: ["Hair"] }), false);
   assert.equal(runtime.getEffectiveDynamicRatio({ isAnimated: false, dynamicRatio: 0.25 }), 1);
   assert.equal(runtime.getEffectiveDynamicRatio({ isAnimated: true, dynamicRatio: 0.25 }), 0.25);
   assert.equal(runtime.calcUtjManagerTimeStep(0.02, 50, 1), 0.02);
@@ -324,7 +321,6 @@ test("miscellaneous spring helpers normalize serialized values and quaternion ma
   assert.equal(runtime.worldScaleX(scaleNode), 2);
   assert.equal(runtime.matrixWorldXScale(scaleNode), 2);
   assert.equal(runtime.matrixXDirectionLength(new THREE.Matrix4().makeScale(3, 4, 5)), 3);
-  assert.ok(runtime.makeNormalDirectionMatrix(new THREE.Matrix4().makeScale(2, 4, 8)).elements.every(Number.isFinite));
   assert.equal(runtime.sourceColliderOrder({ shape: { sphere: {} } }), 0);
   assert.equal(runtime.sourceColliderOrder({ shape: { capsule: {} } }), 1);
   assert.equal(runtime.sourceColliderOrder({ shape: { panel: {} } }), 2);
@@ -332,10 +328,6 @@ test("miscellaneous spring helpers normalize serialized values and quaternion ma
   const from = new THREE.Quaternion();
   const to = new THREE.Quaternion().setFromAxisAngle(v(0, 1, 0), Math.PI / 2);
   const opposite = new THREE.Quaternion(-to.x, -to.y, -to.z, -to.w);
-  assert.ok(runtime.lerpQuaternionNormalized(from, to, 2).angleTo(to) < 1e-12);
-  assert.ok(runtime.lerpQuaternionNormalized(from, opposite, 1).angleTo(to) < 1e-12);
-  assert.equal(runtime.quaternionsAlmostEqual(to, to.clone()), true);
-  assert.equal(runtime.quaternionsAlmostEqual(to, from), false);
 });
 
 test("debug offset selection supports all, empty, and multi-field substring filters", () => {
