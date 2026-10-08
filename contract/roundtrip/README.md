@@ -77,6 +77,9 @@ runtime is present. `exporter/global.json` (SDK 8 pin) only applies beneath
 The `.msgpack.br` format (extension type 42, its payload layouts, the
 schema-scoped path lists, and the size thresholds) is a contract between the
 exporter and the engine. Any change to it must land as **one PR** that updates
-the format documentation (`exporter/README.md`), the exporter writer, the
-engine decoder, and this round-trip test (`fixture-manifest.json` +
-`decode.test.mjs`) together — and `run.sh` must pass.
+the authoritative format specification ([`contract/SPEC.md`](../SPEC.md), see
+its section 6), the exporter writer, the engine decoder, and this round-trip
+test (`fixture-manifest.json` + `decode.test.mjs`) together — and `run.sh` must
+pass, as must the [parity checks](../parity/README.md) (`contract/parity/run.sh`),
+which CI runs in the same job. Update `exporter/README.md` too where it
+describes the changed behaviour.

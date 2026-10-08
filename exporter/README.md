@@ -85,8 +85,10 @@ so explicit morph channels and preserved skin slots reach existing outputs.
 Publish the Linux x64 runtime directory used by Haruki-Sekai-Asset-Updater external mounts:
 
 ```bash
-scripts/publish-linux-x64.sh /data/xy/haruki-3d-exporter-runtime/linux-x64
+scripts/publish-linux-x64.sh <runtime-output-dir>
 ```
+
+Without an argument the script publishes to `/tmp/haruki-3d-exporter-linux-x64`.
 
 The output directory contains a self-contained `Haruki-3D-Exporter` executable and its AssetStudio runtime dependencies.
 Mount that directory into updater deployments that enable `regions.<region>.export.haruki_3d`.
@@ -260,6 +262,10 @@ mirror:
 This writes:
 
 - `parts/part-registry.msgpack.br` for body, hair, and head/head_optional rows
+- `parts/by-role/<characterId>/<unit>/part-registry.msgpack.br` as the
+  role-scoped part registry; this is the registry the engine loads
+- `parts/part-source-map.msgpack.br` mapping resolved source bundles to their
+  shared `parts/_sources/...` package paths, for audits
 - `parts/part-registry-compact.msgpack.br` as the field-name-free global
   registry consumed by Cloud
 - `parts/head-hair-compatibility.msgpack.br` for custom-mode head/hair rules
@@ -292,6 +298,8 @@ masterdata `dataVersion` as `masterVersion` and skips unchanged refreshes.
 Registry generation does not scan the bundle mirror for every row. Part entries
 therefore use `status: "planned"` when masterdata can produce a deterministic
 bundle path, and `status: "missing"` only when required masterdata is absent.
+Head-optional rows that represent the official empty accessory slot use
+`status: "empty"`; they are selectable but never loaded as packages.
 Single part export remains responsible for validating that the planned
 bundle exists and can be opened.
 
@@ -368,9 +376,12 @@ adds those exact bytes to the same CAS. Runtime references are validated before
 the region-local PNG is removed. UASTC prioritizes render fidelity and GPU-ready
 upload; with a full mip chain it is not guaranteed to be smaller than PNG on disk.
 
-Runtime metadata uses direct object-to-MessagePack serialization and Brotli quality
-6. It avoids the former JSON UTF-8 and DOM intermediate while retaining a good
-size/speed balance.
+Runtime metadata uses direct object-to-MessagePack serialization, which avoids the
+former JSON UTF-8 and DOM intermediate. Part, role, motion, and role-catalog
+documents are compressed at Brotli quality 6. All costume registries (the full,
+by-role, and compact part registries, the part source map, the head/hair
+compatibility files, and card unlocks) use quality 1 to keep registry refreshes
+fast.
 
 Large arrays on the explicit native-mesh and Unity-motion
 schemas use runtime extension type `42`: float data is little-endian float32 and

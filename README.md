@@ -5,7 +5,9 @@ turns character and costume Unity AssetBundles into runtime packages, and a
 browser engine for character assembly, wardrobe changes, and preview capture.
 
 - `exporter/` — C# / .NET 8 offline converter. Reads Unity AssetBundles with
-  the Team-Haruki AssetStudio fork and emits the Brotli-compressed MessagePack
+  the `sekai-modified` branch of
+  [`seiunx-dev/AssetStudio`](https://github.com/seiunx-dev/AssetStudio) (an
+  AssetStudioMod fork) and emits the Brotli-compressed MessagePack
   (`.msgpack.br`) runtime package format.
 - `engine/` — TypeScript + Three.js CostumeShop runtime and persistent capture
   service (npm package `haruki-3d-engine`). Loads the exported runtime packages.
@@ -57,7 +59,9 @@ cd exporter
   and `contract/parity/run.sh`), `Sonar` (`scripts/ci/sonar-dotnet.sh`, reusing
   the engine's lcov), and the two images (`docker.yml`, in parallel with the
   tests; `:sha-*` right away, `:main` only after `CI OK`). The aggregate job
-  **`CI OK`** is the only required status check.
+  **`CI OK`** fails if any job above failed or was cancelled; the image
+  `:main` tags and the release gate key off it. `main` currently has no branch
+  protection, so no status check is enforced on merges.
 - `release.yml`: an `engine-v<version>` tag must match `engine/package.json`;
   an `exporter-v*` tag takes its version from the tag. The gate waits for the
   tagged commit's `CI OK`, then the `main` image of that commit is re-tagged
