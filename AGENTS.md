@@ -189,5 +189,7 @@ npm ci --prefix engine --ignore-scripts
 - The AssetStudio revision is pinned in two places,
   `exporter/scripts/prepare-assetstudio.sh` and the `exporter/Dockerfile` build
   args. Change them together. The CI cache key hashes the script.
-- Shared and compiled content stores rely on hard links. The output directory
-  and `--shared-content-store` must be on the same filesystem.
+- The shared content store (`--shared-content-store`) hard-links texture and
+  part-runtime bytes, so the output directory and the shared store must be on
+  the same filesystem. `--compiled-content-store` only takes effect when the
+  shared store is also set.
