@@ -75,7 +75,7 @@ contract/parity/run.sh
 
 The script resolves paths from its own location: it builds and runs the emit
 harness, bundles the engine module, then runs the Node test; it exits nonzero
-on any failure. It needs the `dotnet` CLI (any SDK able to target `net8.0` —
+on any failure. It needs the `dotnet` CLI (any SDK able to target `net9.0` —
 the emit project uses `<RollForward>LatestMajor</RollForward>` like the
 round-trip harness; `exporter/global.json` only applies beneath `exporter/`),
 Node, and `engine/node_modules` installed (`npm ci` in `engine/`).

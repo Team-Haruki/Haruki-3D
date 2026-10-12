@@ -47,7 +47,7 @@ case "$cmd" in
       -p:BaseOutputPath="${PJSK_DOTNET_BIN:-/tmp/haruki-3d-exporter-bin}/" \
       -p:RestoreConfigFile="${HARUKI_NUGET_CONFIG:-${REPO_ROOT}/NuGet.Config}" \
       >/dev/null
-    exec "$DOTNET_BIN" "${PJSK_DOTNET_BIN:-/tmp/haruki-3d-exporter-bin}/Debug/net8.0/Haruki-3D-Exporter.dll" \
+    exec "$DOTNET_BIN" "${PJSK_DOTNET_BIN:-/tmp/haruki-3d-exporter-bin}/Debug/net9.0/Haruki-3D-Exporter.dll" \
       "${app_args[@]}"
     ;;
   *)

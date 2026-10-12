@@ -61,15 +61,15 @@ contract/roundtrip/run.sh
 
 The script resolves paths from its own location, builds and runs the emit
 harness, then runs the Node test; it exits nonzero on any failure. It needs the
-`dotnet` CLI (any SDK able to target `net8.0`), Node, and
+`dotnet` CLI (any SDK able to target `net9.0`), Node, and
 `engine/node_modules` installed (`npm ci` in `engine/`) for
 `@msgpack/msgpack`.
 
-The emit project targets `net8.0` — the same target framework as the exporter —
+The emit project targets `net9.0` — the same target framework as the exporter —
 with `<RollForward>LatestMajor</RollForward>` so machines that only carry a
-newer SDK/runtime (dev machines without an 8.x SDK; CI installs SDK 8) can
+newer SDK/runtime (dev machines without a 9.x SDK; CI installs SDK 9) can
 still build it against the NuGet reference packs and run it on whatever
-runtime is present. `exporter/global.json` (SDK 8 pin) only applies beneath
+runtime is present. `exporter/global.json` (SDK 9 pin) only applies beneath
 `exporter/` and does not affect this project.
 
 ## Contract-change rule

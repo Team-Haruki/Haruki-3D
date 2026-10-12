@@ -4,7 +4,7 @@ Monorepo for the Project SEKAI Costume pipeline: an offline converter that
 turns character and costume Unity AssetBundles into runtime packages, and a
 browser engine for character assembly, wardrobe changes, and preview capture.
 
-- `exporter/` — C# / .NET 8 offline converter. Reads Unity AssetBundles with
+- `exporter/` — C# / .NET 9 offline converter. Reads Unity AssetBundles with
   the Team-Haruki AssetStudio fork and emits the Brotli-compressed MessagePack
   (`.msgpack.br`) runtime package format.
 - `engine/` — TypeScript + Three.js CostumeShop runtime and persistent capture
