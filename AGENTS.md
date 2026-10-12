@@ -14,7 +14,7 @@ costume bundles + masterdata -> exporter -> .msgpack.br packages -> engine (Cost
 
 | Path | What it is |
 |---|---|
-| `exporter/` | C# / .NET 8 offline converter (`Haruki-3D-Exporter.csproj`). Reads Unity AssetBundles through AssetStudio (`seiunx-dev/AssetStudio`, branch `sekai-modified`, pinned revision) and writes Brotli-compressed MessagePack runtime packages. |
+| `exporter/` | C# / .NET 9 offline converter (`Haruki-3D-Exporter.csproj`). Reads Unity AssetBundles through AssetStudio (`seiunx-dev/AssetStudio`, branch `sekai-modified`, pinned revision) and writes Brotli-compressed MessagePack runtime packages. |
 | `engine/` | TypeScript + Three.js browser runtime, npm package `haruki-3d-engine` (private), plus the persistent HTTP capture service `capture-server.mjs`. |
 | `contract/` | `SPEC.md`, the authoritative package format specification, and two cross-language suites: `roundtrip/` (ext-42 wire format) and `parity/` (path formulas, role identity table, registry rows). |
 | `scripts/ci/` | `sonar-dotnet.sh`, the SonarQube Cloud scan used by CI. |
@@ -68,8 +68,8 @@ Subproject docs: [README.md](README.md), [engine/README.md](engine/README.md),
 
 ## Build, test, run
 
-CI is the reference. Use Node 22 and .NET SDK 8 (`exporter/global.json` pins
-8.0.421 with `rollForward: latestFeature`).
+CI is the reference. Use Node 25 and .NET SDK 9 (`exporter/global.json` pins
+9.0.100 with `rollForward: latestFeature`).
 
 ### engine (run from `engine/`)
 

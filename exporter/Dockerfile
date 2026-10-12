@@ -1,4 +1,4 @@
-FROM mcr.microsoft.com/dotnet/sdk:8.0-bookworm-slim AS build
+FROM mcr.microsoft.com/dotnet/sdk:9.0-bookworm-slim AS build
 
 ARG ASSETSTUDIO_REPOSITORY=https://github.com/seiunx-dev/AssetStudio.git
 ARG ASSETSTUDIO_BRANCH=sekai-modified
@@ -37,7 +37,7 @@ RUN dotnet publish -c Release -r linux-x64 -o /app/exporter \
 FROM rust:1-bookworm AS oxipng
 RUN cargo install oxipng --version 9.1.5 --locked
 
-FROM mcr.microsoft.com/dotnet/runtime-deps:8.0-bookworm-slim
+FROM mcr.microsoft.com/dotnet/runtime-deps:9.0-bookworm-slim
 
 ARG KTX_VERSION=4.4.2
 ARG KTX_DEB_SHA256=ca635ed489d8bf54fac8d7687056c651193de0740830a7738cc034adc63e3027
