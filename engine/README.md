@@ -82,19 +82,20 @@ The production capture path is the persistent HTTP service:
 node capture-server.mjs
 ```
 
-Useful capture request fields:
+Capture defaults come from the config file (see Configuration below). Useful
+optional fields in the JSON body of `POST /capture`:
 
-- `--config <json>` loads capture defaults from a JSON config file.
-- `--phase <0..1>` seeks the selected loop phase.
-- `--scale <1..2>` controls browser UI presentation density; the CostumeShop
+- `phase` (`0..1`) seeks the selected loop phase.
+- `scale` (`1..2`) controls browser UI presentation density; the CostumeShop
   WebGL backing buffer remains capped at the official 1024-pixel target.
-- `--warmup-frames <n>` steps the runtime at 60fps before capture.
-- `--warmup-mode animation` advances animation and runtime.
-- `--warmup-mode runtime` freezes animation and only settles runtime systems.
-- `--yaw <0|45|-45|90|-90|180>` sets character yaw.
-- `--spring-runtime-mode unity-prefab` enables the Unity Prefab SpringBone runtime.
+- `warmupFrames` steps the runtime at 60fps before capture.
+- `warmupMode: "animation"` advances animation and runtime.
+- `warmupMode: "runtime"` freezes animation and only settles runtime systems.
+- `characterYawMode` (`"0"`, `"45"`, `"-45"`, `"90"`, `"-90"`, `"180"`, or
+  `"face-camera"`) sets character yaw.
+- `springRuntimeMode` (`"unity-prefab"` or `"off"`) selects the SpringBone runtime.
 
-SpringBone defaults to `unity-prefab` in current engine and capture defaults. Use `springRuntimeMode: "off"` or the capture flag when a caller needs a static pose.
+SpringBone defaults to `unity-prefab` in current engine and capture defaults. Use `springRuntimeMode: "off"` when a caller needs a static pose.
 
 ## Configuration
 
@@ -111,10 +112,10 @@ The example file is safe for public use and should not contain machine-specific 
 
 For the HTTP service, set `HARUKI_ENGINE_CONFIG=<json>` or place `haruki-3d-engine.config.json` in the working directory. Server environment variables such as `HARUKI_RUNTIME_ROOT`, `HARUKI_CAPTURE_OUTPUT_DIR`, `HARUKI_CAPTURE_SCALE`, `HARUKI_CAPTURE_TIMEOUT_MS`, `HARUKI_CAPTURE_IDLE_SHUTDOWN`, `HARUKI_SERVER_HOST`, `CHROMIUM`, and `PORT` override config values.
 
-Current product 3D previews keep the CostumeShop face unshadowed and disable
-FaceSDF by default. Use `capture.faceSdfEnabled: true`,
-`HARUKI_CAPTURE_FACE_SDF_ENABLED=true`, or a per-request
-`faceSdfEnabled: true` only for explicit FaceSDF research captures.
+FaceSDF face shading is enabled by default in both the engine and the capture
+service. Set `capture.faceSdfEnabled: false`,
+`HARUKI_CAPTURE_FACE_SDF_ENABLED=false`, or a per-request
+`faceSdfEnabled: false` to turn it off.
 
 ## Runtime Behavior
 
@@ -205,6 +206,5 @@ npm run build
 Current constraints:
 
 - Browser code should load converted packages only, not raw bundles.
-- `character/character.vrm` is a transport container with PJSK custom extras, not a guarantee of generic VRM visual parity.
 - Exact rendering depends on engine shaders and `PJSK_sekai_runtime`.
 - The public API should remain usable by multiple frontends without requiring direct Three.js object mutation.

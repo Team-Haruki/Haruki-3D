@@ -25,17 +25,17 @@ RFC-2119 keywords (MUST, MUST NOT, MAY) are used with their usual meaning.
 | `parts/by-role/<characterId>/<unit>/part-registry.msgpack.br` | `exporter/Services/CostumeRegistryExporter.cs` (`WriteScopedPartRegistryIndexes`) | Engine (`runtimePackageLoader.ts:112-118`). |
 | `parts/part-registry.msgpack.br` | `CostumeRegistryExporter.Export` | Audits / Haruki Cloud. Not read by the engine. |
 | `parts/part-registry-compact.msgpack.br` | `CostumeRegistryExporter.WriteCompactPartRegistry` | Haruki Cloud (field-name-free rows; `exporter/README.md`). |
-| `parts/part-source-map.msgpack.br` | `CostumeRegistryExporter.Export` (line 37) | Audits only; no runtime consumer. Not listed in `exporter/README.md` (see Issues). |
+| `parts/part-source-map.msgpack.br` | `CostumeRegistryExporter.Export` (line 38) | Audits only; no runtime consumer. |
 | `parts/head-hair-compatibility.msgpack.br` | `CostumeRegistryExporter.Export` | Audits; full rule set (`not_available` + `default_hint`). |
 | `parts/head-hair-compatibility-compact.msgpack.br` | `CostumeRegistryExporter.WriteCompactHeadHairCompatibility` | Haruki Cloud. |
 | `parts/compat/by-unit/<unit>/head-hair-compatibility.msgpack.br` | `CostumeRegistryExporter.WriteScopedHeadHairCompatibilityIndexes` — rules filtered to `state == "not_available"` only | Engine, lazily on first custom selection (`runtimePackageLoader.ts` `ensureCompatibilityForSelection`). |
 | `parts/card-costume-unlocks.msgpack.br` | `CostumeRegistryExporter.Export` | Haruki Cloud (card unlock/source metadata). |
-| `parts/<partType>/<costume3dId>/<unit>/part-runtime.msgpack.br` | `exporter/Services/PartPackageExporter.cs` (delta package; path formula `BuildPackagePath` in `CostumeRegistryExporter.cs:807-810`) | Engine (`runtimePackageLoader.ts` `fetchPartRuntime`). |
+| `parts/<partType>/<costume3dId>/<unit>/part-runtime.msgpack.br` | `exporter/Services/PartPackageExporter.cs` (delta package; path formula `BuildPackagePath` in `CostumeRegistryExporter.cs:861-864`) | Engine (`runtimePackageLoader.ts` `fetchPartRuntime`). |
 | `parts/_sources/<partType>/<sourceKey>/part-runtime.msgpack.br` | `CostumeRegistryExporter.BuildSourceIdentity` aliases resolved source bundles by SHA-256 of part type, base bundle path, and color-variation bundle path; `PartPackageExporter` writes the delta. | Engine follows the registry's `packagePath`. |
-| `parts/_cores/<partType>/<hash>/part-runtime-core.msgpack.br` | `PartPackageExporter.cs:505-527`; `<hash>` = lowercase SHA-256 hex of the part's shard key (`BaseSourceKey ?? SourceKey ?? PackagePath`, `ShardKey`/`BuildCoreKey`, lines 246-256) | Engine, fetched via the delta's `corePath` (`runtimePackageLoader.ts:316-322`). |
-| `parts/<partType>/<costume3dId>/<unit>/part-export-error.json` | `PartPackageExporter.cs:148-163` on a failed export; deleted on success | Operations only. |
-| `roles/<characterId>/<unit>/role-runtime.msgpack.br` | `exporter/Services/RoleRuntimeExporter.cs` (`BuildRoleRuntimeDirectory`, line 252-255) | Engine (`runtimePackageLoader.ts` `loadRoleRuntimePackages` / `ensureRoleRuntimePackage`). |
-| `roles/<characterId>/<unit>/motion/unity-motion.msgpack.br` | `exporter/Services/MotionPackageExporter.cs` via `RoleRuntimeExporter.cs:156,183-187` | Engine, resolved from the role runtime's `motionPackage.unityMotionJson`, which is a path relative to the role-runtime file's directory (`RoleRuntimeExporter.cs` `RewriteMotionPackageForRoleDirectory`; `runtimePackageLoader.ts` `normalizeRoleRuntimePackage`/`resolveSiblingRuntimePath`). |
+| `parts/_cores/<partType>/<hash>/part-runtime-core.msgpack.br` | `PartPackageExporter.cs:518-540`; `<hash>` = lowercase SHA-256 hex of the part's shard key (`BaseSourceKey ?? SourceKey ?? PackagePath`, `ShardKey`/`BuildCoreKey`, lines 259-269) | Engine, fetched via the delta's `corePath` (`runtimePackageLoader.ts:316-322`). |
+| `parts/<partType>/<costume3dId>/<unit>/part-export-error.json` | `PartPackageExporter.cs:159-183` on a failed export; deleted on success | Operations only. |
+| `roles/<characterId>/<unit>/role-runtime.msgpack.br` | `exporter/Services/RoleRuntimeExporter.cs` (`BuildRoleRuntimeDirectory`, lines 246-249) | Engine (`runtimePackageLoader.ts` `loadRoleRuntimePackages` / `ensureRoleRuntimePackage`). |
+| `roles/<characterId>/<unit>/motion/unity-motion.msgpack.br` | `exporter/Services/MotionPackageExporter.cs` via `RoleRuntimeExporter.cs:150,177-181` | Engine, resolved from the role runtime's `motionPackage.unityMotionJson`, which is a path relative to the role-runtime file's directory (`RoleRuntimeExporter.cs` `RewriteMotionPackageForRoleDirectory`; `runtimePackageLoader.ts` `normalizeRoleRuntimePackage`/`resolveSiblingRuntimePath`). |
 | `_texture_store/sha256/<hh>/<sha256>.png` / `.ktx2` | `exporter/Services/RuntimeTextureStore.cs` (PNG), `exporter/Services/TextureCompactor.cs` (KTX2 / optimized PNG); `<hh>` = first two hex chars of the hash | Engine, via texture references inside part packages (section 3). |
 | `content-addressed-store-state.json`, `content-addressed-store-report.json` | `exporter/Services/ContentAddressedStore.cs` | Exporter-internal incremental state / operations report. |
 | `texture-store-optimization-report.json`, `ktx2-transcode-report.json` | `TextureCompactor.cs` | Operations. |
@@ -53,7 +53,7 @@ hash and `TextureCompactor.Ktx2EncoderVersion` (`"uastc-q2-zstd5-mip-v1"`).
 ### URL resolution rules (consumer)
 
 - Every runtime-metadata URL MUST end in `.msgpack.br`; the engine rejects anything else
-  (`runtimePackageLoader.ts:463-465`). There is no JSON or gzip transport.
+  (`runtimePackageLoader.ts:465-468`). There is no JSON or gzip transport.
 - Relative package paths are resolved against `assetBaseUrl`; `.`/`..` segments are rejected and
   each segment is URL-encoded (`resolveRuntimePackageUrl`).
 - Paths inside package payloads that begin with `/` (e.g. `/_texture_store/...`) are
@@ -64,7 +64,7 @@ hash and `TextureCompactor.Ktx2EncoderVersion` (`"uastc-q2-zstd5-mip-v1"`).
 - Servers MAY send an `x-haruki-file-version` response header; when present the engine reuses its
   parsed copy of by-role registry/catalog, per-unit compatibility, role-runtime, and
   `motion/unity-motion` files while the header value is unchanged
-  (`runtimePackageLoader.ts:488-521`). The value MUST change whenever the file bytes change.
+  (`runtimePackageLoader.ts:492-526`). The value MUST change whenever the file bytes change.
 
 ---
 
@@ -75,16 +75,19 @@ hash and `TextureCompactor.Ktx2EncoderVersion` (`"uastc-q2-zstd5-mip-v1"`).
 Every `*.msgpack.br` file is exactly one MessagePack document compressed with Brotli
 (`exporter/Services/RuntimeJsonWriter.cs` `WriteMessagePackBrotli`):
 
-- Brotli quality **6** (`RuntimeJsonWriter.DefaultBrotliQuality`), window 22. The two compact
-  registries are written at quality 1 (`CompressionLevel.Fastest` →
-  `RuntimeJsonWriter.BrotliQuality`; `CostumeRegistryExporter.cs:74,97`). Consumers MUST NOT depend
-  on quality; any valid Brotli stream is acceptable.
+- Window 22. Part, role, motion, and role-catalog documents use Brotli quality **6**
+  (`RuntimeJsonWriter.DefaultBrotliQuality`). Every costume registry written by
+  `CostumeRegistryExporter` — full and by-role part registries, part source map, full and per-unit
+  head/hair compatibility, card unlocks, and the two compact registries — uses quality 1
+  (`CompressionLevel.Fastest` → `RuntimeJsonWriter.BrotliQuality`; `CostumeRegistryExporter.cs:75,98`
+  and `WriteJson`, line 1374). Consumers MUST NOT depend on quality; any valid Brotli stream is
+  acceptable.
 - Files are written atomically (temp file + rename, `WriteAllBytesAtomic`).
 - Map keys are the camelCase JSON property names declared with `JsonPropertyName` on the model
   records (`exporter/Models/*.cs`). Null suppression follows the models' `JsonIgnore` conditions.
 - Scalar `float`/`double`/`decimal` values are emitted as MessagePack float64 (`0xcb`); integers
   use the shortest signed/unsigned form; `byte[]` is emitted as a base64 **string**; the msgpack
-  `bin` family is never produced (`RuntimeJsonWriter.cs:209-213,410-450,660-738`).
+  `bin` family is never produced (`RuntimeJsonWriter.cs:251-252,400-440,658-737`).
 - The engine decompresses with Brotli WASM and decodes with `@msgpack/msgpack` plus the extension
   codec below (`engine/src/runtime/runtimeMessagePackDecodeCore.ts`,
   `engine/src/runtime/runtimeMessagePackDecoder.ts`).
@@ -110,7 +113,7 @@ offset 1 .. end : packed element data
   (`runtime-binary-codec.mjs:18-39`). There is no explicit count field.
 - The producer emits the ext header as `ext8`/`ext16`/`ext32` (`0xc7`/`0xc8`/`0xc9`) selected by
   payload length, followed by the type byte 42 (`RuntimeJsonWriter.cs` `WriteExtension`,
-  lines 578-597). `fixext` forms are never produced (the minimum payload is 33 bytes). The
+  lines 576-595). `fixext` forms are never produced (the minimum payload is 33 bytes). The
   consumer, via `@msgpack/msgpack`, accepts any well-formed ext header of type 42.
 - The decoder materializes kind 1/2/3 as `Float32Array`/`Uint16Array`/`Uint32Array`; consumers of
   these properties MUST accept `number[] | Float32Array | Uint16Array | Uint32Array`
@@ -118,9 +121,9 @@ offset 1 .. end : packed element data
 
 **When the producer emits ext 42.** Only when serializing with an explicit schema —
 `RuntimeBinaryArraySchema.PartRuntime` (part core/delta packages and their rewrites:
-`PartPackageExporter.cs:2068-2075`, `TextureCompactor.cs:589,978`, `CompiledPartCache.cs:164`) or
-`RuntimeBinaryArraySchema.UnityMotion` (`MotionPackageExporter.cs:151,675`) — and only for
-properties whose **path** matches the schema's allow-list (`RuntimeJsonWriter.cs:144-170`):
+`PartPackageExporter.cs:2135-2140`, `TextureCompactor.cs:642,965`, `CompiledPartCache.cs:126`) or
+`RuntimeBinaryArraySchema.UnityMotion` (`MotionPackageExporter.cs:156,714`) — and only for
+properties whose **path** matches the schema's allow-list (`RuntimeJsonWriter.cs:144-171`):
 
 | Schema | Element kind | Property paths |
 |---|---|---|
@@ -129,7 +132,7 @@ properties whose **path** matches the schema's allow-list (`RuntimeJsonWriter.cs
 | UnityMotion | float32 (1) | `clips.tracks.times`, `clips.tracks.values` |
 
 Path semantics: the path is the dot-joined chain of map property names from the document root;
-**traversing an array does not append a segment** (`RuntimeJsonWriter.cs:266,318,341,467,480`), so
+**traversing an array does not append a segment** (`RuntimeJsonWriter.cs:220,317,340,457`), so
 the rule applies to every element of an array of objects at the matching chain (e.g. each mesh in
 `nativeMeshes.meshes[]`).
 
@@ -150,21 +153,21 @@ produce (it additionally accepts empty and sub-threshold payloads of any kind). 
 disagreement exists between `RuntimeJsonWriter.cs` and `runtime-binary-codec.mjs` as of this
 writing. One producer-internal asymmetry is documented for maintainers: on index paths the
 object-graph encoder throws if a value is not uint32-representable (`Convert.ToUInt32`,
-`RuntimeJsonWriter.cs:385`), while the `JsonElement` encoder silently falls back to a plain array
-(`TryGetUInt32` failure, line 552-555). Both outcomes are valid on the wire.
+`RuntimeJsonWriter.cs:394`), while the `JsonElement` encoder silently falls back to a plain array
+(`TryGetUInt32` failure, line 550). Both outcomes are valid on the wire.
 
 ### 2.3 Document version markers
 
 | Document | Version value | Producer | Consumer check |
 |---|---|---|---|
-| Runtime role catalog | `version: 4` (int) | `RuntimeRoleCatalogExporter.cs:8` | Engine accepts 2, 3, 4; fields `skinColors` (v3+) and `characterHeightMeters` (v4+) are then mandatory (`runtimePackageLoader.ts:365-408`). |
-| Part registry | `version: 2` | `CostumeRegistryExporter.cs:273` | Not checked by the engine. |
-| Head/hair compatibility, card unlocks, part source map | `version: 1` | `CostumeRegistryExporter.cs:561,650,735` | Not checked by the engine. |
-| Compact registries | leading array element `1` (`CompactRegistrySchemaVersion`) | `CostumeRegistryExporter.cs:12,72,95` | Haruki Cloud. |
+| Runtime role catalog | `version: 4` (int) | `RuntimeRoleCatalogExporter.cs:8` | Engine accepts 2, 3, 4; fields `skinColors` (v3+) and `characterHeightMeters` (v4+) are then mandatory (`runtimePackageLoader.ts:372-416`). |
+| Part registry | `version: 2` | `CostumeRegistryExporter.cs:256` | Not checked by the engine. |
+| Head/hair compatibility, card unlocks, part source map | `version: 1` | `CostumeRegistryExporter.cs:615,704,789` | Not checked by the engine. |
+| Compact registries | leading array element `1` (`CompactRegistrySchemaVersion`) | `CostumeRegistryExporter.cs:13,73,96` | Haruki Cloud. |
 | Part delta | `version: "0415-part-delta-4"`, `corePath` required | `PartPackageExporter.cs` | Engine requires a `.msgpack.br` core path and validates the reconstructed mesh payload; the exporter also validates the delta version before reusing output. |
 | Part core | `version: "0415-part-core-4"` | `PartPackageExporter.cs` | Exporter validates the core version for every part before skipping a rebuild. |
-| Native mesh set (inside core) | `version: "0414"` | `exporter/Services/UnityRuntimeNativeMeshExporter.cs:18,72` | Engine requires `"0414"`/`414` (`engine/src/engine/unityPrefabRuntime.ts:230-247`). |
-| Role runtime | `version: "0414-role-1"` | `RoleRuntimeExporter.cs:205` | Not checked by the engine. |
+| Native mesh set (inside core) | `version: "0414"` | `exporter/Services/UnityRuntimeNativeMeshExporter.cs:18,76` | Engine requires `"0414"`/`414` (`engine/src/engine/unityPrefabRuntime.ts:241-258`). |
+| Role runtime | `version: "0414-role-1"` | `RoleRuntimeExporter.cs:199` | Not checked by the engine. |
 
 ---
 
@@ -179,29 +182,29 @@ object-graph encoder throws if a value is not uint32-representable (`Convert.ToU
   `"/_texture_store/sha256/<hh>/<hash>.png"` (return value of `RuntimeTextureStore.StorePng`) or
   `".ktx2"`. Referenced properties are the material-slot texture fields `mainTex`, `shadowTex`,
   `valueTex`, `faceShadowTex`, the `textureRoles[].uri` entries, and the `characterTextures` map
-  (`TextureCompactor.cs:362-378,605-641`; slot construction in
-  `exporter/Services/PjskSekaiRuntimeExtensionBuilder.cs:18-81`).
+  (`TextureCompactor.cs:389-468,652-704`; slot construction in
+  `exporter/Services/PjskSekaiRuntimeExtensionBuilder.cs` `Build`).
 - **PNG is the default finalized format.** Lossless optimization is a separate post-publish pass
   (`--optimize-texture-store`): oxipng runs on a temp copy, the result is kept only if smaller, the
   optimized bytes are stored under their **new** hash, every `part-runtime*.msgpack.br` reference
   is rewritten, all references are validated, and only then are the replaced objects deleted
-  (`TextureCompactor.OptimizeStore`, lines 21-121; rewrite → `ValidateRuntimeTexturePaths` →
-  `DeleteReplacedTextureFiles` ordering at lines 95-106). Exports never wait on the optimizer.
+  (`TextureCompactor.OptimizeStore`, lines 21-82; rewrite → `ValidateRuntimeTexturePaths` →
+  `DeleteReplacedTextureFiles` ordering at lines 57-64). Exports never wait on the optimizer.
 - **KTX2 option** (`--texture-format ktx2`): textures are finalized as UASTC KTX2 via
   `ktx create --encode uastc --uastc-quality 2 --zstd 5 --generate-mipmap
-  --assign-texcoord-origin top-left` (`TextureCompactor.RunKtxCreate`, lines 522-567; tool override
+  --assign-texcoord-origin top-left` (`TextureCompactor.RunKtxCreate`, lines 579-625; tool override
   `HARUKI_KTX_TOOL`). Two transfer classes exist:
   - **sRGB** (`R8G8B8A8_SRGB`, `--assign-tf srgb`): color textures — `mainTex`, `shadowTex`,
     `characterTextures` values, and `textureRoles` entries whose `role` is `main` or `shadow`.
   - **Linear** (`R8G8B8A8_UNORM`, `--assign-tf linear`): data textures — `valueTex`,
     `faceShadowTex`, and `textureRoles` entries whose `role` is `value` or `faceShadow`
-    (`TextureCompactor.cs:375-378,399-410,619-641`).
+    (`TextureCompactor.cs:410-468,680-704`).
   - **Dual-variant rule.** When one PNG is referenced by both classes, one KTX2 variant per
     transfer class is emitted, each stored under its own content hash
     (`CollectKtx2Variants` accumulates a transfer set per source path;
     `Ktx2VariantKey(SourcePath, Transfer)`).
   - Rewrite guarantees mirror the PNG optimizer: references are rewritten and validated before the
-    region-local source PNGs are deleted (`TranscodeStoreToKtx2`, lines 168-195). With
+    region-local source PNGs are deleted (`TranscodeStoreToKtx2`, lines 196-203). With
     `--shared-content-store`, the source PNG is preserved in the cross-region CAS first (for
     compiled-package restoration) and the encoded KTX2 is cached under the source-hash key
     (section 1).
@@ -210,7 +213,7 @@ object-graph encoder throws if a value is not uint32-representable (`Convert.ToU
   (`engine/src/engine/runtimeTextureLoader.ts`). Both formats MUST therefore remain addressable by
   plain URL suffix.
 - Texture roles per material kind are constrained by
-  `PjskSekaiRuntimeExtensionBuilder.cs:1385-1388`: `main` always; `shadow` for
+  `PjskSekaiRuntimeExtensionBuilder.cs:1422-1425`: `main` always; `shadow` for
   body/hair/accessory/face_sdf; `value` for body; `faceShadow` for face_sdf.
 
 ---
@@ -228,8 +231,8 @@ object-graph encoder throws if a value is not uint32-representable (`Convert.ToU
   update; there is no release directory or release identifier (`exporter/README.md`).
 - The engine appends `?masterVersion=<catalog.masterVersion>` to the by-role part registry,
   per-unit compatibility, role runtime, and unity-motion URLs as a cache-buster
-  (`runtimePackageLoader.ts` `withRuntimeMasterVersion`; call sites at lines 112-117, 204-209,
-  236-243, 280-286). Part runtime and core URLs are fetched without it.
+  (`runtimePackageLoader.ts` `withRuntimeMasterVersion`; call sites at lines 113-117, 204-208,
+  241-244, 284, 347-354). Part runtime and core URLs are fetched without it.
 
 ### 4.2 Publish-ordering invariant
 
@@ -238,23 +241,23 @@ The catalog is the entry point that stamps `masterVersion` onto everything else,
 (`exporter/README.md`, "Publish the Catalog after any changed part and role runtime packages").
 Sparse-input runs preserve manifest stamps for reusable packages and MUST fail rather than publish
 an empty or incomplete manifest (`exporter/README.md`, updater sparse-inputs paragraph;
-`.haruki-sparse-input` marker handling in `PartPackageExporter.cs:62-66` and
-`exporter/Services/PartPackageWorkPlanner.cs:65-72` — zero-byte placeholder bundles are skipped,
-existing role runtimes are kept, `RoleRuntimeExporter.cs:140-149`).
+`.haruki-sparse-input` marker handling in `PartPackageExporter.cs:71-79` and
+`exporter/Services/PartPackageWorkPlanner.cs:62-71` — zero-byte placeholder bundles are skipped,
+existing role runtimes are kept, `RoleRuntimeExporter.cs:134-143`).
 
 ### 4.3 Role catalog
 
 - Exactly the 31 public roles, `roleId` 1..31, in order; the (characterId, unit) identity per
   roleId is **hardcoded identically on both sides** (`RuntimeRoleCatalogExporter.ExpectedRole` /
   `UnitForCharacter`, lines 258-279; `runtimePackageLoader.ts` `expectedRuntimeRoleIdentity`,
-  lines 422-443). Roles 21-26 are Miku's units in the fixed order
+  lines 430-444). Roles 21-26 are Miku's units in the fixed order
   `piapro, idol, light_sound, street, theme_park, school_refusal`.
 - Each scoped catalog MUST contain exactly one role whose identity matches its directory, with
   positive `bodyCostume3dId`/`headCostume3dId`/`hairCostume3dId`, `skinColors` as `#rrggbb`
   strings, finite positive `characterHeightMeters`, and `roleRuntimePath` **byte-exactly**
   `roles/<characterId>/<unit>/role-runtime.msgpack.br` (producer formula
   `RuntimeRoleCatalogExporter.cs:186`; consumer equality check
-  `runtimePackageLoader.ts:380-407`). Any deviation makes the engine reject the catalog.
+  `runtimePackageLoader.ts:388-415`). Any deviation makes the engine reject the catalog.
 - `characterHeightMeters` is the unmodified masterdata `gameCharacters.height`; the height policy
   (`heightRate = 0.5 + 0.8 / characterHeightMeters`) is applied by the engine, not baked into
   packages (`engine/README.md` Runtime Behavior).
@@ -263,18 +266,17 @@ existing role runtimes are kept, `RoleRuntimeExporter.cs:140-149`).
 
 - Row schema: `exporter/Models/CostumeRegistryModels.cs` (`PartRegistryEntry`). The engine accepts
   the `{version, source, entries}` object or a bare array (`normalizePartRegistry`,
-  `runtimePackageLoader.ts:531-533`).
-- `status` values (producer, `CostumeRegistryExporter.cs:262-266,479`):
+  `runtimePackageLoader.ts:529-531`).
+- `status` values (producer, `CostumeRegistryExporter.cs:278,297-300,533`):
   - `"planned"` — masterdata yields a deterministic bundle path; the runtime package may or may not
     exist yet. Registry generation does not verify the bundle; single-part export does.
   - `"missing"` — required masterdata (or bundle path) is absent.
   - `"empty"` — a head_optional row representing the official *empty accessory slot*.
-  Consumer semantics (`runtimePackageLoader.ts:656-662`): `missing` rows are unusable;
+  Consumer semantics (`runtimePackageLoader.ts:714-720`): `missing` rows are unusable;
   `empty` rows are selectable but never loaded as packages; only remaining rows are load
   candidates. A missing candidate delta (HTTP 404) is tolerated during default-selection probing;
   a missing shared core, decode failure, or other HTTP failure is not. Explicitly selected missing
-  parts fail. Note: `exporter/README.md` documents only planned/missing; `empty`
-  is normative (see Issues).
+  parts fail.
 - `packagePath` is a relative directory with a trailing slash. Resolved sources use
   `parts/_sources/<partType>/<sourceKey>/`; entries without a source use the fallback
   `parts/<partType>/<costume3dId>/<unit>/`. The engine accepts the producer's trailing slash,
@@ -288,7 +290,7 @@ existing role runtimes are kept, `RoleRuntimeExporter.cs:140-149`).
 - The full registry (`parts/head-hair-compatibility.msgpack.br`) keeps both rule states:
   `"not_available"` (from `costume3dModelNotAvailablePatterns.json`) and `"default_hint"`
   (default hairs emitted as conflict-fallback hints)
-  (`CostumeRegistryExporter.BuildHeadHairCompatibility`, lines 511-561).
+  (`CostumeRegistryExporter.BuildHeadHairCompatibility`, lines 565-615).
 - The runtime file (`parts/compat/by-unit/<unit>/head-hair-compatibility.msgpack.br`) is a
   **deny list**: only `not_available` rows survive (`CostumeRegistryExporter.cs:151-153`).
   Absence of a pair means **allowed**.
@@ -313,7 +315,7 @@ existing role runtimes are kept, `RoleRuntimeExporter.cs:140-149`).
   (`engine/part-runtime-core.mjs`). Producers MUST NOT rely on deep merging.
 - `corePath` is package-root-relative and MUST end in `.msgpack.br`.
 - Incremental behavior: an export run skips a package when its manifest stamp and outputs are
-  intact (`PartPackageExporter.cs:100-107`); compiled cores/deltas can be restored from the
+  intact (`PartPackageExporter.cs:113-120`); compiled cores/deltas can be restored from the
   compiled content store when resolved input bundles are byte-identical, with the delta re-stamped
   for the current region (`CompiledPartCache`, `exporter/README.md`).
 
@@ -360,37 +362,37 @@ Behavior the engine implements and packages MUST remain compatible with:
   SpringBone records — managers, bones, extra bones, colliders, constraints — remapped per part,
   then rebuilds collider bindings, manager collider caches, and binding decisions from the
   composed hierarchy (`engine/src/parts/runtimePartComposer.ts` `mergeRuntimeSetup`,
-  lines 1260-1334; ordered steps recorded at lines 1299-1307).
+  lines 1276-1357; ordered steps recorded at lines 1315-1323).
 - **Collider rebinding.** `colliderFlag` springs are rebound to the *current* body's colliders on
   every composition (`rebuildColliderBindings`; step "rebind colliderFlag springs to current body
   colliders"). Packages MUST therefore ship collider data with the body part and flag-based
   bindings that survive recombination.
 - **Simulation reset on selection change.** Whenever body/head/hair/head-optional selection
   changes, the engine imports a new combined character, recreates the spring runtime, and resets
-  simulation state (`engine/src/engine/Haruki3DEngine.ts:1136-1148`; `reloadAnimationPlayback`
-  `resetSpring`, lines 2755-2770). Animation playback position is preserved across same-role part
-  switches and restored after the rebuild (`Haruki3DEngine.ts:1139,1143-1148`;
+  simulation state (`engine/src/engine/Haruki3DEngine.ts:1144-1155`; `reloadAnimationPlayback`
+  `resetSpring`, lines 2791-2808). Animation playback position is preserved across same-role part
+  switches and restored after the rebuild (`Haruki3DEngine.ts:1066,1145-1155`;
   `engine/README.md`, Custom wardrobe behavior). This matches the producer-side requirement in
   `exporter/README.md`'s closing paragraph ("The viewer must merge the active part SpringBone
   records, rebind current body colliders, and reset simulation whenever body/head/hair/accessory
   selection changes").
 - **Role scoping.** A role is `characterId:unit`; custom switching is limited to parts of the
   currently loaded role, and every composed part's identity must match the active role
-  (`runtimePartComposer.ts` role assertion at lines ~980-989;
+  (`runtimePartComposer.ts` `assertSameRole`, lines 981-990;
   `customWardrobeController.ts` `assertSameActiveCharacter`).
 - **Assembly data is mandatory.** Composition fails unless the parts' prefab graphs provide the
-  official `model_combine_setup` body/head paths (`runtimePartComposer.ts:1283-1286`), and the
+  official `model_combine_setup` body/head paths (`runtimePartComposer.ts:1299-1302`), and the
   runtime extension must expose `runtimeUnitySetup` version `"0414"` and a non-empty native mesh
-  set version `"0414"` (`Haruki3DEngine.ts:2374`; `unityPrefabRuntime.ts:230-247,758-766`).
+  set version `"0414"` (`Haruki3DEngine.ts:2382-2388`; `unityPrefabRuntime.ts:241-258,792-806`).
 - **Motion.** The role runtime selects the Unity motion package; `motionPackage.unityMotionJson`
   must resolve to a `.msgpack.br` URL or clip loading fails
-  (`engine/src/engine/animationPlaybackRuntime.ts:358-362`). Unity motion schema:
+  (`engine/src/engine/animationPlaybackRuntime.ts:368-371`). Unity motion schema:
   `exporter/Models/MotionModels.cs` (`PjskUnityMotionRuntime`, `clips[].tracks[].times/values`
   ext-42 encoded per section 2.2). Embedded face clips are promoted with the body loop
   (`engine/README.md`).
 - **Default selection probing.** At load the engine probes registry candidates in batches of 24
   (bounded at 720) until a compatible loaded body + (head|head_optional) + hair selection exists,
-  else the load fails (`runtimePackageLoader.ts:132-157`). A published package set MUST therefore
+  else the load fails (`runtimePackageLoader.ts:133-157`). A published package set MUST therefore
   contain loadable packages for at least one compatible default combination per role — another
   reason for the section 4.2 publish ordering.
 
@@ -419,12 +421,12 @@ parameters change, invalidating the shared encode cache.
 
 ## Known issues flagged in this revision
 
-1. **`status: "empty"` is undocumented in `exporter/README.md`** (its registry section names only
-   planned/missing) but is emitted for head_optional empty slots
-   (`CostumeRegistryExporter.cs:262-266`) and has distinct consumer semantics
-   (`runtimePackageLoader.ts:656-662`). This spec (section 4.4) is normative.
+1. **`status: "empty"` documentation (resolved).** The exporter emits `empty` for head_optional
+   empty slots (`CostumeRegistryExporter.cs:297`) with distinct consumer semantics
+   (`runtimePackageLoader.ts:714-720`); `exporter/README.md` now lists it alongside
+   planned/missing. This spec (section 4.4) is normative.
 2. **Null-unit path-segment mismatch (resolved).** Normative rule: a null or empty unit maps to
-   the `default` path segment, exactly as the consumer resolves it (`runtimePackageLoader.ts:445-447`,
+   the `default` path segment, exactly as the consumer resolves it (`runtimePackageLoader.ts:447-449`,
    `unit || "default"`). All producers route path segments through the shared
    `RuntimeJsonWriter.RuntimePathUnitSegment` (`CostumeRegistryExporter` scoped registry/compat
    writers and `BuildPackagePath`, `RuntimeRoleCatalogExporter.Write`,
@@ -436,5 +438,6 @@ parameters change, invalidating the shared encode cache.
    emitted for costumes with no `costume3dModels` row), so the scoped files now land under
    `default/`; the 31 engine-consumed public roles were unaffected (non-null units enforced by
    `RuntimeRoleCatalogExporter.Build`).
-3. **`parts/part-source-map.msgpack.br` is absent from the `exporter/README.md` output list**
-   though always written (`CostumeRegistryExporter.cs:37`). Documented in section 1.
+3. **`parts/part-source-map.msgpack.br` documentation (resolved).** Always written
+   (`CostumeRegistryExporter.cs:38`); now listed in the `exporter/README.md` output list and in
+   section 1.
